@@ -141,6 +141,11 @@ GenerateHeaderConfig(ADIOS2 NVTX RMM)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/src/include)
 # FIXME, this seems too ugly to find mrc_config.h
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/src/libmrc/include)
+include_directories(${PROJECT_SOURCE_DIR}/src/include)
+include_directories(
+    ${CMAKE_SOURCE_DIR}/src          # Ruta base: /home/carlmarxt/psc/src
+    ${CMAKE_SOURCE_DIR}/src/libpsc   # Para acceder a libpsc/psc_heating
+)
 
 add_subdirectory(src/libmrc)
 add_subdirectory(src)

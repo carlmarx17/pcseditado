@@ -21,6 +21,7 @@ add_psc_executable(psc_harris_yz)
 add_psc_executable(psc_2d_shock)
 add_psc_executable(psc_radiation)
 add_psc_executable(psc_shock)
+add_psc_executable(psc_temp_aniso)
 
 if(NOT USE_CUDA)
   install(
