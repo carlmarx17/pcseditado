@@ -130,7 +130,7 @@ class PlasmaAnisotropyAnalyzer:
         
         plt.xlabel(r'$\beta_\parallel$')
         plt.ylabel(r'$T_\perp / T_\parallel$')
-        plt.title('Brazil Plot: Anisotropy vs $\beta_\parallel$')
+        plt.title(r'Brazil Plot: Anisotropy vs $\beta_\parallel$')
         plt.legend()
         plt.grid(True, alpha=0.2)
         
