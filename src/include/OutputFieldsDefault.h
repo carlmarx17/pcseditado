@@ -9,17 +9,8 @@
 #include "fields_item.hxx"
 #include "psc_particles_double.h"
 
-#ifdef PSC_HAVE_ADIOS2
-
-#include "writer_adios2.hxx"
-using WriterDefault = WriterADIOS2;
-
-#else
-
 #include "writer_mrc.hxx"
 using WriterDefault = WriterMRC;
-
-#endif
 
 #include <memory>
 

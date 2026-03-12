@@ -11,17 +11,8 @@
 #include <mrc_io.h>
 #include <gtensor/reductions.h>
 
-#ifdef PSC_HAVE_ADIOS2
-
-#include "writer_adios2.hxx"
-using WriterDefault = WriterADIOS2;
-
-#else
-
 #include "writer_mrc.hxx"
 using WriterDefault = WriterMRC;
-
-#endif
 
 namespace psc
 {

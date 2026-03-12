@@ -53,8 +53,8 @@ class MirrorPhysicsPlotter:
         
         im1 = ax1.imshow(bz2d.T, origin='lower', cmap='viridis', vmin=0.5, vmax=1.5, aspect='auto')
         ax1.set_title(r'Magnetic Field $B_z / B_0$ (Mirror Holes)', fontsize=14)
-        ax1.set_xlabel('Y Axis', fontsize=12)
-        ax1.set_ylabel('Z Axis (Parallel to B0)', fontsize=12)
+        ax1.set_xlabel('Z Axis (Parallel to B0)', fontsize=12)
+        ax1.set_ylabel('Y Axis', fontsize=12)
         fig.colorbar(im1, ax=ax1, label=r'$B_z / B_0$')
 
         limit = np.percentile(np.abs(jx2d), 99)
@@ -62,8 +62,8 @@ class MirrorPhysicsPlotter:
         
         im2 = ax2.imshow(jx2d.T, origin='lower', cmap='seismic', vmin=-limit, vmax=limit, aspect='auto')
         ax2.set_title(r'Diamagnetic Current $J_x$', fontsize=14)
-        ax2.set_xlabel('Y Axis', fontsize=12)
-        ax2.set_ylabel('Z Axis', fontsize=12)
+        ax2.set_xlabel('Z Axis (Parallel to B0)', fontsize=12)
+        ax2.set_ylabel('Y Axis', fontsize=12)
         fig.colorbar(im2, ax=ax2, label=r'Current Density $J_x$')
 
         plt.tight_layout()

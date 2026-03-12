@@ -20,6 +20,24 @@ These scripts have been modularized and refactored for clarity and performance:
 4. **`fluctuationofmagneticfiel.py`**:
    Advanced field visualization script. Extracts fluctuations $\delta B$ and $| \delta B |$ from the main field, supporting animations/GIFs creation and multi-plane slicing.
 
+5. **`spectral_analysis.py`**:
+   Computes 1D and 2D magnetic power spectra from the same field outputs used by the fluctuation visualizer.
+
+6. **`validate_moments.py`**:
+   Checks particle density, drift, temperature, anisotropy, and kurtosis against the initialization values defined in `psc_temp_aniso.cxx`.
+
+7. **`plot_prt.py`**:
+   Produces 2D VDF maps and ion Kappa-vs-Maxwellian comparisons from a particle dump.
+
+8. **`plot_vdf_3d.py`**:
+   Builds a 3D surface rendering of the reduced VDF for ions and electrons.
+
+9. **`plot_moments_scatter_3d.py`**:
+   Generates phase-space histograms plus a cutaway 3D momentum scatter view.
+
+10. **`psc_units.py`**:
+    Centralizes the unit conversions and derived plasma scales used by the analysis workflow.
+
 ### How to Use
 
 Simply execute `make` commands using the provided `Makefile`. Ensure that your `.h5` PIC simulation files are available inside this folder (or modify the patterns to search them).
@@ -40,3 +58,11 @@ make all
 # Clear generated plot folders
 make clean
 ```
+
+### Overlap Notes
+
+- `aniso.py` was replaced by `anisotropy_analysis.py`. The new script keeps the Brazil-plot goal but fixes the plasma-beta interpretation and uses the modular `PICDataReader`.
+- `plotmirro.py` was replaced by `mirror_physics.py`. Both target mirror-hole diagnostics, but the new version is the maintained implementation.
+- `plot_moments_validation.py` was split conceptually into `validate_moments.py` plus the particle-visualization scripts. The validation logic and the visualization logic are no longer mixed in one file.
+- `plot_prt.py`, `plot_vdf_3d.py`, and `plot_moments_scatter_3d.py` read the same particle file, but they are not duplicates: they generate different diagnostics from the same source data.
+- `fluctuationofmagneticfiel.py`, `mirror_physics.py`, and `spectral_analysis.py` also reuse the same field dumps, but they answer different questions: fluctuation maps, mirror structures, and spectra.

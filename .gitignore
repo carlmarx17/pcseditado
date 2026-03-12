@@ -2,3 +2,14 @@
 /*.o
 /*.exe
 /*.log
+*.pyc
+__pycache__/
+.vscode/
+CodeforAnalisys/anisotropy_plots/
+CodeforAnalisys/field_images/
+CodeforAnalisys/mirror_plots/
+CodeforAnalisys/spectral_plots/
+CodeforAnalisys/prt_plots/
+CodeforAnalisys/fancy_vdf_plots/
+CodeforAnalisys/phase_space_plots/
+CodeforAnalisys/validation_plots/

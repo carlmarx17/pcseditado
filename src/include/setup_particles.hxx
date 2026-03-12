@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <functional>
 #include <type_traits>
+#include <random>
 #include "centering.hxx"
 #include "rng.hxx"
 
@@ -97,6 +98,8 @@ struct SetupParticles
 {
   using Mparticles = MP;
   using real_t = typename MP::real_t;
+
+  double kappa = 3.0; // Parameter for kappa distribution sampling
 
   SetupParticles(const Grid_t& grid, int n_populations = 0)
     : kinds_{grid.kinds},
@@ -206,6 +209,45 @@ struct SetupParticles
         if (p_squared < 1.) {
           double gamma = 1. / sqrt(1. - p_squared);
           p *= gamma;
+        }
+      }
+      return p;
+    };
+  }
+
+  // ----------------------------------------------------------------------
+  // createKappaMultivariate
+
+  std::function<Double3()> createKappaMultivariate(const psc_particle_npt& npt)
+  {
+    assert(npt.kind >= 0 && npt.kind < kinds_.size());
+    assert(kappa > 1.5);
+
+    double beta = norm_.beta;
+    double m = kinds_[npt.kind].m;
+    double k = kappa;
+    bool gamma_corr = initial_momentum_gamma_correction;
+
+    return [=]() {
+      static thread_local std::random_device rd;
+      static thread_local std::mt19937 gen(rd());
+      static thread_local std::gamma_distribution<double> dist_gamma(k - 0.5, 1.0);
+      static rng::Normal<double> dist_norm;
+
+      double Y = dist_gamma(gen);
+      double S = std::sqrt((k - 1.5) / (Y + 1e-12));
+
+      Double3 p;
+      for (int i = 0; i < 3; i++) {
+        double Z = dist_norm.get(0.0, 1.0);
+        p[i] = npt.p[i] + Z * S * beta * std::sqrt(npt.T[i] / m);
+      }
+
+      if (gamma_corr) {
+        double p_squared = sqr(p[0]) + sqr(p[1]) + sqr(p[2]);
+        if (p_squared < 1.) {
+          double gamma_factor = 1. / std::sqrt(1. - p_squared);
+          p *= gamma_factor;
         }
       }
       return p;

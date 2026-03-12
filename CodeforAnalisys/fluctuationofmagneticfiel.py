@@ -1,573 +1,284 @@
 #!/usr/bin/env python3
 """
-magnetic_field_viz.py
-=====================
-Visualize magnetic field fluctuations from PIC simulation HDF5 files.
-
-Usage
------
-    python magnetic_field_viz.py --plane xy --B0 0.01 --fixed_scale --create_gifs
-    python magnetic_field_viz.py --steps 100 200 300 --comps Bx Bz --no_mag
-    python magnetic_field_viz.py --smooth 1.5 --out_dir my_images
-
-HDF5 structure expected
------------------------
-    /jeh-<suffix>/
-        hx_fc/p0/3d   → Bx  (shape: Nx × Ny × Nz)
-        hy_fc/p0/3d   → By
-        hz_fc/p0/3d   → Bz
+fluctuationofmagneticfiel.py
+============================
+Visualización de estructuras magnéticas (fluctuaciones individuales).
 """
 
-import re
-import glob
 import argparse
-from pathlib import Path
-
-import h5py
 import numpy as np
-import matplotlib
 import matplotlib.pyplot as plt
+import re
 import imageio
+from pathlib import Path
 from scipy.ndimage import gaussian_filter
 from matplotlib.colors import LinearSegmentedColormap
+
 from data_reader import PICDataReader
 
-matplotlib.use("Agg")  # Non-interactive backend (safe for headless servers)
+plt.switch_backend('Agg')
 
-
-# =============================================================================
-# Section 1 – Configuration
-# =============================================================================
-
-DEFAULTS = dict(
-    pattern    = "pfd.*.h5",
-    out_dir    = "field_images",
-    B0         = 0.01,
-    fluct_amp  = 0.1,
-    smooth     = 0.8,
-    gif_dur    = 0.2,
-    plane      = "xy",
-    components = ["Bx", "By", "Bz"],
-)
-
-
-# =============================================================================
-# Section 2 – Colormaps
-# =============================================================================
-
-def _diverging_cmap(name: str, neg: str, pos: str) -> LinearSegmentedColormap:
-    """
-    Build a high-contrast diverging colormap.
-
-    Saturated colors at the extremes, darker tones toward the center.
-    Used for individual field components (positive ↔ negative fluctuations).
-    """
-    PALETTES = {
-        ("blue",  "red")   : ["#00001F","#00008F","#0000FF","#0066FF","#FF0000","#8B0000","#450000"],
-        ("green", "purple"): ["#001F00","#004400","#00FF00","#66FF00","#800080","#4B0082","#2A0045"],
-        ("cyan",  "orange"): ["#002A2A","#006666","#00FFFF","#00CCCC","#FF8C00","#FF4500","#8B2500"],
-    }
-    colors = PALETTES.get((neg, pos), PALETTES[("cyan", "orange")])
-    return LinearSegmentedColormap.from_list(name, colors, N=256)
-
-
-def _magnitude_cmap() -> LinearSegmentedColormap:
-    """
-    Build a sequential colormap for |δB| magnitude.
-
-    Yellow (high) → green → black (near zero).
-    """
-    colors = ["#FFFF00","#EEEE00","#CCCC00","#AAAA00","#888800",
-              "#00FF00","#008800","#004400","#002200","#001100","#000000"]
-    return LinearSegmentedColormap.from_list("magnitude", colors, N=256)
-
-
-COLORMAPS = {
-    "Bx"  : _diverging_cmap("Bx",   "blue",  "red"),
-    "By"  : _diverging_cmap("By",   "green", "purple"),
-    "Bz"  : _diverging_cmap("Bz",   "cyan",  "orange"),
-    "Bmag": _magnitude_cmap(),
-}
-
-
-# =============================================================================
-# Section 3 – Data Loading
-# =============================================================================
-
-def discover_files(pattern: str) -> dict[int, str]:
-    """
-    Find HDF5 files matching a glob pattern and index them by simulation step.
-    Delegates to PICDataReader.
-
-    Returns
-    -------
-    dict mapping {step_number: file_path}
-    """
-    return PICDataReader.find_files(pattern)
-
-
-def load_field_3d(path: str, step: int, B0: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Read and scale the 3D magnetic field arrays from a single HDF5 file.
-    Delegates to PICDataReader.
-
-    Returns
-    -------
-    (Bx, By, Bz) as 3-D numpy arrays
-    """
-    try:
-        fields = PICDataReader.read_multiple_fields_3d(path, "jeh-", ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"])
-    except KeyError as e:
-        raise KeyError(f"Missing group or dataset in file for step {step}: {e}")
+class FieldImagePlotter:
+    def __init__(self, em_pattern='pfd.*.h5', B0=0.01, fluct_amp=0.1, outdir='field_images', 
+                 smooth_sigma=0.8, dyn_scale=True, comp_magnitude=True, comps_to_plot=['Bx', 'By', 'Bz'],
+                 fixed_scale=True):
+        self.em_pattern = em_pattern
+        self.B0 = B0
+        self.fluct_amp = fluct_amp
+        self.outdir = Path(outdir)
+        self.outdir.mkdir(exist_ok=True, parents=True)
+        self.smooth_sigma = smooth_sigma
+        self.dyn_scale = dyn_scale
+        self.comp_magnitude = comp_magnitude
+        self.comps_to_plot = comps_to_plot
+        self.fixed_scale = fixed_scale
+        self.global_vmin = {}
+        self.global_vmax = {}
+        self.file_map = PICDataReader.find_files(self.em_pattern)
         
-    bx = fields["hx_fc/p0/3d"] * B0
-    by = fields["hy_fc/p0/3d"] * B0
-    bz = fields["hz_fc/p0/3d"] * B0
+        # Paleta de colores personalizada - Alto contraste
+        self.palettes = {
+            'Bx': self.create_dark_divergent_cmap('blue', 'red'),
+            'By': self.create_dark_divergent_cmap('green', 'purple'),
+            'Bz': self.create_dark_divergent_cmap('cyan', 'orange'),
+            'Bmag': self.create_yellow_green_cmap()  # Paleta amarillo-verde-negro
+        }
 
-    if np.all(bx == 0) and np.all(by == 0) and np.all(bz == 0):
-        raise ValueError(f"Step {step}: all field components are zero – check your file.")
-    return bx, by, bz
+    def create_dark_divergent_cmap(self, color1, color2):
+        """Mapas divergentes con alto contraste y extremos oscuros"""
+        palettes = {
+            'blue_red': ['#00001F', '#00008F', '#0000FF', '#0066FF', '#FF0000', '#8B0000', '#450000'],
+            'green_purple': ['#001F00', '#004400', '#00FF00', '#66FF00', '#800080', '#4B0082', '#2A0045'],
+            'cyan_orange': ['#002A2A', '#006666', '#00FFFF', '#00CCCC', '#FF8C00', '#FF4500', '#8B2500']
+        }
+        
+        if 'blue' in color1 and 'red' in color2:
+            colors = palettes['blue_red']
+        elif 'green' in color1 and 'purple' in color2:
+            colors = palettes['green_purple']
+        else:
+            colors = palettes['cyan_orange']
+            
+        return LinearSegmentedColormap.from_list(f'hi_contrast_{color1}_{color2}', colors, N=256)
 
+    def create_yellow_green_cmap(self):
+        """Paleta secuencial de alto contraste (amarillo-verde-negro)"""
+        colors = [
+            '#FFFF00', '#EEEE00', '#CCCC00', '#AAAA00', '#888800',
+            '#00FF00', '#008800', '#004400', '#002200', '#001100', '#000000'
+        ]
+        return LinearSegmentedColormap.from_list('hi_contrast_yellow_green', colors, N=256)
 
-def slice_3d(
-    bx3d: np.ndarray, by3d: np.ndarray, bz3d: np.ndarray,
-    plane: str, idx: int | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, str, str]:
-    """
-    Extract a 2-D cross-section from 3-D field arrays.
+    def _process_component(self, data):
+        """Procesa un componente: normalización y suavizado"""
+        fluct = (data - np.mean(data)) / self.B0
+        if self.smooth_sigma > 0:
+            fluct = gaussian_filter(fluct, sigma=self.smooth_sigma)
+        return fluct
 
-    Parameters
-    ----------
-    plane : "xy", "xz", or "yz"
-    idx   : slice index along the normal axis (default: midpoint)
+    def _get_slice(self, bx3d, by3d, bz3d, plane, slice_index):
+        # The data shape from PSC is (Nz, Ny, Nx). 
+        # For a 2D Y-Z simulation, Nx=1, Ny>1, Nz>1, shape is e.g. (512, 384, 1).
+        shape = bx3d.shape
+        
+        if plane == 'xy':
+            k = slice_index if slice_index is not None else shape[0] // 2
+            return bx3d[k, :, :].squeeze(), by3d[k, :, :].squeeze(), bz3d[k, :, :].squeeze(), 'x', 'y'
+        elif plane == 'xz':
+            k = slice_index if slice_index is not None else shape[1] // 2
+            return bx3d[:, k, :].squeeze(), by3d[:, k, :].squeeze(), bz3d[:, k, :].squeeze(), 'x', 'z'
+        elif plane == 'yz':
+            k = slice_index if slice_index is not None else shape[2] // 2
+            # Here data is (Nz, Ny). After squeeze we have (Nz, Ny)
+            # which we later transpose with .T, resulting in (Ny, Nz).
+            # So X-axis is Z, Y-axis is Y.
+            return bx3d[:, :, k].squeeze(), by3d[:, :, k].squeeze(), bz3d[:, :, k].squeeze(), 'z', 'y'
+        else:
+            raise ValueError("Plano debe ser 'xy', 'xz' o 'yz'")
 
-    Returns
-    -------
-    (bx2d, by2d, bz2d, xlabel, ylabel)
-    """
-    shape = bx3d.shape
-    if plane == "xy":
-        k = idx if idx is not None else shape[2] // 2
-        return bx3d[:, :, k], by3d[:, :, k], bz3d[:, :, k], "x", "y"
-    elif plane == "xz":
-        k = idx if idx is not None else shape[1] // 2
-        return bx3d[:, k, :], by3d[:, k, :], bz3d[:, k, :], "x", "z"
-    elif plane == "yz":
-        k = idx if idx is not None else shape[0] // 2
-        return bx3d[k, :, :], by3d[k, :, :], bz3d[k, :, :], "y", "z"
-    else:
-        raise ValueError(f"Unknown plane '{plane}'. Choose from: 'xy', 'xz', 'yz'.")
-
-
-# =============================================================================
-# Section 4 – Field Processing
-# =============================================================================
-
-def fluctuation(data: np.ndarray, B0: float, sigma: float = 0.0) -> np.ndarray:
-    """
-    Compute the normalized fluctuation of a single field component.
-
-    Formula:  δB_i = (B_i − ⟨B_i⟩) / B0
-
-    Parameters
-    ----------
-    data  : 2-D field component array
-    B0    : reference field (normalization)
-    sigma : Gaussian smoothing width (0 = skip smoothing)
-    """
-    result = (data - data.mean()) / B0
-    return gaussian_filter(result, sigma=sigma) if sigma > 0 else result
-
-
-def fluctuation_magnitude(
-    bx: np.ndarray, by: np.ndarray, bz: np.ndarray,
-    B0: float, sigma: float = 0.0,
-) -> np.ndarray:
-    """
-    Compute the magnitude of the total fluctuation vector.
-
-    Formula:  |δB| = √(δBx² + δBy² + δBz²) / B0
-
-    Parameters
-    ----------
-    bx, by, bz : 2-D field component arrays
-    B0         : reference field (normalization)
-    sigma      : Gaussian smoothing applied to the final magnitude
-    """
-    mag = np.sqrt(
-        (bx - bx.mean()) ** 2 +
-        (by - by.mean()) ** 2 +
-        (bz - bz.mean()) ** 2
-    )
-    result = gaussian_filter(mag, sigma=sigma) if sigma > 0 else mag
-    return result / B0
-
-
-# =============================================================================
-# Section 5 – Plotting
-# =============================================================================
-
-def color_limits(
-    data: np.ndarray,
-    comp: str,
-    fixed_vmin: float | None,
-    fixed_vmax: float | None,
-    fluct_amp: float,
-    dynamic: bool,
-) -> tuple[float, float]:
-    """
-    Determine color-scale limits for a field map, in priority order:
-
-    1. Pre-computed global limits (``fixed_vmin`` / ``fixed_vmax``) if provided.
-    2. Dynamic limits derived from the current snapshot (99.5th percentile).
-    3. Static symmetric range ±fluct_amp (or [0, fluct_amp] for magnitude).
-    """
-    if fixed_vmin is not None and fixed_vmax is not None:
-        return fixed_vmin, fixed_vmax
-    if dynamic:
-        vmax = max(np.percentile(np.abs(data), 99.5), fluct_amp)
-        return (0.0, vmax) if comp == "Bmag" else (-vmax, vmax)
-    return (0.0, fluct_amp) if comp == "Bmag" else (-fluct_amp, fluct_amp)
-
-
-def save_field_image(
-    data: np.ndarray,
-    comp: str,
-    step: int,
-    plane: str,
-    xlabel: str,
-    ylabel: str,
-    vmin: float,
-    vmax: float,
-    out_dir: Path,
-) -> Path:
-    """
-    Render a single 2-D field map and save it as a PNG.
-
-    Parameters
-    ----------
-    data    : 2-D array (fluctuation or magnitude)
-    comp    : "Bx", "By", "Bz", or "Bmag"
-    step    : simulation step (used in filename and title)
-    plane   : "xy", "xz", or "yz"
-    xlabel  : horizontal axis label
-    ylabel  : vertical axis label
-    vmin    : lower color-scale limit
-    vmax    : upper color-scale limit
-    out_dir : directory for the output file
-
-    Returns
-    -------
-    Path of the saved PNG.
-    """
-    if comp == "Bmag":
-        title  = f"|δB| fluctuation – step {step}, plane {plane}"
-        cb_lbl = r"$|\delta B| / B_0$"
-        fname  = f"Bmag_fluct_step{step}_{plane}.png"
-    else:
-        title  = f"{comp} fluctuation – step {step}, plane {plane}"
-        cb_lbl = rf"$\delta {comp} / B_0$"
-        fname  = f"{comp}fluct_step{step}_{plane}.png"
-
-    fig, ax = plt.subplots(figsize=(10, 8))
-    im = ax.imshow(data.T, origin="lower", cmap=COLORMAPS[comp], vmin=vmin, vmax=vmax)
-    fig.colorbar(im, ax=ax).set_label(cb_lbl, fontsize=14)
-    ax.set_title(title, fontsize=14)
-    ax.set_xlabel(xlabel, fontsize=12)
-    ax.set_ylabel(ylabel, fontsize=12)
-    ax.grid(True, linestyle=":", alpha=0.5)
-
-    out_path = out_dir / fname
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-    return out_path
-
-
-# =============================================================================
-# Section 6 – Animation
-# =============================================================================
-
-def create_gif(image_dir: Path, comp: str, plane: str, duration: float) -> Path | None:
-    """
-    Assemble a GIF from all PNG snapshots of a given component.
-
-    Expects files named like:
-        Bmag_fluct_step<N>_<plane>.png   (magnitude)
-        <comp>fluct_step<N>_<plane>.png  (components)
-
-    Parameters
-    ----------
-    image_dir : directory containing the PNG files
-    comp      : "Bx", "By", "Bz", or "Bmag"
-    plane     : slice plane label (e.g. "xy")
-    duration  : seconds per frame
-
-    Returns
-    -------
-    Path to the created GIF, or None if no images were found.
-    """
-    pattern = f"Bmag_fluct_step*_{plane}.png" if comp == "Bmag" else f"{comp}fluct_step*_{plane}.png"
-    files = sorted(
-        image_dir.glob(pattern),
-        key=lambda p: int(re.search(r"step(\d+)_", p.name).group(1)),
-    )
-    if not files:
-        print(f"  No images found for {comp} in plane {plane}.")
-        return None
-
-    out = image_dir / f"{comp}_fluct_{plane}.gif"
-    with imageio.get_writer(out, mode="I", duration=duration, loop=0) as writer:
-        for f in files:
+    def compute_global_scales(self, steps, plane, slice_index=None):
+        """Calcula escalas globales para mantener consistencia en colores"""
+        print("Calculando escalas globales para colores consistentes...")
+        global_extremas = {comp: {'min': [], 'max': []} for comp in ['Bx', 'By', 'Bz', 'Bmag']}
+        
+        for step in steps:
+            fn = self.file_map.get(step)
+            if not fn: continue
+            
             try:
-                writer.append_data(imageio.imread(f))
+                fields = PICDataReader.read_multiple_fields_3d(fn, "jeh-", ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"])
+                bx3d = fields["hx_fc/p0/3d"] * self.B0
+                by3d = fields["hy_fc/p0/3d"] * self.B0
+                bz3d = fields["hz_fc/p0/3d"] * self.B0
             except Exception as e:
-                print(f"  Skipping {f.name}: {e}")
-
-    print(f"  GIF saved: {out}")
-    return out
-
-
-# =============================================================================
-# Section 7 – Orchestrator
-# =============================================================================
-
-class FieldPlotter:
-    """
-    End-to-end pipeline: discover files → load data → process → plot → (GIF).
-
-    Parameters
-    ----------
-    pattern       : glob pattern for HDF5 input files
-    B0            : reference magnetic field (normalization denominator, ≠ 0)
-    fluct_amp     : fallback amplitude for static color scaling
-    out_dir       : directory where images and GIFs are saved
-    smooth        : Gaussian smoothing sigma (0 = disabled)
-    dynamic_scale : derive color limits from each snapshot's data
-    plot_magnitude: include the |δB| magnitude plot
-    components    : which components to plot (subset of ["Bx","By","Bz"])
-    fixed_scale   : pre-compute global color limits for consistent animations
-    """
-
-    def __init__(
-        self,
-        pattern: str       = DEFAULTS["pattern"],
-        B0: float          = DEFAULTS["B0"],
-        fluct_amp: float   = DEFAULTS["fluct_amp"],
-        out_dir: str       = DEFAULTS["out_dir"],
-        smooth: float      = DEFAULTS["smooth"],
-        dynamic_scale: bool = True,
-        plot_magnitude: bool = True,
-        components: list[str] = None,
-        fixed_scale: bool  = False,
-    ):
-        if B0 == 0:
-            raise ValueError("B0 cannot be zero (it is used as a normalization factor).")
-
-        self.pattern       = pattern
-        self.B0            = B0
-        self.fluct_amp     = fluct_amp
-        self.out_dir       = Path(out_dir)
-        self.smooth        = smooth
-        self.dynamic_scale = dynamic_scale
-        self.plot_magnitude = plot_magnitude
-        self.components    = components or list(DEFAULTS["components"])
-        self.fixed_scale   = fixed_scale
-
-        self.out_dir.mkdir(parents=True, exist_ok=True)
-        self.file_map = discover_files(pattern)
-        self._vmin: dict[str, float] = {}
-        self._vmax: dict[str, float] = {}
-
-        if not self.file_map:
-            print(f"Warning: no files found matching '{pattern}'.")
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def run(
-        self,
-        plane: str          = "xy",
-        steps: list[int]    = None,
-        slice_idx: int      = None,
-        create_gifs: bool   = False,
-        gif_duration: float = DEFAULTS["gif_dur"],
-    ) -> list[Path]:
-        """
-        Execute the full visualization pipeline.
-
-        Parameters
-        ----------
-        plane        : 2-D plane to visualize ("xy", "xz", or "yz")
-        steps        : simulation steps to process (default: all found)
-        slice_idx    : index along the normal axis (default: midpoint)
-        create_gifs  : assemble animated GIFs after plotting
-        gif_duration : seconds per frame
-
-        Returns
-        -------
-        List of paths to all generated PNG files.
-        """
-        steps = steps or sorted(self.file_map.keys())
-
-        if self.fixed_scale:
-            self._compute_global_scales(steps, plane, slice_idx)
-
-        saved = []
-        for step in steps:
-            print(f"Processing step {step}...")
-            saved.extend(self._process_step(step, plane, slice_idx))
-
-        if create_gifs:
-            targets = (["Bmag"] if self.plot_magnitude else []) + self.components
-            for comp in targets:
-                create_gif(self.out_dir, comp, plane, gif_duration)
-
-        return saved
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _compute_global_scales(self, steps: list[int], plane: str, slice_idx: int) -> None:
-        """
-        Scan every step to determine globally consistent color limits.
-
-        Ensures that the same physical amplitude maps to the same color in all
-        snapshots – critical for animations to be visually coherent.
-        """
-        print("Computing global color limits...")
-        all_targets = self.components + (["Bmag"] if self.plot_magnitude else [])
-        extrema = {t: {"min": [], "max": []} for t in all_targets}
-
-        for step in steps:
-            path = self.file_map.get(step)
-            if not path:
+                print(f"Error leyendo step {step} para limites: {e}")
                 continue
-            try:
-                bx3d, by3d, bz3d = load_field_3d(path, step, self.B0)
-                bx, by, bz, _, _ = slice_3d(bx3d, by3d, bz3d, plane, slice_idx)
-            except (KeyError, ValueError) as e:
-                print(f"  Skipping step {step}: {e}")
-                continue
+                
+            bx2d, by2d, bz2d, _, _ = self._get_slice(bx3d, by3d, bz3d, plane, slice_index)
+            
+            if self.comp_magnitude:
+                mag = np.sqrt((bx2d - np.mean(bx2d))**2 + (by2d - np.mean(by2d))**2 + (bz2d - np.mean(bz2d))**2) / self.B0
+                if self.smooth_sigma > 0:
+                    mag = gaussian_filter(mag, sigma=self.smooth_sigma)
+                global_extremas['Bmag']['min'].append(np.min(mag))
+                global_extremas['Bmag']['max'].append(np.max(mag))
 
-            if self.plot_magnitude:
-                mag = fluctuation_magnitude(bx, by, bz, self.B0, self.smooth)
-                extrema["Bmag"]["min"].append(mag.min())
-                extrema["Bmag"]["max"].append(mag.max())
+            for comp, data in [('Bx', bx2d), ('By', by2d), ('Bz', bz2d)]:
+                if comp in self.comps_to_plot:
+                    fluct = self._process_component(data)
+                    global_extremas[comp]['min'].append(np.min(fluct))
+                    global_extremas[comp]['max'].append(np.max(fluct))
+                    
+        for comp in global_extremas:
+            if global_extremas[comp]['min']:
+                self.global_vmin[comp] = np.percentile(global_extremas[comp]['min'], 1)
+                self.global_vmax[comp] = np.percentile(global_extremas[comp]['max'], 99)
+                if comp != 'Bmag':
+                    abs_max = max(abs(self.global_vmin[comp]), abs(self.global_vmax[comp]))
+                    self.global_vmin[comp] = -abs_max
+                    self.global_vmax[comp] = abs_max
+                    
+        print("Escalas globales calculadas:")
+        for comp in self.global_vmin:
+            print(f"  {comp}: [{self.global_vmin[comp]:.4f}, {self.global_vmax[comp]:.4f}]")
 
-            for comp, arr in zip(["Bx", "By", "Bz"], [bx, by, bz]):
-                if comp in self.components:
-                    f = fluctuation(arr, self.B0, self.smooth)
-                    extrema[comp]["min"].append(f.min())
-                    extrema[comp]["max"].append(f.max())
-
-        for comp, vals in extrema.items():
-            if not vals["min"]:
-                continue
-            vmin = float(np.percentile(vals["min"], 1))
-            vmax = float(np.percentile(vals["max"], 99))
-            if comp != "Bmag":                     # enforce symmetry for diverging maps
-                bound = max(abs(vmin), abs(vmax))
-                vmin, vmax = -bound, bound
-            self._vmin[comp] = vmin
-            self._vmax[comp] = vmax
-            print(f"  {comp}: [{vmin:.4f}, {vmax:.4f}]")
-
-    def _process_step(self, step: int, plane: str, slice_idx: int) -> list[Path]:
-        """Load, process, and save all plots for a single simulation step."""
-        path = self.file_map.get(step)
-        if not path:
-            print(f"  No file for step {step}, skipping.")
-            return []
-
+    def plot_snapshot(self, step, plane='xy', slice_index=None):
+        fn = self.file_map.get(step)
+        if fn is None:
+            return False
+            
         try:
-            bx3d, by3d, bz3d = load_field_3d(path, step, self.B0)
-            bx, by, bz, xl, yl = slice_3d(bx3d, by3d, bz3d, plane, slice_idx)
-        except (KeyError, ValueError) as e:
-            print(f"  Error at step {step}: {e}")
+            fields = PICDataReader.read_multiple_fields_3d(fn, "jeh-", ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"])
+            bx3d = fields["hx_fc/p0/3d"] * self.B0
+            by3d = fields["hy_fc/p0/3d"] * self.B0
+            bz3d = fields["hz_fc/p0/3d"] * self.B0
+        except Exception as e:
+            print(f"Error procesando step {step}: {e}")
+            return False
+
+        bx2d, by2d, bz2d, xlabel, ylabel = self._get_slice(bx3d, by3d, bz3d, plane, slice_index)
+
+        time_omega_ci = step * 0.00104961
+
+        # Magnitud
+        if self.comp_magnitude:
+            mag = np.sqrt((bx2d - np.mean(bx2d))**2 + (by2d - np.mean(by2d))**2 + (bz2d - np.mean(bz2d))**2) / self.B0
+            if self.smooth_sigma > 0:
+                mag = gaussian_filter(mag, sigma=self.smooth_sigma)
+            
+            if self.fixed_scale and 'Bmag' in self.global_vmin:
+                vmin, vmax = self.global_vmin['Bmag'], self.global_vmax['Bmag']
+            elif self.dyn_scale:
+                vmax = max(np.percentile(mag, 99.8), 1e-4) # Mejor contraste 99.8 
+                vmin = 0
+            else:
+                vmin, vmax = 0, self.fluct_amp
+
+            fig, ax = plt.subplots(figsize=(10, 8))
+            im = ax.imshow(mag.T, origin='lower', cmap=self.palettes['Bmag'], vmin=vmin, vmax=vmax, aspect='auto')
+            fig.colorbar(im, ax=ax).set_label(r'$|\delta B| / B_0$', fontsize=14)
+            ax.set_xlabel(xlabel, fontsize=12)
+            ax.set_ylabel(ylabel, fontsize=12)
+            ax.set_title(rf'Magnitude $|\delta B| / B_0$ | Step {step} | $t \approx {time_omega_ci:.2f} \Omega_{{ci}}^{{-1}}$', fontsize=14)
+            ax.grid(True, linestyle=':', alpha=0.7)
+            
+            outname = self.outdir / f'Bmag_fluct_step{step}_{plane}.png'
+            fig.savefig(outname, dpi=200, bbox_inches='tight')
+            plt.close(fig)
+
+        # Componentes
+        for comp, data in [('Bx', bx2d), ('By', by2d), ('Bz', bz2d)]:
+            if comp not in self.comps_to_plot: continue
+                
+            fluct = self._process_component(data)
+            
+            if self.fixed_scale and comp in self.global_vmin:
+                vmin, vmax = self.global_vmin[comp], self.global_vmax[comp]
+            elif self.dyn_scale:
+                vmax = max(np.percentile(np.abs(fluct), 99.8), 1e-4)
+                vmin = -vmax
+            else:
+                vmin, vmax = -self.fluct_amp, self.fluct_amp
+
+            fig, ax = plt.subplots(figsize=(10, 8))
+            im = ax.imshow(fluct.T, origin='lower', cmap=self.palettes[comp], vmin=vmin, vmax=vmax, aspect='auto')
+            fig.colorbar(im, ax=ax).set_label(rf'$\delta {comp} / B_0$', fontsize=14)
+            ax.set_xlabel(xlabel, fontsize=12)
+            ax.set_ylabel(ylabel, fontsize=12)
+            ax.set_title(rf'Fluct. $\delta {comp} / B_0$ | Step {step} | $t \approx {time_omega_ci:.2f} \Omega_{{ci}}^{{-1}}$', fontsize=14)
+            ax.grid(True, linestyle=':', alpha=0.5)
+            
+            outname = self.outdir / f'{comp}fluct_step{step}_{plane}.png'
+            fig.savefig(outname, dpi=200, bbox_inches='tight')
+            plt.close(fig)
+
+        return True
+
+    def batch_plot(self, steps=None, plane='xy', slice_index=None):
+        if not steps:
+            steps = sorted(self.file_map.keys())
+            
+        if not steps:
+            print("No se encontraron pasos para procesar.")
             return []
+            
+        if self.fixed_scale:
+            self.compute_global_scales(steps, plane, slice_index)
+            
+        for step in steps:
+            print(f"Procesando step {step}...")
+            self.plot_snapshot(step, plane, slice_index)
 
-        saved = []
-
-        if self.plot_magnitude:
-            data = fluctuation_magnitude(bx, by, bz, self.B0, self.smooth)
-            vmin, vmax = color_limits(data, "Bmag", self._vmin.get("Bmag"),
-                                      self._vmax.get("Bmag"), self.fluct_amp, self.dynamic_scale)
-            out = save_field_image(data, "Bmag", step, plane, xl, yl, vmin, vmax, self.out_dir)
-            print(f"  Saved: {out.name}")
-            saved.append(out)
-
-        for comp, arr in zip(["Bx", "By", "Bz"], [bx, by, bz]):
-            if comp not in self.components:
+    def create_gifs(self, plane='xy', duration=0.2):
+        print("Generando GIFs...")
+        for comp in (['Bmag'] if self.comp_magnitude else []) + self.comps_to_plot:
+            pattern = f"Bmag_fluct_step*_{plane}.png" if comp == 'Bmag' else f"{comp}fluct_step*_{plane}.png"
+            files = sorted(self.outdir.glob(pattern), key=lambda x: int(re.search(r'step(\d+)_', x.name).group(1)))
+            
+            if not files:
                 continue
-            data = fluctuation(arr, self.B0, self.smooth)
-            vmin, vmax = color_limits(data, comp, self._vmin.get(comp),
-                                      self._vmax.get(comp), self.fluct_amp, self.dynamic_scale)
-            out = save_field_image(data, comp, step, plane, xl, yl, vmin, vmax, self.out_dir)
-            print(f"  Saved: {out.name}")
-            saved.append(out)
-
-        return saved
+                
+            gif_path = self.outdir / f"{comp}_fluct_{plane}.gif"
+            with imageio.get_writer(gif_path, mode='I', duration=duration, loop=0) as writer:
+                for file in files:
+                    writer.append_data(imageio.imread(file))
+            print(f"  GIF creado: {gif_path}")
 
 
-# =============================================================================
-# Section 8 – CLI Entry Point
-# =============================================================================
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--pattern', type=str, default='pfd.*.h5', help='Patrón de archivos HDF5')
+    parser.add_argument('--B0', type=float, default=0.01)
+    parser.add_argument('--fluct', type=float, default=0.1)
+    parser.add_argument('--plane', type=str, default='xy', choices=['xy','xz','yz'])
+    parser.add_argument('--steps', nargs='*', type=int)
+    parser.add_argument('--slice', type=int, default=None)
+    parser.add_argument('--outdir', type=str, default='field_images')
+    parser.add_argument('--smooth', type=float, default=0.8)
+    parser.add_argument('--no_dyn_scale', action='store_true')
+    parser.add_argument('--no_mag', action='store_true')
+    parser.add_argument('--comps', nargs='+', default=['Bx','By','Bz'], choices=['Bx','By','Bz'])
+    parser.add_argument('--fixed_scale', action='store_true')
+    parser.add_argument('--create_gifs', action='store_true')
+    parser.add_argument('--gif_duration', type=float, default=0.2)
+    args = parser.parse_args()
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Visualize magnetic field fluctuations from PIC simulation HDF5 files.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    if args.B0 == 0:
+        args.B0 = 0.01
+
+    plotter = FieldImagePlotter(
+        em_pattern=args.pattern,
+        B0=args.B0,
+        fluct_amp=args.fluct,
+        outdir=args.outdir,
+        smooth_sigma=args.smooth,
+        dyn_scale=not args.no_dyn_scale,
+        comp_magnitude=not args.no_mag,
+        comps_to_plot=args.comps,
+        fixed_scale=args.fixed_scale
     )
-    # Input / output
-    parser.add_argument("--pattern",  default=DEFAULTS["pattern"],  help="Glob pattern for HDF5 files.")
-    parser.add_argument("--out_dir",  default=DEFAULTS["out_dir"],  help="Output directory.")
-    # Physics
-    parser.add_argument("--B0",       type=float, default=DEFAULTS["B0"],        help="Reference field strength.")
-    parser.add_argument("--fluct_amp",type=float, default=DEFAULTS["fluct_amp"], help="Default color-scale amplitude.")
-    # Slice
-    parser.add_argument("--plane",    default="xy", choices=["xy","xz","yz"],    help="Plane to visualize.")
-    parser.add_argument("--slice",    type=int, default=None, dest="slice_idx",  help="Normal-axis slice index.")
-    parser.add_argument("--steps",    nargs="*", type=int, default=None,         help="Steps to process (default: all).")
-    # Processing
-    parser.add_argument("--smooth",   type=float, default=DEFAULTS["smooth"],    help="Gaussian smoothing sigma.")
-    parser.add_argument("--comps",    nargs="+", default=list(DEFAULTS["components"]),
-                        choices=["Bx","By","Bz"],                                help="Components to plot.")
-    parser.add_argument("--no_mag",   action="store_true",                       help="Skip |δB| magnitude plot.")
-    # Color scaling
-    parser.add_argument("--fixed_scale",      action="store_true", help="Lock color limits globally (recommended for GIFs).")
-    parser.add_argument("--no_dynamic_scale", action="store_true", help="Use static ±fluct_amp limits.")
-    # Animation
-    parser.add_argument("--create_gifs",  action="store_true",                       help="Assemble animated GIFs.")
-    parser.add_argument("--gif_duration", type=float, default=DEFAULTS["gif_dur"],   help="Seconds per frame in GIF.")
-
-    return parser.parse_args()
-
-
-def main() -> None:
-    args = parse_args()
-
-    plotter = FieldPlotter(
-        pattern        = args.pattern,
-        B0             = args.B0,
-        fluct_amp      = args.fluct_amp,
-        out_dir        = args.out_dir,
-        smooth         = args.smooth,
-        dynamic_scale  = not args.no_dynamic_scale,
-        plot_magnitude = not args.no_mag,
-        components     = args.comps,
-        fixed_scale    = args.fixed_scale,
-    )
-
-    plotter.run(
-        plane        = args.plane,
-        steps        = args.steps,
-        slice_idx    = args.slice_idx,
-        create_gifs  = args.create_gifs,
-        gif_duration = args.gif_duration,
-    )
-
-
-if __name__ == "__main__":
-    main()
+    
+    plotter.batch_plot(steps=args.steps, plane=args.plane, slice_index=args.slice)
+    
+    if args.create_gifs:
+        plotter.create_gifs(plane=args.plane, duration=args.gif_duration)

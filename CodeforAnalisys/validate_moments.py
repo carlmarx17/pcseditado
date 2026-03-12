@@ -2,12 +2,14 @@
 """
 validate_moments.py
 ====================
-Validate that the distribution moments (density, macroscopic velocity,
-temperature) computed from particle data match the input parameters
-used to generate the distributions in psc_temp_aniso.cxx.
+Valida que los momentos de la distribución (densidad, velocidad macroscópica,
+temperatura) calculados de los datos de partículas coincidan con los parámetros
+utiizados en psc_temp_aniso.cxx (createKappaMultivariate).
 
-This ensures consistency between the C++ particle initialization
-(createKappaMultivariate) and the expected physical parameters.
+Unidades físicas usando mi/me = 64 (masa artificial):
+  Espacial  →  dᵢ = c/ωₚᵢ = √(mᵢ/n₀) = 8  [celdas/dᵢ]
+  Temporal  →  Ωcᵢ = qᵢB₀/mᵢ = 0.1/64    [rad/t_código]
+  Velocidad →  vA = B₀ = 0.1              [en código con c=1]
 
 Usage:
     python validate_moments.py [path_to_prt_file.h5]
@@ -20,6 +22,10 @@ import os
 import h5py
 import numpy as np
 from scipy.special import gamma as gamma_func
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyBboxPatch
 
 # ═══════════════════════════════════════════════════════════════════════
 # 1. EXPECTED VALUES — Extracted from psc_temp_aniso.cxx
@@ -44,8 +50,23 @@ TE_PAR = BETA_E_PAR * B0**2 / 2.0                  # = 0.005
 TE_PERP = TE_PERP_OVER_TE_PAR * TE_PAR             # = 0.005
 TI_PAR = BETA_I_PAR * B0**2 / 2.0                  # = 0.05
 TI_PERP = TI_PERP_OVER_TI_PAR * TI_PAR             # = 0.175
-MI = MASS_RATIO                                     # = 64.0
-ME = 1.0 / MASS_RATIO                              # = 0.015625
+
+# NOTA sobre masas con masa artificial mi/me = 64:
+#   En PSC con masa artificial, el código fija:
+#     m_electron = 1.0  (unidades código)
+#     m_ion      = MASS_RATIO * Zi = 64.0
+#   NO confundir con la masa real del electrón (1/1836 mp).
+#   La simulación es válida porque mi/me = 64 en la simulación,
+#   lo que reduce la separación de escala temporal ce/ci de forma controlada.
+M_ION      = MASS_RATIO * Zi   # = 64.0  [unidades PSC]
+M_ELECTRON = 1.0               # = 1.0   [unidades PSC, masa artificial]
+
+# Unidades físicas (con c=1, n₀=1, μ₀=1 en PSC)
+VA       = B0                                   # vA = B₀/√(n₀mᵢ) en código
+DI       = np.sqrt(M_ION / N_DENSITY)           # dᵢ = c/ωₚᵢ = 8 celdas
+DE       = np.sqrt(M_ELECTRON / N_DENSITY)      # dₑ = c/ωₚₑ = 1 celda
+OMEGA_CI = Zi * B0 / M_ION                      # Ωcᵢ = 0.001563 rad/t
+OMEGA_CE = 1.0 * B0 / M_ELECTRON               # Ωcₑ = 0.1 rad/t
 
 # Grid parameters (from setupGrid())
 NICELL = 250   # particles per cell per species at density = 1
@@ -56,12 +77,10 @@ N_GRID_Z = 512
 BETA_NORM = 1.0
 CORI = 1.0 / NICELL
 
-# Kind definition:
-#   ions:      q = Zi = 1.0,   m = mass_ratio * Zi = 64.0
-#   electrons: q = -1.0,       m = 1.0
-M_ION = MASS_RATIO * Zi   # 64.0
-Q_ION = Zi                # 1.0
-M_ELECTRON = 1.0
+# Definición de especies PSC:
+#   iones:      q = +Zi = +1.0,  m = MASS_RATIO * Zi = 64.0
+#   electrones: q = -1.0,        m = 1.0  (masa artificial, mi/me = 64)
+Q_ION      = Zi     # = +1.0
 Q_ELECTRON = -1.0
 
 # Expected number of particles per cell (with fractional_n_particles_per_cell = true)
@@ -346,11 +365,138 @@ def print_final_summary(ion_results, electron_results):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 5. MAIN
+# 5. GRÁFICO RESUMEN VISUAL
+# ═══════════════════════════════════════════════════════════════════════
+
+def plot_validation_summary(ion_res, elec_res, outdir):
+    """
+    Gráfico resumen visual tipo tabla con colores PASS/FAIL.
+    Temperaturas en mᵢvA² (iones) y mₑvA² (electrones).
+    Velocidades en vA. Densidad en n/n₀.
+    """
+    from matplotlib.patches import FancyBboxPatch
+
+    rows = [
+        # (label, expected, ion_val, elec_val, unit, tol%)
+        ("Density  n/n_0",
+         N_DENSITY, ion_res['n'], elec_res['n'], "n_0", 1.0),
+        ("Drift <vx>/vA",
+         0.0, ion_res['vx']/VA, elec_res['vx']/VA, "vA", None),
+        ("Drift <vy>/vA",
+         0.0, ion_res['vy']/VA, elec_res['vy']/VA, "vA", None),
+        ("Drift <vz>/vA",
+         0.0, ion_res['vz']/VA, elec_res['vz']/VA, "vA", None),
+        ("T_perp  [m_i vA^2]  (ions)",
+         TI_PERP/(M_ION*VA**2), ion_res['T_perp']/(M_ION*VA**2), None, "m_i vA^2", 2.0),
+        ("T_par   [m_i vA^2]  (ions)",
+         TI_PAR/(M_ION*VA**2),  ion_res['T_par']/(M_ION*VA**2),  None, "m_i vA^2", 2.0),
+        ("T_perp  [m_e vA^2]  (elec)",
+         TE_PERP/(M_ELECTRON*VA**2), None, elec_res['T_perp']/(M_ELECTRON*VA**2), "m_e vA^2", 2.0),
+        ("T_par   [m_e vA^2]  (elec)",
+         TE_PAR/(M_ELECTRON*VA**2),  None, elec_res['T_par']/(M_ELECTRON*VA**2),  "m_e vA^2", 2.0),
+        ("T_perp/T_par  (ions)",
+         TI_PERP_OVER_TI_PAR, ion_res['anisotropy'], None, "", 2.0),
+        ("T_perp/T_par  (elec)",
+         TE_PERP_OVER_TE_PAR, None, elec_res['anisotropy'], "", 2.0),
+    ]
+
+    def rel_err(exp, meas):
+        if meas is None or exp is None: return None
+        if exp == 0.0: return abs(meas) * 100
+        return abs(meas - exp) / abs(exp) * 100
+
+    def pcolor(err, tol):
+        if err is None: return '#555555'
+        if err <= tol:      return '#27ae60'
+        if err <= tol * 3:  return '#f39c12'
+        return '#c0392b'
+
+    n_rows  = len(rows)
+    fig, ax = plt.subplots(figsize=(14, n_rows * 0.72 + 2.8))
+    ax.axis('off')
+    fig.patch.set_facecolor('white')
+
+    fig.text(0.5, 0.97,
+             f'Validation Report — PSC  (mi/me={int(MASS_RATIO)}, '
+             f'kappa={KAPPA}, beta_i||={BETA_I_PAR:.1f}, T_perp/T_par={TI_PERP_OVER_TI_PAR})',
+             ha='center', va='top', fontsize=14, fontweight='bold', color='black')
+    fig.text(0.5, 0.93,
+             f'd_i={DI:.1f} cells  |  w_ci={OMEGA_CI:.5f} rad/t  |  '
+             f'vA={VA:.3f}  |  Grid: {N_GRID_Y/DI:.0f}x{N_GRID_Z/DI:.0f} d_i',
+             ha='center', va='top', fontsize=10, color='#444444')
+
+    col_x = [0.01, 0.26, 0.40, 0.51, 0.63, 0.74, 0.86]
+    hdrs  = ['Parameter','Expected','Ions','Err% (i)','Electrons','Err% (e)','Status']
+    hy    = 0.88
+    for cx, h in zip(col_x, hdrs):
+        fig.text(cx, hy, h, transform=fig.transFigure,
+                 fontsize=10.5, fontweight='bold', color='#111111', va='top')
+    fig.add_artist(plt.Line2D([0.01,0.99],[hy-0.026, hy-0.026],
+                               transform=fig.transFigure, color='#cccccc', lw=1.0))
+
+    row_h = (0.85 - 0.07) / (n_rows + 0.5)
+    for i, (param, expected, iv, ev, unit, tol) in enumerate(rows):
+        y = hy - 0.040 - (i+1)*row_h
+        fig.add_artist(FancyBboxPatch(
+            (0.005, y-row_h*0.48), 0.99, row_h*0.96,
+            boxstyle="round,pad=0.003",
+            facecolor='#f8f9fa' if i%2==0 else '#e9ecef',
+            edgecolor='none', transform=fig.transFigure, zorder=0))
+
+        ei = rel_err(expected, iv)
+        ee = rel_err(expected, ev)
+
+        if tol is not None:
+            errs = [e for e in [ei,ee] if e is not None]
+            w = max(errs) if errs else None
+            if w is None:    st, sc = '—', '#555555'
+            elif w <= tol:   st, sc = 'PASS', '#27ae60'
+            elif w <= tol*3: st, sc = 'WARN', '#e67e22'
+            else:            st, sc = 'FAIL', '#c0392b'
+        else:
+            vals = [v for v in [iv,ev] if v is not None]
+            wa = max(abs(v) for v in vals) if vals else 0
+            if wa < 0.01:   st, sc = 'PASS', '#27ae60'
+            elif wa < 0.1:  st, sc = 'WARN', '#e67e22'
+            else:           st, sc = 'FAIL', '#c0392b'
+
+        def fmt(v):
+            if v is None: return '—'
+            if abs(v) < 0.001 or abs(v) >= 1000: return f'{v:.4e}'
+            return f'{v:.6f}'
+        def ferr(e):
+            return '—' if e is None else f'{e:.3f}%'
+
+        cells = [
+            (col_x[0], param,                '#000000'),
+            (col_x[1], f'{fmt(expected)} {unit}','#555555'),
+            (col_x[2], fmt(iv),              '#2980b9'),
+            (col_x[3], ferr(ei),             pcolor(ei,tol) if tol else '#555555'),
+            (col_x[4], fmt(ev),              '#c0392b'),
+            (col_x[5], ferr(ee),             pcolor(ee,tol) if tol else '#555555'),
+            (col_x[6], st,                   sc),
+        ]
+        for cx, txt, col in cells:
+            fig.text(cx, y, txt, transform=fig.transFigure,
+                     fontsize=9.5, color=col, va='center')
+
+    for xl, col, lbl in [(0.01,'#27ae60','PASS (<2%)'),
+                          (0.18,'#e67e22','WARN (2–6%)'),
+                          (0.35,'#c0392b','FAIL (>6%)')]:
+        fig.text(xl, 0.025, lbl, transform=fig.transFigure,
+                 fontsize=9.5, color=col, fontweight='bold', va='bottom')
+
+    out_path = os.path.join(outdir, "validation_summary.png")
+    plt.savefig(out_path, dpi=180, bbox_inches='tight', facecolor='white')
+    plt.close()
+    print(f"\n  [Visual report] Saved: {out_path}")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 6. MAIN
 # ═══════════════════════════════════════════════════════════════════════
 
 def main():
-    # Determine input file (default: t=0)
     if len(sys.argv) > 1:
         filepath = sys.argv[1]
     else:
@@ -364,18 +510,15 @@ def main():
 
     print_expected_parameters()
 
-    # Load and separate species
     data = load_particles(filepath)
     ions, electrons = separate_species(data)
 
-    # Validate moments for each species
     ion_results = compute_moments(
         ions, "IONS",
         expected_T_perp=TI_PERP,   # 0.175
         expected_T_par=TI_PAR,     # 0.05
         expected_m=M_ION           # 64.0
     )
-
     electron_results = compute_moments(
         electrons, "ELECTRONS",
         expected_T_perp=TE_PERP,   # 0.005
@@ -383,9 +526,13 @@ def main():
         expected_m=M_ELECTRON      # 1.0
     )
 
-    # Final summary
     print_final_summary(ion_results, electron_results)
+
+    outdir = os.path.join(os.path.dirname(os.path.abspath(filepath)), "validation_plots")
+    os.makedirs(outdir, exist_ok=True)
+    plot_validation_summary(ion_results, electron_results, outdir)
 
 
 if __name__ == "__main__":
     main()
+

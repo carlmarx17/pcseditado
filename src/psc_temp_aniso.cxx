@@ -121,14 +121,14 @@ void setupParameters() {
 }
 
 // ----------------------------------------------------------------------
-// 6. Grid setup (Optimized for 48 cores)
+// 6. Grid setup (Optimized for 4 cores)
 // ----------------------------------------------------------------------
 Grid_t* setupGrid() {
   // 2D Topology: 1 cell in X, 384 in Y, 512 in Z.
-  // MPI decomposition: 1 rank in X, 6 in Y, 8 in Z (Total = 48 patches/cores)
+  // MPI decomposition: 1 rank in X, 2 in Y, 2 in Z (Total = 4 patches/cores)
   Grid_t::Real3 LL{1., 384., 512.}; 
   Int3 gd{1, 384, 512}; 
-  Int3 np{1, 6, 8};     
+  Int3 np{1, 2, 2};     
   
   Grid_t::Domain dom{gd, LL, -.5*LL, np};
   psc::grid::BC bc{{BND_FLD_PERIODIC, BND_FLD_PERIODIC, BND_FLD_PERIODIC},
@@ -167,14 +167,18 @@ Grid_t* setupGrid() {
 void initializeParticles(SetupParticles<Mparticles>& setup_p,
                          Balance& bal, Grid_t*& gptr, Mparticles& mprts) {
   partitionAndSetupParticles(setup_p, bal, gptr, mprts,
-    [&](int kind, Double3, psc_particle_npt& npt){
+    [&](int kind, Double3 pos, int patch, Int3 idx, psc_particle_np& np){
+      psc_particle_npt npt{};
+      npt.kind = kind;
       if(kind == MY_ION) {
-        npt.n = g.n; 
+        npt.n = g.n;
         npt.T[0] = g.Ti_perp; npt.T[1] = g.Ti_perp; npt.T[2] = g.Ti_par;
       } else {
-        npt.n = g.n; 
+        npt.n = g.n;
         npt.T[0] = g.Te_perp; npt.T[1] = g.Te_perp; npt.T[2] = g.Te_par;
       }
+      np.n = npt.n;
+      np.p = setup_p.createKappaMultivariate(npt);
     });
 }
 
@@ -227,9 +231,9 @@ void run() {
   ofp.moments = ofip;
   OutputFields<MfieldsState, Mparticles, Dim, Writer> outf{grid, ofp};
 
-  // Output particles configuration: Disabled to save disk space
+  // Output particles configuration: Enabled every 100 steps
   OutputParticlesParams opp{};
-  opp.every_step = -400; 
+  opp.every_step = 100; 
   opp.data_dir = ".";
   opp.basename = "prt";
   OutputParticles outp{grid, opp};
@@ -238,6 +242,7 @@ void run() {
   auto diagnostics = makeDiagnosticsDefault(outf, outp, oute);
 
   SetupParticles<Mparticles> setup_p(grid);
+  setup_p.kappa = 3.0; // The parameter kappa
   setup_p.fractional_n_particles_per_cell = true;
   setup_p.neutralizing_population = MY_ION;
 

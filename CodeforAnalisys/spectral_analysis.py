@@ -97,10 +97,20 @@ class SpectralAnalyzer:
         K = np.sqrt(KX**2 + KY**2)
         
         # Binning for 1D isotropic spectrum
-        k_min = min(np.min(kx[kx>0]), np.min(ky[ky>0]))
+        kx_pos = kx[kx > 0]
+        ky_pos = ky[ky > 0]
+        
+        if len(kx_pos) == 0 or len(ky_pos) == 0:
+            # Fallback for 1D-like slices
+            k_min = np.max(K) / 100.0 if np.max(K) > 0 else 1e-1
+        else:
+            k_min = min(np.min(kx_pos), np.min(ky_pos))
+            
         k_max = np.max(K)
+        if k_max <= k_min:
+             k_max = k_min * 10.0
         # Create bins
-        num_bins = int(min(Nx, Ny) // 2)
+        num_bins = max(int(min(Nx, Ny) // 2), 10)
         bins = np.linspace(k_min, k_max, num_bins + 1)
         k_centers = 0.5 * (bins[1:] + bins[:-1])
         
@@ -185,7 +195,7 @@ class SpectralAnalyzer:
         
         p = plt.pcolormesh(KX, KY, psd_log, shading='auto', cmap='inferno')
         cb = plt.colorbar(p)
-        cb.set_label('$\log_{10}$(PSD)')
+        cb.set_label(r'$\log_{10}$(PSD)')
         
         plt.xlabel(r'$k_x$')
         plt.ylabel(r'$k_y$')
