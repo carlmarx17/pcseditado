@@ -13,6 +13,8 @@ If no path is given, it defaults to ../build/src/prt.000000000.h5
 
 import sys
 import os
+import glob
+import re
 import h5py
 import numpy as np
 import matplotlib
@@ -22,9 +24,18 @@ from matplotlib.colors import LogNorm
 from scipy.ndimage import gaussian_filter
 from scipy.special import gamma as gamma_func
 
+try:
+    from data_reader import PICDataReader
+except ImportError:
+    PICDataReader = None
+
 # ── Configuration ───────────────────────────────────────────────────
 OUTPUT_DIR = "prt_plots"
 DPI = 200
+MAX_EVOLUTION_FILES = 12
+MAX_VDF_SNAPSHOTS = 5
+
+STEP_RE = re.compile(r"\.(\d+)(?:_p\d+)?\.h5$")
 
 # ── Simulation parameters (from psc_temp_aniso.cxx) ────────────────
 MASS_RATIO = 64.0
@@ -42,22 +53,149 @@ KAPPA = 3.0                             # kappa parameter
 
 
 # ── Helper: Load particles from PSC HDF5 file ──────────────────────
-def load_particles(filepath):
+def load_particles(filepath, verbose=True):
     """Load particle data from a PSC prt.*.h5 file."""
-    print(f"Loading particles from: {filepath}")
+    if verbose:
+        print(f"Loading particles from: {filepath}")
     with h5py.File(filepath, 'r') as f:
         data = f['particles']['p0']['1d'][:]
-    print(f"  Total particles: {len(data):,}")
+    if verbose:
+        print(f"  Total particles: {len(data):,}")
     return data
 
 
+def load_particle_phase_space(filepath):
+    """Load only the fields needed for distribution evolution."""
+    with h5py.File(filepath, 'r') as f:
+        dset = f['particles']['p0']['1d']
+        q = dset['q'][:]
+        px = dset['px'][:]
+        py = dset['py'][:]
+        pz = dset['pz'][:]
+
+    ion_mask = q > 0
+    elec_mask = q < 0
+    return {
+        'ions_pz': pz[ion_mask],
+        'ions_perp': np.sqrt(px[ion_mask]**2 + py[ion_mask]**2),
+        'electrons_pz': pz[elec_mask],
+        'electrons_perp': np.sqrt(px[elec_mask]**2 + py[elec_mask]**2),
+    }
+
+
+def load_field_fluctuation_metrics(filepath, b0=B0):
+    """Return RMS magnetic fluctuation metrics normalized to B0."""
+    if PICDataReader is None:
+        raise RuntimeError("data_reader.py is required to read magnetic field outputs.")
+
+    fields = PICDataReader.read_multiple_fields_3d(
+        filepath,
+        'jeh-',
+        ['hx_fc/p0/3d', 'hy_fc/p0/3d', 'hz_fc/p0/3d'],
+    )
+
+    bx = np.asarray(fields['hx_fc/p0/3d'], dtype=float).ravel() * b0
+    by = np.asarray(fields['hy_fc/p0/3d'], dtype=float).ravel() * b0
+    bz = np.asarray(fields['hz_fc/p0/3d'], dtype=float).ravel() * b0
+
+    dbx = bx - np.mean(bx)
+    dby = by - np.mean(by)
+    dbz = bz - np.mean(bz)
+
+    delta_b_total = np.sqrt(np.mean(dbx**2 + dby**2 + dbz**2)) / max(abs(b0), 1e-30)
+    delta_b_parallel = np.sqrt(np.mean(dbz**2)) / max(abs(b0), 1e-30)
+    delta_b_perp = np.sqrt(np.mean(dbx**2 + dby**2)) / max(abs(b0), 1e-30)
+
+    return {
+        'delta_b_total': delta_b_total,
+        'delta_b_parallel': delta_b_parallel,
+        'delta_b_perp': delta_b_perp,
+    }
+
+
+def extract_step(filepath):
+    """Extract the integer step from a PSC particle filename."""
+    match = STEP_RE.search(os.path.basename(filepath))
+    if not match:
+        raise ValueError(f"Could not extract step from filename: {filepath}")
+    return int(match.group(1))
+
+
+def resolve_particle_files(input_path):
+    """Resolve a file, directory, or glob pattern into an ordered file list."""
+    if os.path.isdir(input_path):
+        candidates = sorted(glob.glob(os.path.join(input_path, "prt.*.h5")))
+    elif any(ch in input_path for ch in "*?[]"):
+        candidates = sorted(glob.glob(input_path))
+    else:
+        candidates = [input_path]
+
+    files = [path for path in candidates if os.path.isfile(path)]
+    if not files:
+        raise FileNotFoundError(f"No particle files matched: {input_path}")
+
+    return sorted(files, key=extract_step)
+
+
+def resolve_field_files(reference_dir, pattern="pfd.*_p*.h5"):
+    """Resolve magnetic field files and map them by simulation step."""
+    candidates = sorted(glob.glob(os.path.join(reference_dir, pattern)))
+    files = {}
+    for path in candidates:
+        if os.path.isfile(path):
+            files[extract_step(path)] = path
+    return files
+
+
+def sample_filepaths(filepaths, max_files=MAX_EVOLUTION_FILES):
+    """Uniformly sample filepaths to keep temporal scans tractable."""
+    if len(filepaths) <= max_files:
+        return filepaths
+
+    indices = np.linspace(0, len(filepaths) - 1, max_files, dtype=int)
+    indices = np.unique(indices)
+    return [filepaths[idx] for idx in indices]
+
+
 # ── Helper: Separate species ────────────────────────────────────────
-def separate_species(data):
+def separate_species(data, verbose=True):
     """Separate particles by species using charge (q field)."""
     ions = data[data['q'] > 0]
     electrons = data[data['q'] < 0]
-    print(f"  Ions: {len(ions):,},  Electrons: {len(electrons):,}")
+    if verbose:
+        print(f"  Ions: {len(ions):,},  Electrons: {len(electrons):,}")
     return ions, electrons
+
+
+def compute_species_temperatures(species):
+    """Compute perpendicular/parallel temperatures removing bulk drift."""
+    mass = abs(float(species['m'][0]))
+    px = np.asarray(species['px'], dtype=float)
+    py = np.asarray(species['py'], dtype=float)
+    pz = np.asarray(species['pz'], dtype=float)
+
+    t_perp = 0.5 * (np.var(px) + np.var(py)) / mass
+    t_par = np.var(pz) / mass
+    return t_perp, t_par
+
+
+def summarize_particle_snapshot(filepath):
+    """Compute anisotropy summary from a single particle snapshot."""
+    data = load_particles(filepath, verbose=False)
+    ions, electrons = separate_species(data, verbose=False)
+
+    ion_tperp, ion_tpar = compute_species_temperatures(ions)
+    elec_tperp, elec_tpar = compute_species_temperatures(electrons)
+
+    return {
+        'step': extract_step(filepath),
+        'ion_anisotropy': ion_tperp / max(ion_tpar, 1e-30),
+        'electron_anisotropy': elec_tperp / max(elec_tpar, 1e-30),
+        'ion_tperp': ion_tperp,
+        'ion_tpar': ion_tpar,
+        'electron_tperp': elec_tperp,
+        'electron_tpar': elec_tpar,
+    }
 
 
 # ── Plot 1: VDF 2D — f(v_perp, v_parallel) heatmap ─────────────────
@@ -322,22 +460,243 @@ def print_summary(ions, electrons):
     print("\n" + "="*60)
 
 
+def plot_vdf_snapshots(filepaths, outdir, max_snapshots=MAX_VDF_SNAPSHOTS, bins_parallel=180, bins_perp=120):
+    """Plot reduced VDFs for a few representative times."""
+    print("\nBuilding multi-time VDF snapshot panel...")
+
+    sampled_paths = sample_filepaths(filepaths, max_files=max_snapshots)
+    sampled_data = [(extract_step(path), load_particle_phase_space(path)) for path in sampled_paths]
+
+    ion_par_max = max(np.percentile(np.abs(data['ions_pz']), 99.5) for _, data in sampled_data)
+    ion_perp_max = max(np.percentile(data['ions_perp'], 99.5) for _, data in sampled_data)
+    elec_par_max = max(np.percentile(np.abs(data['electrons_pz']), 99.5) for _, data in sampled_data)
+    elec_perp_max = max(np.percentile(data['electrons_perp'], 99.5) for _, data in sampled_data)
+
+    species_config = [
+        ('ions_pz', 'ions_perp', ion_par_max, ion_perp_max, 'Ions'),
+        ('electrons_pz', 'electrons_perp', elec_par_max, elec_perp_max, 'Electrons'),
+    ]
+
+    fig, axes = plt.subplots(
+        2,
+        len(sampled_data),
+        figsize=(4.4 * len(sampled_data), 8.0),
+        constrained_layout=True,
+        squeeze=False,
+    )
+    fig.patch.set_facecolor('white')
+    fig.suptitle('Velocity Distribution Function at Different Times', fontsize=17, fontweight='bold')
+
+    for row, (par_key, perp_key, par_max, perp_max, label) in enumerate(species_config):
+        for col, (step, data) in enumerate(sampled_data):
+            ax = axes[row, col]
+            hist, xedges, yedges = np.histogram2d(
+                data[par_key],
+                data[perp_key],
+                bins=[bins_parallel, bins_perp],
+                range=[[-par_max, par_max], [0.0, perp_max]],
+                density=True,
+            )
+            hist = gaussian_filter(hist, sigma=1.0)
+
+            positive = hist[hist > 0]
+            vmax = positive.max() if positive.size else 1.0
+            log_hist = np.full_like(hist, -5.0)
+            if positive.size:
+                with np.errstate(divide='ignore'):
+                    log_hist = np.log10(np.maximum(hist / vmax, 1e-5))
+
+            im = ax.pcolormesh(
+                xedges,
+                yedges,
+                log_hist.T,
+                shading='auto',
+                cmap='viridis',
+                vmin=-5.0,
+                vmax=0.0,
+            )
+            ax.set_title(f'{label} | step {step}', fontsize=12, fontweight='bold')
+            ax.set_xlabel(r'$v_\parallel$')
+            ax.set_ylabel(r'$v_\perp$')
+            ax.tick_params(which='both', direction='in', top=True, right=True)
+
+            if col == len(sampled_data) - 1:
+                cbar = fig.colorbar(im, ax=ax, pad=0.01)
+                cbar.set_label(r'$\log_{10}(f / f_{max})$')
+
+    path = os.path.join(outdir, "vdf_time_snapshots.png")
+    plt.savefig(path, dpi=DPI, bbox_inches='tight', facecolor='white')
+    plt.close()
+    print(f"  Saved: {path}")
+
+
+def plot_distribution_evolution(filepaths, outdir, bins_parallel=180, bins_perp=120):
+    """Plot the temporal evolution of 1D ion/electron distributions."""
+    print("\nBuilding distribution evolution plot...")
+
+    sampled_paths = sample_filepaths(filepaths)
+    if len(sampled_paths) != len(filepaths):
+        print(f"  Using {len(sampled_paths)} uniformly sampled snapshots out of {len(filepaths)} for temporal evolution.")
+
+    steps = []
+    range_sample = load_particle_phase_space(sampled_paths[-1])
+    ion_par_max = np.percentile(np.abs(range_sample['ions_pz']), 99.5)
+    ion_perp_max = np.percentile(range_sample['ions_perp'], 99.5)
+    elec_par_max = np.percentile(np.abs(range_sample['electrons_pz']), 99.5)
+    elec_perp_max = np.percentile(range_sample['electrons_perp'], 99.5)
+
+    ion_par_edges = np.linspace(-ion_par_max, ion_par_max, bins_parallel + 1)
+    ion_perp_edges = np.linspace(0.0, ion_perp_max, bins_perp + 1)
+    elec_par_edges = np.linspace(-elec_par_max, elec_par_max, bins_parallel + 1)
+    elec_perp_edges = np.linspace(0.0, elec_perp_max, bins_perp + 1)
+
+    ion_par_matrix = np.zeros((len(ion_par_edges) - 1, len(sampled_paths)))
+    ion_perp_matrix = np.zeros((len(ion_perp_edges) - 1, len(sampled_paths)))
+    elec_par_matrix = np.zeros((len(elec_par_edges) - 1, len(sampled_paths)))
+    elec_perp_matrix = np.zeros((len(elec_perp_edges) - 1, len(sampled_paths)))
+
+    for idx, filepath in enumerate(sampled_paths):
+        phase_space = load_particle_phase_space(filepath)
+        steps.append(extract_step(filepath))
+
+        ion_par_matrix[:, idx], _ = np.histogram(phase_space['ions_pz'], bins=ion_par_edges, density=True)
+        ion_perp_matrix[:, idx], _ = np.histogram(phase_space['ions_perp'], bins=ion_perp_edges, density=True)
+        elec_par_matrix[:, idx], _ = np.histogram(phase_space['electrons_pz'], bins=elec_par_edges, density=True)
+        elec_perp_matrix[:, idx], _ = np.histogram(phase_space['electrons_perp'], bins=elec_perp_edges, density=True)
+
+    steps = np.asarray(steps, dtype=float)
+    if len(steps) == 1:
+        time_edges = np.array([steps[0] - 0.5, steps[0] + 0.5], dtype=float)
+    else:
+        deltas = np.diff(steps)
+        left_edge = steps[0] - 0.5 * deltas[0]
+        right_edge = steps[-1] + 0.5 * deltas[-1]
+        interior = 0.5 * (steps[:-1] + steps[1:])
+        time_edges = np.concatenate([[left_edge], interior, [right_edge]])
+
+    panels = [
+        (ion_par_matrix, ion_par_edges, r'Ions: $f(v_\parallel, t)$'),
+        (ion_perp_matrix, ion_perp_edges, r'Ions: $f(v_\perp, t)$'),
+        (elec_par_matrix, elec_par_edges, r'Electrons: $f(v_\parallel, t)$'),
+        (elec_perp_matrix, elec_perp_edges, r'Electrons: $f(v_\perp, t)$'),
+    ]
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10), constrained_layout=True)
+    fig.patch.set_facecolor('white')
+    fig.suptitle("Temporal Evolution of Velocity Distributions", fontsize=17, fontweight='bold')
+
+    for ax, (matrix, edges, title) in zip(axes.flat, panels):
+        positive = matrix[matrix > 0]
+        vmin = positive.min() if positive.size else 1e-12
+        vmax = matrix.max() if matrix.size else 1.0
+        im = ax.pcolormesh(
+            time_edges,
+            edges,
+            matrix,
+            shading='auto',
+            norm=LogNorm(vmin=vmin, vmax=max(vmax, vmin * 10.0)),
+            cmap='viridis'
+        )
+        ax.set_title(title, fontsize=13, fontweight='bold')
+        ax.set_xlabel('Simulation step')
+        ax.set_ylabel('Velocity')
+        ax.tick_params(which='both', direction='in', top=True, right=True)
+        cbar = fig.colorbar(im, ax=ax, pad=0.01)
+        cbar.set_label('PDF')
+
+    path = os.path.join(outdir, "distribution_evolution.png")
+    plt.savefig(path, dpi=DPI, bbox_inches='tight', facecolor='white')
+    plt.close()
+    print(f"  Saved: {path}")
+
+
+def plot_macro_evolution(filepaths, outdir, field_files=None):
+    """Track particle anisotropy and magnetic fluctuations versus time."""
+    print("\nBuilding anisotropy and magnetic-fluctuation evolution plot...")
+
+    sampled_paths = sample_filepaths(filepaths)
+    particle_rows = [summarize_particle_snapshot(path) for path in sampled_paths]
+
+    steps = np.asarray([row['step'] for row in particle_rows], dtype=float)
+    ion_anis = np.asarray([row['ion_anisotropy'] for row in particle_rows], dtype=float)
+    elec_anis = np.asarray([row['electron_anisotropy'] for row in particle_rows], dtype=float)
+
+    field_steps = []
+    delta_b_total = []
+    delta_b_parallel = []
+    delta_b_perp = []
+
+    if field_files:
+        for step in steps.astype(int):
+            filepath = field_files.get(step)
+            if filepath is None:
+                continue
+            metrics = load_field_fluctuation_metrics(filepath)
+            field_steps.append(step)
+            delta_b_total.append(metrics['delta_b_total'])
+            delta_b_parallel.append(metrics['delta_b_parallel'])
+            delta_b_perp.append(metrics['delta_b_perp'])
+
+    fig, axes = plt.subplots(2, 1, figsize=(12, 9), constrained_layout=True)
+    fig.patch.set_facecolor('white')
+    fig.suptitle('Temporal Evolution of Anisotropy and Magnetic Fluctuations', fontsize=17, fontweight='bold')
+
+    ax = axes[0]
+    ax.plot(steps, ion_anis, marker='o', linewidth=2.0, color='#c0392b', label='Ions')
+    ax.plot(steps, elec_anis, marker='s', linewidth=2.0, color='#2980b9', label='Electrons')
+    ax.axhline(1.0, color='black', linestyle=':', linewidth=1.0, alpha=0.8)
+    ax.set_ylabel(r'$T_\perp / T_\parallel$')
+    ax.set_xlabel('Simulation step')
+    ax.set_title('Particle anisotropy')
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+
+    ax = axes[1]
+    if field_steps:
+        field_steps = np.asarray(field_steps, dtype=float)
+        ax.plot(field_steps, delta_b_total, marker='o', linewidth=2.0, color='#8e44ad', label=r'$\delta B_{\rm rms} / B_0$')
+        ax.plot(field_steps, delta_b_parallel, marker='^', linewidth=1.8, color='#16a085', label=r'$\delta B_{\parallel,\rm rms} / B_0$')
+        ax.plot(field_steps, delta_b_perp, marker='d', linewidth=1.8, color='#f39c12', label=r'$\delta B_{\perp,\rm rms} / B_0$')
+        ax.legend()
+    else:
+        ax.text(0.5, 0.5, 'No matching pfd.*.h5 field files found for these steps.', ha='center', va='center', transform=ax.transAxes)
+    ax.set_ylabel('Normalized fluctuation amplitude')
+    ax.set_xlabel('Simulation step')
+    ax.set_title('Magnetic-field fluctuations')
+    ax.grid(True, alpha=0.3)
+
+    path = os.path.join(outdir, "anisotropy_and_field_evolution.png")
+    plt.savefig(path, dpi=DPI, bbox_inches='tight', facecolor='white')
+    plt.close()
+    print(f"  Saved: {path}")
+
+
 # ── Main ────────────────────────────────────────────────────────────
 def main():
     if len(sys.argv) > 1:
-        filepath = sys.argv[1]
+        input_path = sys.argv[1]
     else:
-        filepath = os.path.join(os.path.dirname(__file__),
-                                "..", "build", "src", "prt.000000000.h5")
+        input_path = os.path.join(os.path.dirname(__file__),
+                                  "..", "build", "src", "prt.000000000.h5")
 
-    if not os.path.exists(filepath):
-        print(f"ERROR: File not found: {filepath}")
-        print("Usage: python plot_prt.py [path_to_prt_file.h5]")
+    try:
+        filepaths = resolve_particle_files(input_path)
+    except FileNotFoundError as exc:
+        print(f"ERROR: {exc}")
+        print("Usage: python plot_prt.py [path_to_prt_file.h5|directory|glob]")
         sys.exit(1)
 
+    filepath = filepaths[-1]
     outdir = os.path.join(os.path.dirname(os.path.abspath(filepath)), OUTPUT_DIR)
     os.makedirs(outdir, exist_ok=True)
     print(f"Output directory: {outdir}\n")
+
+    if len(filepaths) > 1:
+        print(f"Resolved {len(filepaths)} particle files. Using latest snapshot for static plots: {os.path.basename(filepath)}")
+        field_files = resolve_field_files(os.path.dirname(os.path.abspath(filepath)))
+        plot_vdf_snapshots(filepaths, outdir)
+        plot_distribution_evolution(filepaths, outdir)
+        plot_macro_evolution(filepaths, outdir, field_files=field_files)
 
     data = load_particles(filepath)
     ions, electrons = separate_species(data)

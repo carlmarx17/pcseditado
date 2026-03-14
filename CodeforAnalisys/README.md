@@ -27,7 +27,7 @@ These scripts have been modularized and refactored for clarity and performance:
    Checks particle density, drift, temperature, anisotropy, and kurtosis against the initialization values defined in `psc_temp_aniso.cxx`.
 
 7. **`plot_prt.py`**:
-   Produces 2D VDF maps and ion Kappa-vs-Maxwellian comparisons from a particle dump.
+   Produces 2D VDF maps, ion Kappa-vs-Maxwellian comparisons, and a temporal evolution map of the 1D distributions when run over multiple `prt.*.h5` files.
 
 8. **`plot_vdf_3d.py`**:
    Builds a 3D surface rendering of the reduced VDF for ions and electrons.

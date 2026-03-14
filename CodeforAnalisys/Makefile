@@ -44,7 +44,7 @@ particles:
 	@echo "==========================================================="
 	@echo "Generating Particle VDF and Phase Space Plots"
 	@echo "==========================================================="
-	$(PYTHON) plot_prt.py $(DATA_DIR)/prt.000001000.h5
+	$(PYTHON) plot_prt.py "$(DATA_DIR)/prt.*.h5"
 	$(PYTHON) plot_vdf_3d.py $(DATA_DIR)/prt.000001000.h5
 	$(PYTHON) plot_moments_scatter_3d.py $(DATA_DIR)/prt.000001000.h5
 
