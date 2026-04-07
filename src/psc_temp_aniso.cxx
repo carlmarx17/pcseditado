@@ -11,7 +11,7 @@
 #include "DiagnosticsDefault.h"
 #include "OutputFieldsDefault.h"
 #include "psc_config.hxx"
-
+#include "writer_adios2.hxx"
 #include <libpsc/psc_heating/psc_heating_impl.hxx>
 #include "heating_spot_foil.hxx"
 
@@ -51,7 +51,7 @@ using PscConfig = PscConfig1vbecCuda<Dim>;
 using PscConfig = PscConfig1vbecSingle<Dim>;
 #endif
 
-using Writer = WriterDefault;
+using Writer = WriterADIOS2;
 using MfieldsState    = PscConfig::MfieldsState;
 using Mparticles      = PscConfig::Mparticles;
 using Balance         = PscConfig::Balance;
@@ -233,7 +233,7 @@ void run() {
 
   // Output particles configuration: Enabled every 100 steps
   OutputParticlesParams opp{};
-  opp.every_step = 100; 
+  opp.every_step = 400;
   opp.data_dir = ".";
   opp.basename = "prt";
   OutputParticles outp{grid, opp};
