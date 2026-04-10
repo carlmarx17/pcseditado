@@ -1,38 +1,107 @@
 <?xml version="1.0"?>
+<!--
+  ADIOS2 configuration for psc_temp_aniso (mass_ratio=200 run)
+  ─────────────────────────────────────────────────────────────
+  Engine: BP5  (better performance than BP4 for large grids)
+  Compression:
+    - ZFP lossy (accuracy=1e-4) on EM fields   → ~5-8x size reduction
+    - BZip2 lossless on checkpoints             → exact restart
+  NumAggregators = 8 (one aggregator per 9 ranks, for 72 total)
+
+  Storage estimate per snapshot (grid 4096×4608, float32):
+    Raw fields (6 vars):  4096*4608*6*4 B = 452 MB
+    ZFP compressed       :              ~  90 MB   ← what lands on disk
+  With output every 500 steps (800 000 total → 1600 snapshots):
+    Field data total (before SLURM purge) ≈ 1600 * 90 MB ~ 140 GB
+    → SLURM pipeline keeps at most ~70 snapshots on disk at once (~6 GB)
+-->
 <adios-config>
-    <io name="pfd">
-        <engine type="BP4">
-            <parameter key="SubStreams" value="16"/>
-        </engine>
-    </io>
-    <io name="tfd">
-        <engine type="BP4">
-            <parameter key="SubStreams" value="16"/>
-        </engine>
-    </io>
-    <io name="pfd_moments">
-        <engine type="BP4">
-            <parameter key="SubStreams" value="16"/>
-        </engine>
-    </io>
-    <io name="tfd_moments">
-        <engine type="BP4">
-            <parameter key="SubStreams" value="16"/>
-        </engine>
-    </io>
-    <io name="gauss">
-        <engine type="BP4">
-            <parameter key="SubStreams" value="16"/>
-        </engine>
-    </io>
-    <io name="continuity">
-        <engine type="BP4">
-            <parameter key="SubStreams" value="16"/>
-        </engine>
-    </io>
-    <io name="checkpoint">
-        <engine type="BP4">
-            <parameter key="SubStreams" value="16"/>
-        </engine>
-    </io>
+
+  <!-- ── Instantaneous field output (pfd) ──────────────────────────── -->
+  <io name="pfd">
+    <engine type="BP5">
+      <parameter key="NumAggregators"    value="8"/>
+      <parameter key="InitialBufferSize" value="256MB"/>
+      <parameter key="BufferChunkSize"   value="128MB"/>
+    </engine>
+    <!-- ZFP lossy: absolute accuracy 1e-4 gives ~5x compression on EM fields -->
+    <variable name=".*">
+      <operation type="zfp">
+        <parameter key="accuracy" value="1e-4"/>
+      </operation>
+    </variable>
+  </io>
+
+  <!-- ── Time-averaged field output (tfd) ─ DISABLED in .cxx ──────── -->
+  <io name="tfd">
+    <engine type="BP5">
+      <parameter key="NumAggregators" value="8"/>
+    </engine>
+    <variable name=".*">
+      <operation type="zfp">
+        <parameter key="accuracy" value="1e-4"/>
+      </operation>
+    </variable>
+  </io>
+
+  <!-- ── Instantaneous moments (pfd_moments) ──────────────────────── -->
+  <!-- Moments output every 2000 steps → ~400 snapshots, ~60 MB each  -->
+  <io name="pfd_moments">
+    <engine type="BP5">
+      <parameter key="NumAggregators" value="8"/>
+    </engine>
+    <variable name=".*">
+      <operation type="zfp">
+        <parameter key="accuracy" value="1e-3"/>
+      </operation>
+    </variable>
+  </io>
+
+  <!-- ── Time-averaged moments (tfd_moments) ─ DISABLED in .cxx ───── -->
+  <io name="tfd_moments">
+    <engine type="BP5">
+      <parameter key="NumAggregators" value="8"/>
+    </engine>
+    <variable name=".*">
+      <operation type="zfp">
+        <parameter key="accuracy" value="1e-3"/>
+      </operation>
+    </variable>
+  </io>
+
+  <!-- ── Gauss / continuity ────────────────────────────────────────── -->
+  <io name="gauss">
+    <engine type="BP5">
+      <parameter key="NumAggregators" value="8"/>
+    </engine>
+    <variable name=".*">
+      <operation type="zfp">
+        <parameter key="accuracy" value="1e-4"/>
+      </operation>
+    </variable>
+  </io>
+
+  <io name="continuity">
+    <engine type="BP5">
+      <parameter key="NumAggregators" value="8"/>
+    </engine>
+    <variable name=".*">
+      <operation type="zfp">
+        <parameter key="accuracy" value="1e-4"/>
+      </operation>
+    </variable>
+  </io>
+
+  <!-- ── Checkpoint: LOSSLESS (exact restart) ──────────────────────── -->
+  <io name="checkpoint">
+    <engine type="BP5">
+      <parameter key="NumAggregators" value="8"/>
+      <parameter key="InitialBufferSize" value="512MB"/>
+    </engine>
+    <!-- BZip2 lossless: no accuracy loss, still ~30% smaller -->
+    <variable name=".*">
+      <operation type="bzip2"/>
+    </variable>
+  </io>
+
 </adios-config>
