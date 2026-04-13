@@ -12,7 +12,7 @@
 #include "DiagnosticsDefault.h"
 #include "OutputFieldsDefault.h"
 #include "psc_config.hxx"
-#include "writer_adios2.hxx"
+#include "writer_mrc.hxx"
 #include <libpsc/psc_heating/psc_heating_impl.hxx>
 #include "heating_spot_foil.hxx"
 
@@ -41,8 +41,8 @@ static PscParams psc_params;
 
 namespace {
 
-constexpr double kResolvedDomainDe = 128.;
-constexpr int kResolvedGridYZ = 1024;
+constexpr double kResolvedDomainDe = 64.;
+constexpr int kResolvedGridYZ = 512;
 constexpr int kParticlesPerCell = 2000;
 constexpr int kParticleOutputStride = 1000;
 constexpr int kParticleWindowCells = 64;
@@ -62,7 +62,7 @@ using PscConfig = PscConfig1vbecCuda<Dim>;
 using PscConfig = PscConfig1vbecSingle<Dim>;
 #endif
 
-using Writer = WriterADIOS2;
+using Writer = WriterMRC;
 using MfieldsState    = PscConfig::MfieldsState;
 using Mparticles      = PscConfig::Mparticles;
 using Balance         = PscConfig::Balance;
@@ -134,8 +134,8 @@ void setupParameters() {
 // 6. Grid setup
 // ----------------------------------------------------------------------
 Grid_t* setupGrid() {
-  // Debye-resolved setup from the documentation:
-  // Ly = Lz = 128 d_e, dy = dz = 0.125 d_e -> 1024 x 1024 cells.
+  // Debye-resolved setup with a smaller box:
+  // Ly = Lz = 64 d_e, dy = dz = 0.125 d_e -> 512 x 512 cells.
   // Decompose over 32 ranks as 1 x 4 x 8 patches.
   Grid_t::Real3 LL{1., kResolvedDomainDe, kResolvedDomainDe};
   Int3 gd{1, kResolvedGridYZ, kResolvedGridYZ};
