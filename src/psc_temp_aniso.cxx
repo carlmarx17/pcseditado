@@ -1,7 +1,8 @@
 // ======================================================================
-// psc_mirror_fast.cxx
-// Simulation of Ion Mirror Instability in Collisionless Plasma.
-// Optimized for fast growth and execution on 48 MPI ranks.
+// psc_temp_aniso.cxx
+// Simulation of ion temperature-anisotropy-driven instabilities.
+// Tuned for the kappa = 3 campaign documented in
+// "Documentacion Simulaciones.pdf".
 // ======================================================================
 
 #include <psc.hxx>
@@ -37,6 +38,16 @@ struct PscFlatfoilParams {
 static PscFlatfoilParams g;
 static std::string read_checkpoint_filename;
 static PscParams psc_params;
+
+namespace {
+
+constexpr double kResolvedDomainDe = 128.;
+constexpr int kResolvedGridYZ = 1024;
+constexpr int kParticlesPerCell = 2000;
+constexpr int kParticleOutputStride = 1000;
+constexpr int kParticleWindowCells = 64;
+
+} // namespace
 
 // ----------------------------------------------------------------------
 // 3. Compile-time configuration
@@ -88,10 +99,9 @@ auto make_MfieldsMoment_n<Moment_n>(const Grid_t &grid) {
 #endif
 
 // ----------------------------------------------------------------------
-// 5. Parameter setup (The "Steroids" for fast growth)
+// 5. Parameter setup
 // ----------------------------------------------------------------------
 void setupParameters() {
-  // Increased to 15001 to allow ions enough time to develop the nonlinear phase
   psc_params.nmax = 15001; 
   psc_params.cfl  = 0.95;
   psc_params.write_checkpoint_every_step = -1000;
@@ -102,12 +112,12 @@ void setupParameters() {
   g.mass_ratio = 64.0; // Artificial mass ratio to speed up simulation
   g.lambda0 = 20.0;
   
-  // Physical parameters to violently trigger the ion mirror instability
+  // Campaign 1 from the documentation: vary kappa at fixed beta_i|| = 5, A = 3.
   g.vA_over_c = 0.1; 
-  g.beta_e_par = 1.0;  // Moderate electron beta
-  g.beta_i_par = 10.0; // Extreme ion beta for rapid linear growth
-  g.Ti_perp_over_Ti_par = 3.5; // Extreme temperature anisotropy (T_perp > T_par)
-  g.Te_perp_over_Te_par = 1.0; // Isotropic electrons
+  g.beta_e_par = 1.0;
+  g.beta_i_par = 5.0;
+  g.Ti_perp_over_Ti_par = 3.0;
+  g.Te_perp_over_Te_par = 1.0;
   g.n = 1.0;
 
   // Calculate derived thermal velocities and pressures
@@ -121,14 +131,15 @@ void setupParameters() {
 }
 
 // ----------------------------------------------------------------------
-// 6. Grid setup (Optimized for 4 cores)
+// 6. Grid setup
 // ----------------------------------------------------------------------
 Grid_t* setupGrid() {
-  // 2D Topology: 1 cell in X, 384 in Y, 512 in Z.
-  // MPI decomposition: 1 rank in X, 2 in Y, 2 in Z (Total = 4 patches/cores)
-  Grid_t::Real3 LL{1., 384., 512.}; 
-  Int3 gd{1, 384, 512}; 
-  Int3 np{1, 2, 2};     
+  // Debye-resolved setup from the documentation:
+  // Ly = Lz = 128 d_e, dy = dz = 0.125 d_e -> 1024 x 1024 cells.
+  // Decompose over 32 ranks as 1 x 4 x 8 patches.
+  Grid_t::Real3 LL{1., kResolvedDomainDe, kResolvedDomainDe};
+  Int3 gd{1, kResolvedGridYZ, kResolvedGridYZ};
+  Int3 np{1, 4, 8};
   
   Grid_t::Domain dom{gd, LL, -.5*LL, np};
   psc::grid::BC bc{{BND_FLD_PERIODIC, BND_FLD_PERIODIC, BND_FLD_PERIODIC},
@@ -145,9 +156,8 @@ Grid_t* setupGrid() {
   mpi_printf(MPI_COMM_WORLD, "d_e = %g, d_i = %g\n", 1., g.d_i);
   mpi_printf(MPI_COMM_WORLD, "lambda_De = %g\n", sqrt(g.Te_perp));
 
-  auto npn = Grid_t::NormalizationParams::dimensionless(); 
-  // Reduced to 250 for faster iteration while maintaining acceptable noise levels
-  npn.nicell = 250; 
+  auto npn = Grid_t::NormalizationParams::dimensionless();
+  npn.nicell = kParticlesPerCell;
   
   double dt = psc_params.cfl * courant_length(dom);
   Grid_t::Normalization norm{npn};
@@ -231,18 +241,24 @@ void run() {
   ofp.moments = ofip;
   OutputFields<MfieldsState, Mparticles, Dim, Writer> outf{grid, ofp};
 
-  // Output particles configuration: Enabled every 100 steps
+  // Save only a representative central window of particles to control I/O.
   OutputParticlesParams opp{};
-  opp.every_step = 400;
+  opp.every_step = kParticleOutputStride;
   opp.data_dir = ".";
   opp.basename = "prt";
+  opp.lo = {0,
+            (grid.domain.gdims[1] - kParticleWindowCells) / 2,
+            (grid.domain.gdims[2] - kParticleWindowCells) / 2};
+  opp.hi = {0,
+            (grid.domain.gdims[1] + kParticleWindowCells) / 2,
+            (grid.domain.gdims[2] + kParticleWindowCells) / 2};
   OutputParticles outp{grid, opp};
 
   DiagEnergies oute{grid.comm(), -100};
   auto diagnostics = makeDiagnosticsDefault(outf, outp, oute);
 
   SetupParticles<Mparticles> setup_p(grid);
-  setup_p.kappa = 3.0; // The parameter kappa
+  setup_p.kappa = 3.0;
   setup_p.fractional_n_particles_per_cell = true;
   setup_p.neutralizing_population = MY_ION;
 
