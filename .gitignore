@@ -5,9 +5,12 @@
 *.pyc
 __pycache__/
 .vscode/
+/.codex
+/*.pdf
 CodeforAnalisys/anisotropy_plots/
 CodeforAnalisys/field_images/
 CodeforAnalisys/mirror_plots/
+CodeforAnalisys/diamagnetic_plots/
 CodeforAnalisys/spectral_plots/
 CodeforAnalisys/prt_plots/
 CodeforAnalisys/fancy_vdf_plots/

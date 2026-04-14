@@ -22,21 +22,19 @@ where B0 already equals B0_ref numerically. No additional rescaling is
 applied — doing so would introduce a spurious factor of ~1/B0_ref^2 in beta.
 """
 
+import warnings
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-import argparse
 from pathlib import Path
-import warnings
-from data_reader import PICDataReader
 
-# ── Simulation parameters (consistent with psc_temp_aniso.cxx) ──────────────
-MASS_RATIO: float = 64.0   # m_i / m_e (artificial mass ratio)
-KAPPA: float = 3.0          # Kappa index for the ion distribution
+from data_reader import PICDataReader
+from psc_units import B0, FIELD_FILE_PATTERN, KAPPA, MASS_RATIO, MOMENT_FILE_PATTERN
 
 # Initial conditions (from psc_temp_aniso.cxx)
 T_PERP_I: float = 0.175     # Ion perpendicular temperature
-T_PAR_I: float = 0.05       # Ion parallel temperature
+T_PAR_I: float  = 0.05      # Ion parallel temperature
 
 warnings.filterwarnings("ignore")
 
@@ -48,7 +46,7 @@ class PlasmaAnisotropyAnalyzer:
         self,
         n0: float = 1.0,
         T0: float = 1.0,
-        B0_ref: float = 0.1,
+        B0_ref: float = B0,
         outdir: str = "anisotropy_plots",
     ):
         self.n0 = n0
@@ -97,20 +95,20 @@ class PlasmaAnisotropyAnalyzer:
         Pxx = moments["txx_i/p0/3d"].ravel()
         Pyy = moments["tyy_i/p0/3d"].ravel()
         Pzz = moments["tzz_i/p0/3d"].ravel()
-        n = moments["rho_i/p0/3d"].ravel()
+        n   = moments["rho_i/p0/3d"].ravel()
 
         Bx = b_fields["hx_fc/p0/3d"].ravel()
         By = b_fields["hy_fc/p0/3d"].ravel()
         Bz = b_fields["hz_fc/p0/3d"].ravel()
         B2 = Bx**2 + By**2 + Bz**2
 
-        safe_n = np.where(n > 1e-10, n, np.nan)
-        T_par = Pzz / safe_n
-        T_perp = 0.5 * (Pxx + Pyy) / safe_n
+        safe_n    = np.where(n > 1e-10, n, np.nan)
+        T_par     = Pzz / safe_n
+        T_perp    = 0.5 * (Pxx + Pyy) / safe_n
         anisotropy = T_perp / (T_par + 1e-30)
 
         # beta_par = P_par / P_mag,  P_mag = B^2 / (2 mu_0)
-        P_mag = B2 / (2.0 * self.mu0)
+        P_mag    = B2 / (2.0 * self.mu0)
         beta_par = Pzz / (P_mag + 1e-30)
 
         mask = (
@@ -127,14 +125,14 @@ class PlasmaAnisotropyAnalyzer:
 
     def analyze_simulation(
         self,
-        mom_pattern: str = "pfd_moments.*.h5",
-        bz_pattern: str = "pfd.*.h5",
+        mom_pattern: str = MOMENT_FILE_PATTERN,
+        bz_pattern: str = FIELD_FILE_PATTERN,
     ):
         """Process all matched snapshots and accumulate results."""
         print("Starting plasma anisotropy analysis...")
 
-        mom_files = PICDataReader.find_files(mom_pattern)
-        bz_files = PICDataReader.find_files(bz_pattern)
+        mom_files  = PICDataReader.find_files(mom_pattern)
+        bz_files   = PICDataReader.find_files(bz_pattern)
         common_steps = sorted(set(mom_files) & set(bz_files))
 
         if not common_steps:
@@ -159,8 +157,8 @@ class PlasmaAnisotropyAnalyzer:
             self.snapshots.append(step)
 
         self.all_anisotropy = np.asarray(all_aniso)
-        self.all_beta_par = np.asarray(all_beta)
-        self.all_steps = np.asarray(all_idx)
+        self.all_beta_par   = np.asarray(all_beta)
+        self.all_steps      = np.asarray(all_idx)
         print("Analysis completed.\n")
 
     # ── Instability threshold curves ─────────────────────────────────────────
@@ -197,7 +195,7 @@ class PlasmaAnisotropyAnalyzer:
             return
 
         # ── Color scheme ─────────────────────────────────────────────────────
-        DARK_BG = "#0f1117"
+        DARK_BG  = "#0f1117"
         PANEL_BG = "#181c27"
         TEXT_CLR = "#e8eaf0"
         GRID_CLR = "#2a2f3f"
@@ -208,10 +206,10 @@ class PlasmaAnisotropyAnalyzer:
 
         # ── Sub-sampling ─────────────────────────────────────────────────────
         n_total = len(self.all_beta_par)
-        n_sub = min(200_000, n_total)
-        idx = np.random.choice(n_total, n_sub, replace=False)
+        n_sub   = min(200_000, n_total)
+        idx     = np.random.choice(n_total, n_sub, replace=False)
 
-        beta_sub = self.all_beta_par[idx]
+        beta_sub  = self.all_beta_par[idx]
         aniso_sub = self.all_anisotropy[idx]
 
         valid = (
@@ -220,7 +218,7 @@ class PlasmaAnisotropyAnalyzer:
             & np.isfinite(beta_sub)
             & np.isfinite(aniso_sub)
         )
-        beta_v = beta_sub[valid]
+        beta_v  = beta_sub[valid]
         aniso_v = aniso_sub[valid]
 
         # ── Axis range ───────────────────────────────────────────────────────
@@ -235,7 +233,7 @@ class PlasmaAnisotropyAnalyzer:
             xmin, xmax = 0.3, 300.0
             ymin, ymax = 0.3, 12.0
 
-        # ── 2D histogram ────────────────────────────────────────────────────
+        # ── 2D histogram ─────────────────────────────────────────────────────
         h = ax.hist2d(
             beta_v,
             aniso_v,
@@ -250,7 +248,7 @@ class PlasmaAnisotropyAnalyzer:
         cbar.ax.yaxis.set_tick_params(color=TEXT_CLR)
         plt.setp(cbar.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
 
-        # ── Instability thresholds ───────────────────────────────────────────
+        # ── Instability thresholds ────────────────────────────────────────────
         b = np.logspace(
             np.log10(max(5e-2, xmin * 0.3)),
             np.log10(min(5e3, xmax * 5.0)),
@@ -258,80 +256,48 @@ class PlasmaAnisotropyAnalyzer:
         )
 
         # Mirror threshold
-        mirror = self._mirror_threshold(b)
+        mirror   = self._mirror_threshold(b)
         in_range = (mirror >= ymin * 0.8) & (mirror <= ymax * 1.2)
         ax.plot(
-            b[in_range],
-            mirror[in_range],
-            "--",
-            color="#ff6666",
-            linewidth=2.8,
-            zorder=8,
-            alpha=0.9,
+            b[in_range], mirror[in_range],
+            "--", color="#ff6666", linewidth=2.8, zorder=8, alpha=0.9,
             label=r"Mirror  $T_\perp/T_\parallel = 1 + 1/\beta_\parallel$",
         )
-        ax.fill_between(
-            b,
-            np.clip(mirror, ymin, ymax * 2),
-            ymax * 2,
-            alpha=0.10,
-            color="#ff4444",
-            zorder=3,
-        )
+        ax.fill_between(b, np.clip(mirror, ymin, ymax * 2), ymax * 2,
+                        alpha=0.10, color="#ff4444", zorder=3)
 
         # Firehose threshold (only valid for beta > 1)
         b_fh = b[b > 1.05]
-        fh = self._firehose_threshold(b_fh)
+        fh   = self._firehose_threshold(b_fh)
         ax.plot(
-            b_fh,
-            fh,
-            "--",
-            color="#66aaff",
-            linewidth=2.8,
-            zorder=8,
-            alpha=0.9,
+            b_fh, fh,
+            "--", color="#66aaff", linewidth=2.8, zorder=8, alpha=0.9,
             label=r"Firehose  $T_\perp/T_\parallel = 1 - 1/\beta_\parallel$",
         )
-        ax.fill_between(
-            b_fh,
-            ymin * 0.5,
-            np.clip(fh, ymin * 0.5, ymax),
-            alpha=0.10,
-            color="#4488ff",
-            zorder=3,
-        )
+        ax.fill_between(b_fh, ymin * 0.5, np.clip(fh, ymin * 0.5, ymax),
+                        alpha=0.10, color="#4488ff", zorder=3)
 
         # Ion-cyclotron threshold
-        ic = self._ion_cyclotron_threshold(b)
+        ic    = self._ion_cyclotron_threshold(b)
         in_ic = (ic >= ymin * 0.8) & (ic <= ymax * 1.2)
         ax.plot(
-            b[in_ic],
-            ic[in_ic],
-            ":",
-            color="#44ffaa",
-            linewidth=2.4,
-            zorder=8,
-            alpha=0.9,
+            b[in_ic], ic[in_ic],
+            ":", color="#44ffaa", linewidth=2.4, zorder=8, alpha=0.9,
             label=r"Ion-cyclotron  $\approx 1 + 0.43/\beta_\parallel^{0.42}$",
         )
 
         # Isotropy reference line
         ax.axhline(1.0, color=TEXT_CLR, alpha=0.30, linewidth=1.0, linestyle=":")
 
-        # ── Initial conditions marker ────────────────────────────────────────
+        # ── Initial conditions marker ─────────────────────────────────────────
         # beta_par,i = n0 * T_par_i / (B0^2 / 2) = 0.05 / 0.005 = 10
         # T_perp / T_par = 0.175 / 0.05 = 3.5
-        beta_init = (self.n0 * T_PAR_I) / (self.B0_ref**2 / 2.0)
+        beta_init  = (self.n0 * T_PAR_I) / (self.B0_ref**2 / 2.0)
         aniso_init = T_PERP_I / T_PAR_I
         ax.plot(
-            beta_init,
-            aniso_init,
-            "*",
-            color="#ffd700",
-            markeredgecolor="white",
-            markeredgewidth=0.8,
-            markersize=22,
-            zorder=10,
+            beta_init, aniso_init,
+            "*", color="#ffd700", markeredgecolor="white", markeredgewidth=0.8,
+            markersize=22, zorder=10,
             label=(
                 rf"Initial conditions "
                 rf"($\beta_{{i\parallel}}={beta_init:.0f}$, "
@@ -339,7 +305,7 @@ class PlasmaAnisotropyAnalyzer:
             ),
         )
 
-        # ── Axes & labels ────────────────────────────────────────────────────
+        # ── Axes & labels ─────────────────────────────────────────────────────
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlim(xmin, xmax)
@@ -347,52 +313,33 @@ class PlasmaAnisotropyAnalyzer:
 
         ax.set_xlabel(
             r"$\beta_{\parallel}$ — Ion parallel pressure / magnetic pressure",
-            fontsize=13,
-            color=TEXT_CLR,
-            labelpad=8,
+            fontsize=13, color=TEXT_CLR, labelpad=8,
         )
-        ax.set_ylabel(
-            r"$T_\perp / T_\parallel$",
-            fontsize=14,
-            color=TEXT_CLR,
-            labelpad=8,
-        )
+        ax.set_ylabel(r"$T_\perp / T_\parallel$", fontsize=14, color=TEXT_CLR, labelpad=8)
         ax.set_title(
             r"Brazil Plot: Anisotropy vs $\beta_\parallel$"
             + "\n"
             + rf"PSC  ($m_i/m_e = {int(MASS_RATIO)}$,  $\kappa = {KAPPA}$)",
-            fontsize=15,
-            fontweight="bold",
-            color=TEXT_CLR,
-            pad=14,
+            fontsize=15, fontweight="bold", color=TEXT_CLR, pad=14,
         )
 
-        ax.tick_params(
-            which="both", colors=TEXT_CLR, direction="in", top=True, right=True
-        )
+        ax.tick_params(which="both", colors=TEXT_CLR, direction="in", top=True, right=True)
         for spine in ax.spines.values():
             spine.set_edgecolor(GRID_CLR)
         ax.grid(True, which="both", alpha=0.2, color=GRID_CLR, linestyle=":")
 
         ax.legend(
-            fontsize=10.5,
-            framealpha=0.6,
-            facecolor="#1a1f30",
-            edgecolor="#3a3f55",
-            labelcolor=TEXT_CLR,
+            fontsize=10.5, framealpha=0.6,
+            facecolor="#1a1f30", edgecolor="#3a3f55", labelcolor=TEXT_CLR,
         )
 
-        # ── Metadata annotation ──────────────────────────────────────────────
+        # ── Metadata annotation ───────────────────────────────────────────────
         n_snaps = len(self.snapshots) if self.snapshots else "?"
         ax.text(
-            0.99,
-            0.02,
+            0.99, 0.02,
             f"{n_sub:,} points  |  {n_snaps} snapshots",
-            transform=ax.transAxes,
-            ha="right",
-            va="bottom",
-            fontsize=9.5,
-            color="#8890aa",
+            transform=ax.transAxes, ha="right", va="bottom",
+            fontsize=9.5, color="#8890aa",
         )
 
         if save:
@@ -402,28 +349,22 @@ class PlasmaAnisotropyAnalyzer:
         plt.close()
 
 
-# ── CLI entry point ──────────────────────────────────────────────────────────
+# ── CLI entry point ───────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Analyze plasma anisotropy and generate Brazil plots."
     )
     parser.add_argument(
-        "--moments",
-        type=str,
-        default="pfd_moments.*.h5",
+        "--moments", type=str, default=MOMENT_FILE_PATTERN,
         help="Glob pattern for moment files.",
     )
     parser.add_argument(
-        "--fields",
-        type=str,
-        default="pfd.*.h5",
+        "--fields", type=str, default=FIELD_FILE_PATTERN,
         help="Glob pattern for field files.",
     )
     parser.add_argument(
-        "--B0",
-        type=float,
-        default=0.1,
+        "--B0", type=float, default=B0,
         help="Reference B0 (for initial-condition marker).",
     )
     args = parser.parse_args()

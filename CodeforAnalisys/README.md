@@ -14,29 +14,33 @@ These scripts have been modularized and refactored for clarity and performance:
    - **Outputs generated:** `brazil_plot_anisotropy.png`. The classic Brazil plot showcasing the particles grouping towards the edge of the Mirror onset threshold.
 
 3. **`mirror_physics.py`**:
-   Generates a spatial plot of both the Magnetic Holes (drop in B-field) and the Diamagnetic Current walls created by trapped particles. Applies a Gaussian filter to smooth the raw PIC noise.
+   Generates a spatial plot of the Magnetic Holes (drop in B-field) together with the out-of-plane current signature from the field dump. Applies a Gaussian filter to smooth raw PIC noise.
    - **Outputs generated:** `mirror_physics_step[N].png`
 
-4. **`fluctuationofmagneticfiel.py`**:
+4. **`diamagnetic_current.py`**:
+   Computes ion, electron, and total diamagnetic current maps from `pfd_moments.*.h5` and `pfd.*.h5`, with magnetic-magnitude contours overlaid to correlate current walls with mirror structures.
+   - **Outputs generated:** `diamagnetic_plots/jdia_stepXXXXXX.png`
+
+5. **`fluctuationofmagneticfiel.py`**:
    Advanced field visualization script. Extracts fluctuations $\delta B$ and $| \delta B |$ from the main field, supporting animations/GIFs creation and multi-plane slicing.
 
-5. **`spectral_analysis.py`**:
+6. **`spectral_analysis.py`**:
    Computes 1D and 2D magnetic power spectra from the same field outputs used by the fluctuation visualizer.
 
-6. **`validate_moments.py`**:
+7. **`validate_moments.py`**:
    Checks particle density, drift, temperature, anisotropy, and kurtosis against the initialization values defined in `psc_temp_aniso.cxx`.
 
-7. **`plot_prt.py`**:
+8. **`plot_prt.py`**:
    Produces 2D VDF maps, ion Kappa-vs-Maxwellian comparisons, and a temporal evolution map of the 1D distributions when run over multiple `prt.*.h5` files.
 
-8. **`plot_vdf_3d.py`**:
+9. **`plot_vdf_3d.py`**:
    Builds a 3D surface rendering of the reduced VDF for ions and electrons.
 
-9. **`plot_moments_scatter_3d.py`**:
+10. **`plot_moments_scatter_3d.py`**:
    Generates phase-space histograms plus a cutaway 3D momentum scatter view.
 
-10. **`psc_units.py`**:
-    Centralizes the unit conversions and derived plasma scales used by the analysis workflow.
+11. **`psc_units.py`**:
+   Centralizes the unit conversions and derived plasma scales used by the analysis workflow.
 
 ### How to Use
 
@@ -48,6 +52,9 @@ make brazil
 
 # Generate spatial snapshots of Mirror holes and boundaries
 make mirror
+
+# Generate diamagnetic current maps for ions, electrons and total current
+make diamagnetic
 
 # Map individual B field fluctuations (using Y-Z plane)
 make fields
@@ -63,6 +70,7 @@ make clean
 
 - `aniso.py` was replaced by `anisotropy_analysis.py`. The new script keeps the Brazil-plot goal but fixes the plasma-beta interpretation and uses the modular `PICDataReader`.
 - `plotmirro.py` was replaced by `mirror_physics.py`. Both target mirror-hole diagnostics, but the new version is the maintained implementation.
+- `diamagnetic_current.py` is maintained again as a standalone diagnostic rather than being folded into a legacy plotting script.
 - `plot_moments_validation.py` was split conceptually into `validate_moments.py` plus the particle-visualization scripts. The validation logic and the visualization logic are no longer mixed in one file.
 - `plot_prt.py`, `plot_vdf_3d.py`, and `plot_moments_scatter_3d.py` read the same particle file, but they are not duplicates: they generate different diagnostics from the same source data.
-- `fluctuationofmagneticfiel.py`, `mirror_physics.py`, and `spectral_analysis.py` also reuse the same field dumps, but they answer different questions: fluctuation maps, mirror structures, and spectra.
+- `fluctuationofmagneticfiel.py`, `mirror_physics.py`, `diamagnetic_current.py`, and `spectral_analysis.py` reuse the same field and/or moment dumps, but they answer different questions: fluctuation maps, mirror structures, diamagnetic walls, and spectra.

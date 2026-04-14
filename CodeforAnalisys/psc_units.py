@@ -86,6 +86,12 @@ N_GRID_Z = 512
 NICELL   = 250
 CORI     = 1.0 / NICELL
 
+# ── Constantes auxiliares para análisis ─────────────────────────────────────
+MU0 = 1.0
+FIELD_FILE_PATTERN = "pfd.*.h5"
+MOMENT_FILE_PATTERN = "pfd_moments.*.h5"
+PARTICLE_FILE_PATTERN = "prt.*.h5"
+
 # ── Funciones de conversión ───────────────────────────────────────────────────
 
 def cells_to_di(x_cells):
@@ -115,6 +121,11 @@ def momentum_to_va(p_code, m):
 def temp_to_va2mi(T_code, m=M_ION):
     """Convierte temperatura T [código] a T/(mi*vA²) (normalización estándar)."""
     return T_code / (m * VA**2)
+
+
+def step_to_omegaci(step: int, dt_code: float = 1.0) -> float:
+    """Convierte un step de simulación a tiempo normalizado por Ωci^-1."""
+    return step * dt_code * OMEGA_CI
 
 
 def print_units_summary():

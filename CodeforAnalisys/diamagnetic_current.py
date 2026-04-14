@@ -23,238 +23,210 @@ PSC normalised units:
   - Resulting diamagnetic current in PIC units
 """
 
-import numpy as np
+import argparse
+from io import BytesIO
+from pathlib import Path
+
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
+import numpy as np
 from matplotlib.ticker import AutoMinorLocator
 from scipy.ndimage import gaussian_filter
-import h5py
-import glob
-import re
-import os
-import warnings
-from pathlib import Path
-from io import BytesIO
+
+from data_reader import PICDataReader
+from psc_units import (
+    B0,
+    FIELD_FILE_PATTERN,
+    KAPPA,
+    MASS_RATIO,
+    MOMENT_FILE_PATTERN,
+    step_to_omegaci,
+)
 
 try:
     from PIL import Image
 except ImportError:
     Image = None
 
-warnings.filterwarnings("ignore")
 plt.switch_backend("Agg")
 
-# ── Simulation parameters ────────────────────────────────────────────────────
-B0_REF: float = 0.1        # Background field (PIC units)
-MU0: float = 1.0           # Permeability (mu_0 = 1 in PSC)
-DATA_DIR: str = "../build/src"
-OUT_DIR: Path = Path("diamagnetic_plots")
-OUT_DIR.mkdir(exist_ok=True)
+# ── Dark-theme colour palette ────────────────────────────────────────────────
+DARK_BG   = "#0c0e14"
+PANEL_BG  = "#12151f"
+TEXT_CLR  = "#dde2f0"
+GRID_CLR  = "#232840"
 
 # Steps to plot individually (representative subset)
 PLOT_STEPS: list[int] = [0, 500, 1000, 2000, 3000, 5000, 7000, 9000, 11600]
-
-# Gaussian smoothing width (cells) to suppress PIC shot noise
-SMOOTH_SIGMA: float = 4.0
 
 # GIF decimation factor
 GIF_STRIDE: int = 5
 
 
-# ── Dark-theme colour palette ────────────────────────────────────────────────
-DARK_BG = "#0c0e14"
-PANEL_BG = "#12151f"
-TEXT_CLR = "#dde2f0"
-GRID_CLR = "#232840"
+class DiamagneticCurrentAnalyzer:
+    """Compute and visualise ion/electron/total diamagnetic current maps."""
 
+    def __init__(
+        self,
+        moment_pattern: str = MOMENT_FILE_PATTERN,
+        field_pattern: str = FIELD_FILE_PATTERN,
+        sigma: float = 4.0,
+        outdir: str = "diamagnetic_plots",
+    ):
+        self.moment_pattern = moment_pattern
+        self.field_pattern  = field_pattern
+        self.sigma  = sigma
+        self.outdir = Path(outdir)
+        self.outdir.mkdir(parents=True, exist_ok=True)
 
-# ── I/O helpers ──────────────────────────────────────────────────────────────
+    def run(self, steps: list[int] | None = None, make_gif: bool = True):
+        """Run full analysis: individual plots + optional animated GIF."""
+        moment_files = PICDataReader.find_files(self.moment_pattern)
+        field_files  = PICDataReader.find_files(self.field_pattern)
+        common_steps = sorted(set(moment_files) & set(field_files))
 
-def _extract_step(filename: str) -> int | None:
-    """Extract the integer step number from a PSC HDF5 filename."""
-    match = re.search(r"\.(\d+)_", filename)
-    return int(match.group(1)) if match else None
+        if not common_steps:
+            print("No matched moment/field files found.")
+            return
 
+        selected_steps = (
+            common_steps if not steps
+            else [s for s in steps if s in moment_files and s in field_files]
+        )
+        if not selected_steps:
+            print("No matching steps found for the requested selection.")
+            return
 
-def _find_files(pattern: str) -> dict[int, str]:
-    """Return {step: filepath} dict for files matching *pattern*."""
-    files = sorted(glob.glob(pattern))
-    return {
-        step: f
-        for f in files
-        if (step := _extract_step(f)) is not None
-    }
+        # ── 1. Compute global colour range ───────────────────────────────────
+        print(f"\n[1/3] Computing global colour range from {len(common_steps)} snapshots...")
+        sample_steps = common_steps[:: max(1, len(common_steps) // 12)]
+        vmax_i_all, vmax_e_all, vmax_tot_all = [], [], []
 
+        for s in sample_steps:
+            d = self.compute_diamagnetic_current(moment_files[s], field_files[s])
+            vmax_i_all.append(np.percentile(np.abs(d["Jdia_i"]), 99.5))
+            vmax_e_all.append(np.percentile(np.abs(d["Jdia_e"]), 99.5))
+            vmax_tot_all.append(np.percentile(np.abs(d["Jdia_total"]), 99.5))
 
-def _read_field(filepath: str, group_prefix: str, dataset: str) -> np.ndarray:
-    """Read a single 2D field slice from a PSC HDF5 file."""
-    with h5py.File(filepath, "r") as f:
-        grp = next(k for k in f.keys() if k.startswith(group_prefix))
-        data = f[f"{grp}/{dataset}/p0/3d"][()]  # shape (Nz, Ny, 1)
-    return data[:, :, 0]  # → (Nz, Ny)
+        vmax_i   = float(np.percentile(vmax_i_all, 90))
+        vmax_e   = float(np.percentile(vmax_e_all, 90))
+        vmax_tot = float(np.percentile(vmax_tot_all, 90))
+        print(f"   vmax_i={vmax_i:.4f}  vmax_e={vmax_e:.4f}  vmax_tot={vmax_tot:.4f}")
 
+        # ── 2. Individual plots ───────────────────────────────────────────────
+        print(f"\n[2/3] Generating individual plots for {len(selected_steps)} snapshots...")
+        for step in selected_steps:
+            data = self.compute_diamagnetic_current(moment_files[step], field_files[step])
+            self.plot_snapshot(step, data, vmax_i, vmax_e, vmax_tot)
 
-def _read_coords(filepath: str) -> tuple[np.ndarray, np.ndarray]:
-    """Return 1-D coordinate arrays (y, z) in d_i units."""
-    with h5py.File(filepath, "r") as f:
-        y_key = next(k for k in f.keys() if k.startswith("crd[1]"))
-        z_key = next(k for k in f.keys() if k.startswith("crd[2]"))
-        y = f[f"{y_key}/crd[1]/p0/1d"][()]
-        z = f[f"{z_key}/crd[2]/p0/1d"][()]
-    return y, z
+        if not make_gif or Image is None:
+            if make_gif and Image is None:
+                print("  [WARNING] Pillow not installed — skipping GIF generation.")
+            print("\nDone.")
+            return
 
+        # ── 3. Animated GIF ───────────────────────────────────────────────────
+        gif_steps = common_steps[::GIF_STRIDE]
+        print(f"\n[3/3] Generating GIF with {len(gif_steps)} frames (stride={GIF_STRIDE})...")
 
-# ── Diamagnetic current computation ─────────────────────────────────────────
+        frames = []
+        for i, s in enumerate(gif_steps):
+            print(f"  frame {i + 1}/{len(gif_steps)}  step={s}", end="\r")
+            data = self.compute_diamagnetic_current(moment_files[s], field_files[s])
+            img  = self._render_frame_to_pil(s, data, vmax_i, vmax_e, vmax_tot)
+            frames.append(img)
 
-def compute_diamagnetic_current(
-    mom_file: str,
-    fld_file: str,
-    sigma: float = SMOOTH_SIGMA,
-) -> dict[str, np.ndarray]:
-    """
-    Compute the diamagnetic current density for ions and electrons.
+        gif_path = self.outdir / "jdia_evolution.gif"
+        frames[0].save(
+            gif_path,
+            save_all=True,
+            append_images=frames[1:],
+            duration=120,
+            loop=0,
+            optimize=True,
+        )
+        print(f"\n  GIF saved: {gif_path}  ({len(frames)} frames)")
+        print("\nDone.")
 
-    Gaussian smoothing (sigma cells) is applied to pressure and B fields
-    before computing gradients — essential to suppress PIC shot noise.
+    def compute_diamagnetic_current(
+        self, mom_file: str, fld_file: str
+    ) -> dict[str, np.ndarray]:
+        """
+        Compute diamagnetic current density for ions and electrons.
 
-    Returns dict with keys:
-        Jdia_i, Jdia_e, Jdia_tot  (Nz, Ny)
-        Pperp_i, Pperp_e, Bmod
-        y, z
-    """
-    # Perpendicular pressure: P_perp = 0.5 * (Pxx + Pyy)
-    Pxx_i = _read_field(mom_file, "all_1st", "txx_i")
-    Pyy_i = _read_field(mom_file, "all_1st", "tyy_i")
-    Pxx_e = _read_field(mom_file, "all_1st", "txx_e")
-    Pyy_e = _read_field(mom_file, "all_1st", "tyy_e")
-
-    Pperp_i_raw = 0.5 * (Pxx_i + Pyy_i)
-    Pperp_e_raw = 0.5 * (Pxx_e + Pyy_e)
-
-    # Magnetic field components (no rescaling)
-    Bx_raw = _read_field(fld_file, "jeh-", "hx_fc")
-    By_raw = _read_field(fld_file, "jeh-", "hy_fc")
-    Bz_raw = _read_field(fld_file, "jeh-", "hz_fc")
-
-    # ── Gaussian smoothing ───────────────────────────────────────────────
-    smooth = lambda arr: gaussian_filter(arr.astype(float), sigma=sigma)
-    Pperp_i = smooth(Pperp_i_raw)
-    Pperp_e = smooth(Pperp_e_raw)
-    Bx, By, Bz = smooth(Bx_raw), smooth(By_raw), smooth(Bz_raw)
-
-    B2 = Bx**2 + By**2 + Bz**2 + 1e-40
-
-    # Coordinates
-    y, z = _read_coords(mom_file)
-    dy = np.mean(np.diff(y))
-    dz = np.mean(np.diff(z))
-
-    # Pressure gradients (centred differences)
-    # Array layout: (Nz, Ny) → axis 0 = z, axis 1 = y
-    def _grad(P):
-        return np.gradient(P, dy, axis=1), np.gradient(P, dz, axis=0)
-
-    dPi_dy, dPi_dz = _grad(Pperp_i)
-    dPe_dy, dPe_dz = _grad(Pperp_e)
-
-    # Diamagnetic current (x-component, out-of-plane):
-    #   J_dx = (dP_perp/dy · Bz  -  dP_perp/dz · By) / B^2
-    Jdia_i = (dPi_dy * Bz - dPi_dz * By) / B2
-    Jdia_e = (dPe_dy * Bz - dPe_dz * By) / B2
-    Jdia_tot = Jdia_i + Jdia_e
-
-    return {
-        "Jdia_i": Jdia_i,
-        "Jdia_e": Jdia_e,
-        "Jdia_tot": Jdia_tot,
-        "Pperp_i": Pperp_i,
-        "Pperp_e": Pperp_e,
-        "Bmod": np.sqrt(B2),
-        "y": y,
-        "z": z,
-    }
-
-
-# ── Plotting ─────────────────────────────────────────────────────────────────
-
-def make_frame(
-    data: dict,
-    step: int,
-    vmax_i: float | None = None,
-    vmax_e: float | None = None,
-    vmax_tot: float | None = None,
-    return_img: bool = False,
-):
-    """
-    Render a 3-panel figure (ion / electron / total diamagnetic current).
-
-    If *return_img* is True, return an in-memory PIL Image (for GIF assembly).
-    Otherwise save a PNG to disk.
-    """
-    y = data["y"]
-    z = data["z"]
-    Ji = data["Jdia_i"]
-    Je = data["Jdia_e"]
-    Jtot = data["Jdia_tot"]
-    Bmod = data["Bmod"]
-
-    # Symmetric colour limits
-    if vmax_i is None:
-        vmax_i = np.percentile(np.abs(Ji), 99.5)
-    if vmax_e is None:
-        vmax_e = np.percentile(np.abs(Je), 99.5)
-    if vmax_tot is None:
-        vmax_tot = np.percentile(np.abs(Jtot), 99.5)
-
-    fig, axes = plt.subplots(1, 3, figsize=(19, 7), constrained_layout=True)
-    fig.patch.set_facecolor(DARK_BG)
-
-    configs = [
-        (Ji, "RdBu_r", vmax_i, r"$J^{(d)}_x$ ions", r"$J_d^{(\rm i)}$ [a.u.]"),
-        (Je, "PuOr_r", vmax_e, r"$J^{(d)}_x$ electrons", r"$J_d^{(\rm e)}$ [a.u.]"),
-        (Jtot, "seismic", vmax_tot, r"$J^{(d)}_x$ total", r"$J_d^{(\rm tot)}$ [a.u.]"),
-    ]
-
-    for ax, (field, cmap, vm, title, lbl) in zip(axes, configs):
-        ax.set_facecolor(PANEL_BG)
-        im = ax.pcolormesh(
-            y, z, field, cmap=cmap, vmin=-vm, vmax=vm,
-            shading="auto", rasterized=True,
+        Gaussian smoothing (sigma cells) is applied to pressure and B fields
+        before computing gradients — essential to suppress PIC shot noise.
+        """
+        moments = PICDataReader.read_multiple_fields_3d(
+            mom_file, "all_1st",
+            ["txx_i/p0/3d", "tyy_i/p0/3d", "txx_e/p0/3d", "tyy_e/p0/3d"],
+        )
+        fields = PICDataReader.read_multiple_fields_3d(
+            fld_file, "jeh-",
+            ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"],
         )
 
-        # |B| contour overlay
-        lvls = np.linspace(Bmod.min() * 0.6, Bmod.max() * 0.98, 8)
-        ax.contour(y, z, Bmod, levels=lvls, colors="white", linewidths=0.5, alpha=0.4)
-
-        cb = fig.colorbar(im, ax=ax, pad=0.01, aspect=30)
-        cb.set_label(lbl, fontsize=10, color=TEXT_CLR)
-        cb.ax.yaxis.set_tick_params(color=TEXT_CLR, labelsize=8)
-        plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
-
-        ax.set_xlabel(r"$y$ [$d_i$]", fontsize=11, color=TEXT_CLR)
-        ax.set_ylabel(r"$z$ [$d_i$]", fontsize=11, color=TEXT_CLR)
-        ax.set_title(title, fontsize=13, color=TEXT_CLR, pad=8)
-        ax.tick_params(
-            colors=TEXT_CLR, direction="in", which="both", top=True, right=True,
+        pperp_i = 0.5 * (
+            PICDataReader.flatten_2d_slice(moments["txx_i/p0/3d"])
+            + PICDataReader.flatten_2d_slice(moments["tyy_i/p0/3d"])
         )
-        ax.xaxis.set_minor_locator(AutoMinorLocator())
-        ax.yaxis.set_minor_locator(AutoMinorLocator())
-        for spine in ax.spines.values():
-            spine.set_edgecolor(GRID_CLR)
+        pperp_e = 0.5 * (
+            PICDataReader.flatten_2d_slice(moments["txx_e/p0/3d"])
+            + PICDataReader.flatten_2d_slice(moments["tyy_e/p0/3d"])
+        )
 
-    fig.suptitle(
-        rf"Diamagnetic Current  —  $t = {step}\ \Omega_{{ci}}^{{-1}}$"
-        "\n"
-        r"PSC  ($m_i/m_e = 64$,  $\kappa = 3$,  $B_0 = 0.1$)",
-        fontsize=14,
-        color=TEXT_CLR,
-        y=1.02,
-        fontweight="bold",
-    )
+        bx = PICDataReader.flatten_2d_slice(fields["hx_fc/p0/3d"]) * B0
+        by = PICDataReader.flatten_2d_slice(fields["hy_fc/p0/3d"]) * B0
+        bz = PICDataReader.flatten_2d_slice(fields["hz_fc/p0/3d"]) * B0
 
-    if return_img:
+        smooth = lambda arr: gaussian_filter(arr.astype(float), sigma=self.sigma)
+        pperp_i, pperp_e = smooth(pperp_i), smooth(pperp_e)
+        bx, by, bz       = smooth(bx), smooth(by), smooth(bz)
+
+        b2 = bx**2 + by**2 + bz**2 + 1e-40
+
+        # Pressure gradients: array layout (Nz, Ny) → axis 0 = z, axis 1 = y
+        dyi, dzi = np.gradient(pperp_i, axis=1), np.gradient(pperp_i, axis=0)
+        dye, dze = np.gradient(pperp_e, axis=1), np.gradient(pperp_e, axis=0)
+
+        # J_dx = (dP_perp/dy · Bz  -  dP_perp/dz · By) / B^2
+        jdia_i     = (dyi * bz - dzi * by) / b2
+        jdia_e     = (dye * bz - dze * by) / b2
+        jdia_total = jdia_i + jdia_e
+
+        return {
+            "Jdia_i":     jdia_i,
+            "Jdia_e":     jdia_e,
+            "Jdia_total": jdia_total,
+            "Bmag":       np.sqrt(b2),
+        }
+
+    def plot_snapshot(
+        self,
+        step: int,
+        data: dict[str, np.ndarray],
+        vmax_i: float | None = None,
+        vmax_e: float | None = None,
+        vmax_tot: float | None = None,
+    ):
+        """Render a 3-panel figure and save as PNG."""
+        fig = self._make_figure(step, data, vmax_i, vmax_e, vmax_tot)
+        out_file = self.outdir / f"jdia_step{step:06d}.png"
+        fig.savefig(out_file, dpi=160, bbox_inches="tight", facecolor=DARK_BG)
+        plt.close(fig)
+        print(f"  Saved: {out_file}")
+
+    def _render_frame_to_pil(
+        self,
+        step: int,
+        data: dict[str, np.ndarray],
+        vmax_i: float | None,
+        vmax_e: float | None,
+        vmax_tot: float | None,
+    ):
+        """Render figure to an in-memory PIL Image (for GIF assembly)."""
         if Image is None:
             raise ImportError("Pillow is required for GIF generation.")
+        fig = self._make_figure(step, data, vmax_i, vmax_e, vmax_tot)
         buf = BytesIO()
         fig.savefig(buf, dpi=100, bbox_inches="tight", facecolor=DARK_BG)
         buf.seek(0)
@@ -262,69 +234,90 @@ def make_frame(
         buf.close()
         plt.close(fig)
         return img
-    else:
-        out = OUT_DIR / f"jdia_step{step:06d}.png"
-        fig.savefig(out, dpi=160, bbox_inches="tight", facecolor=DARK_BG)
-        plt.close(fig)
-        print(f"  Saved: {out}")
+
+    def _make_figure(
+        self,
+        step: int,
+        data: dict[str, np.ndarray],
+        vmax_i: float | None,
+        vmax_e: float | None,
+        vmax_tot: float | None,
+    ):
+        """Build the 3-panel matplotlib figure (ions / electrons / total)."""
+        Ji    = data["Jdia_i"]
+        Je    = data["Jdia_e"]
+        Jtot  = data["Jdia_total"]
+        Bmod  = data["Bmag"]
+
+        vmax_i   = vmax_i   or np.percentile(np.abs(Ji),   99.5)
+        vmax_e   = vmax_e   or np.percentile(np.abs(Je),   99.5)
+        vmax_tot = vmax_tot or np.percentile(np.abs(Jtot), 99.5)
+
+        fig, axes = plt.subplots(1, 3, figsize=(19, 7), constrained_layout=True)
+        fig.patch.set_facecolor(DARK_BG)
+
+        configs = [
+            (Ji,   "RdBu_r",  vmax_i,   r"$J^{(d)}_x$ ions",      r"$J_d^{(\rm i)}$ [a.u.]"),
+            (Je,   "PuOr_r",  vmax_e,   r"$J^{(d)}_x$ electrons", r"$J_d^{(\rm e)}$ [a.u.]"),
+            (Jtot, "seismic", vmax_tot, r"$J^{(d)}_x$ total",     r"$J_d^{(\rm tot)}$ [a.u.]"),
+        ]
+
+        for ax, (field, cmap, vm, title, lbl) in zip(axes, configs):
+            ax.set_facecolor(PANEL_BG)
+            im = ax.imshow(
+                field.T, origin="lower", cmap=cmap,
+                vmin=-vm, vmax=vm, aspect="auto",
+            )
+            lvls = np.linspace(np.percentile(Bmod, 10), np.percentile(Bmod, 95), 7)
+            ax.contour(Bmod.T, levels=lvls, colors="white", linewidths=0.5, alpha=0.4)
+
+            cb = fig.colorbar(im, ax=ax, pad=0.01, aspect=30)
+            cb.set_label(lbl, fontsize=10, color=TEXT_CLR)
+            cb.ax.yaxis.set_tick_params(color=TEXT_CLR, labelsize=8)
+            plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
+
+            ax.set_xlabel("Z Axis", fontsize=11, color=TEXT_CLR)
+            ax.set_ylabel("Y Axis", fontsize=11, color=TEXT_CLR)
+            ax.set_title(title, fontsize=13, color=TEXT_CLR, pad=8)
+            ax.tick_params(colors=TEXT_CLR, direction="in", which="both", top=True, right=True)
+            ax.xaxis.set_minor_locator(AutoMinorLocator())
+            ax.yaxis.set_minor_locator(AutoMinorLocator())
+            for spine in ax.spines.values():
+                spine.set_edgecolor(GRID_CLR)
+
+        fig.suptitle(
+            rf"Diamagnetic Current  —  $t \approx {step_to_omegaci(step):.2f}\ \Omega_{{ci}}^{{-1}}$  (step {step})"
+            "\n"
+            rf"PSC  ($m_i/m_e = {int(MASS_RATIO)}$,  $\kappa = {KAPPA}$,  $B_0 = {B0}$)",
+            fontsize=14, color=TEXT_CLR, y=1.02, fontweight="bold",
+        )
+        return fig
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Compute diamagnetic current diagnostics from PSC outputs."
+    )
+    parser.add_argument("--moments", default=MOMENT_FILE_PATTERN,
+                        help="Glob pattern for pfd_moments files.")
+    parser.add_argument("--fields",  default=FIELD_FILE_PATTERN,
+                        help="Glob pattern for pfd field files.")
+    parser.add_argument("--outdir",  default="diamagnetic_plots",
+                        help="Directory for output plots.")
+    parser.add_argument("--sigma",   type=float, default=4.0,
+                        help="Gaussian smoothing width in cells.")
+    parser.add_argument("--steps",   nargs="*", type=int,
+                        help="Optional list of steps to process.")
+    parser.add_argument("--no-gif",  action="store_true",
+                        help="Skip animated GIF generation.")
+    return parser.parse_args()
+
 
 if __name__ == "__main__":
-    mom_files = _find_files(f"{DATA_DIR}/pfd_moments.*.h5")
-    fld_files = _find_files(f"{DATA_DIR}/pfd.*.h5")
-    common = sorted(set(mom_files) & set(fld_files))
-
-    if not common:
-        print("ERROR: No matching HDF5 file pairs found.")
-        exit(1)
-
-    print(f"Available snapshots: {len(common)}  ({common[0]} → {common[-1]})")
-
-    # ── 1. Compute global colour range (from a subset) ───────────────────
-    print("\n[1/3] Computing global colour range...")
-    sample_steps = common[:: max(1, len(common) // 12)]
-    vmax_i_all, vmax_e_all, vmax_tot_all = [], [], []
-
-    for s in sample_steps:
-        d = compute_diamagnetic_current(mom_files[s], fld_files[s])
-        vmax_i_all.append(np.percentile(np.abs(d["Jdia_i"]), 99.5))
-        vmax_e_all.append(np.percentile(np.abs(d["Jdia_e"]), 99.5))
-        vmax_tot_all.append(np.percentile(np.abs(d["Jdia_tot"]), 99.5))
-
-    vmax_i = float(np.percentile(vmax_i_all, 90))
-    vmax_e = float(np.percentile(vmax_e_all, 90))
-    vmax_tot = float(np.percentile(vmax_tot_all, 90))
-    print(f"   vmax_i={vmax_i:.4f}  vmax_e={vmax_e:.4f}  vmax_tot={vmax_tot:.4f}")
-
-    # ── 2. Individual plots for selected steps ───────────────────────────
-    print(f"\n[2/3] Generating individual plots for steps: {PLOT_STEPS}")
-    for s in PLOT_STEPS:
-        closest = min(common, key=lambda x: abs(x - s))
-        print(f"  step {s} → closest available: {closest}")
-        data = compute_diamagnetic_current(mom_files[closest], fld_files[closest])
-        make_frame(data, closest, vmax_i, vmax_e, vmax_tot)
-
-    # ── 3. Animated GIF ──────────────────────────────────────────────────
-    gif_steps = common[::GIF_STRIDE]
-    print(f"\n[3/3] Generating GIF with {len(gif_steps)} frames (stride={GIF_STRIDE})...")
-
-    frames = []
-    for i, s in enumerate(gif_steps):
-        print(f"  frame {i + 1}/{len(gif_steps)}  step={s}", end="\r")
-        data = compute_diamagnetic_current(mom_files[s], fld_files[s])
-        img = make_frame(data, s, vmax_i, vmax_e, vmax_tot, return_img=True)
-        frames.append(img)
-
-    gif_path = OUT_DIR / "jdia_evolution.gif"
-    frames[0].save(
-        gif_path,
-        save_all=True,
-        append_images=frames[1:],
-        duration=120,   # ms per frame
-        loop=0,         # infinite loop
-        optimize=True,
-    )
-    print(f"\n  GIF saved: {gif_path}  ({len(frames)} frames)")
-    print("\nDone.")
+    args = parse_args()
+    DiamagneticCurrentAnalyzer(
+        moment_pattern=args.moments,
+        field_pattern=args.fields,
+        sigma=args.sigma,
+        outdir=args.outdir,
+    ).run(steps=args.steps, make_gif=not args.no_gif)

@@ -37,6 +37,7 @@ try:
     from data_reader import PICDataReader
 except ImportError:
     PICDataReader = None
+from psc_units import B0, KAPPA, MASS_RATIO
 
 # ── Configuration ────────────────────────────────────────────────────────────
 OUTPUT_DIR = "prt_plots"
@@ -47,18 +48,15 @@ MAX_VDF_SNAPSHOTS = 5
 STEP_RE = re.compile(r"\.(\d+)(?:_p\d+)?\.h5$")
 
 # ── Simulation parameters (from psc_temp_aniso.cxx) ─────────────────────────
-MASS_RATIO: float = 64.0
 Zi: float = 1.0
-VA_OVER_C: float = 0.1
+VA_OVER_C: float = B0
 BETA_I_PAR: float = 10.0
 TI_PERP_OVER_TI_PAR: float = 3.5
 BETA_NORM: float = 1.0
 
-B0: float = VA_OVER_C                                # 0.1
 TI_PAR: float = BETA_I_PAR * B0**2 / 2.0             # 0.05
 TI_PERP: float = TI_PERP_OVER_TI_PAR * TI_PAR        # 0.175
 M_ION: float = MASS_RATIO * Zi                        # 64.0
-KAPPA: float = 3.0
 
 
 # ══════════════════════════════════════════════════════════════════════════════
