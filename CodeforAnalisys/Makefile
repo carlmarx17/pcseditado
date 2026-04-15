@@ -45,16 +45,14 @@ validate:
 	@echo "==========================================================="
 	@echo "Validating Moments"
 	@echo "==========================================================="
-	$(PYTHON) validate_moments.py $(DATA_DIR)/prt.000001000.h5
-
+	$(PYTHON) validate_moments.py $(DATA_DIR)/prt.000001200.h5
 particles:
 	@echo "==========================================================="
 	@echo "Generating Particle VDF and Phase-Space Plots"
 	@echo "==========================================================="
 	$(PYTHON) plot_prt.py "$(DATA_DIR)/prt.*.h5"
-	$(PYTHON) plot_vdf_3d.py $(DATA_DIR)/prt.000001000.h5
-	$(PYTHON) plot_moments_scatter_3d.py $(DATA_DIR)/prt.000001000.h5
-
+	$(PYTHON) plot_vdf_3d.py $(DATA_DIR)/prt.000001200.h5
+	$(PYTHON) plot_moments_scatter_3d.py $(DATA_DIR)/prt.000001200.h5
 report:
 	@echo "==========================================================="
 	@echo "Generating Validation PDF Report"

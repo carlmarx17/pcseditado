@@ -268,9 +268,11 @@ class DiamagneticCurrentAnalyzer:
                 field.T, origin="lower", cmap=cmap,
                 vmin=-vm, vmax=vm, aspect="auto",
             )
-            lvls = np.linspace(np.percentile(Bmod, 10), np.percentile(Bmod, 95), 7)
-            ax.contour(Bmod.T, levels=lvls, colors="white", linewidths=0.5, alpha=0.4)
-
+            vmin_bmod = float(np.percentile(Bmod, 10))
+            vmax_bmod = float(np.percentile(Bmod, 95))
+            if vmax_bmod > vmin_bmod + 1e-8:
+                lvls = np.linspace(vmin_bmod, vmax_bmod, 7)
+                ax.contour(Bmod.T, levels=lvls, colors="white", linewidths=0.5, alpha=0.4)
             cb = fig.colorbar(im, ax=ax, pad=0.01, aspect=30)
             cb.set_label(lbl, fontsize=10, color=TEXT_CLR)
             cb.ax.yaxis.set_tick_params(color=TEXT_CLR, labelsize=8)
