@@ -1,6 +1,9 @@
 
 #pragma once
 
+#include <exception>
+#include <optional>
+
 #include <kg/io.h>
 
 #include "FileAdios2.h"
@@ -26,7 +29,7 @@ public:
               MPI_Comm comm = MPI_COMM_WORLD, const std::string& io_name = {});
 
 private:
-  adios2::ADIOS ad_;
+  std::optional<adios2::ADIOS> ad_;
 };
 
 } // namespace io

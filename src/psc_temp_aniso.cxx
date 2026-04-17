@@ -8,6 +8,7 @@
 #include <psc.hxx>
 #include <setup_fields.hxx>
 #include <setup_particles.hxx>
+#include <cstdlib>
 
 #include "DiagnosticsDefault.h"
 #include "OutputFieldsDefault.h"
@@ -53,6 +54,16 @@ constexpr int kResolvedGridYZ = 512;
 constexpr int kParticlesPerCell = 1000;
 constexpr int kParticleOutputStride = 500;
 constexpr int kParticleWindowCells = 64;
+
+int envOrDefault(const char* name, int default_value)
+{
+  if (const char* value = std::getenv(name)) {
+    return std::atoi(value);
+  }
+  return default_value;
+}
+
+bool hasEnv(const char* name) { return std::getenv(name) != nullptr; }
 
 } // namespace
 
@@ -142,7 +153,7 @@ auto make_MfieldsMoment_n<Moment_n>(const Grid_t& grid)
 // ----------------------------------------------------------------------
 void setupParameters()
 {
-  psc_params.nmax = 80001;
+  psc_params.nmax = envOrDefault("PSC_NMAX", 80001);
   psc_params.cfl = 0.95;
   psc_params.write_checkpoint_every_step = -1000;
   psc_params.stats_every = 1;
@@ -180,11 +191,17 @@ void setupParameters()
 // ----------------------------------------------------------------------
 Grid_t* setupGrid()
 {
+  const int resolved_grid_yz = envOrDefault("PSC_GRID_YZ", kResolvedGridYZ);
+  const int particles_per_cell =
+    envOrDefault("PSC_NICELL", kParticlesPerCell);
+
   // Enforce Debye resolution dynamically (> 3 points per Debye length)
   double lambda_De = std::sqrt(g.Te_perp);
   double max_dy = lambda_De / 3.0; // Enforce at least 3 cells per lambda_De
   int requiredGridYZ = std::ceil(kResolvedDomainDe / max_dy);
-  int finalGridYZ = std::max(kResolvedGridYZ, requiredGridYZ);
+  int finalGridYZ =
+    hasEnv("PSC_GRID_YZ") ? resolved_grid_yz
+                           : std::max(resolved_grid_yz, requiredGridYZ);
 
   Grid_t::Real3 LL{1., kResolvedDomainDe, kResolvedDomainDe};
   Int3 gd{1, finalGridYZ, finalGridYZ};
@@ -207,7 +224,7 @@ Grid_t* setupGrid()
   mpi_printf(MPI_COMM_WORLD, "lambda_De = %g\n", sqrt(g.Te_perp));
 
   auto npn = Grid_t::NormalizationParams::dimensionless();
-  npn.nicell = kParticlesPerCell;
+  npn.nicell = particles_per_cell;
 
   double dt = psc_params.cfl * courant_length(dom);
   Grid_t::Normalization norm{npn};
