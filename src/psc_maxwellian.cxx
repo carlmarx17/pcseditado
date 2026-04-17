@@ -1,8 +1,7 @@
 // ======================================================================
-// psc_temp_aniso.cxx
+// psc_maxwellian.cxx
 // Simulation of ion temperature-anisotropy-driven instabilities.
-// Tuned for the kappa = 3 campaign documented in
-// "Documentacion Simulaciones.pdf".
+// Maxwellian case (bi-Maxwellian) variant of psc_temp_aniso.cxx
 // ======================================================================
 
 #include <psc.hxx>
@@ -247,7 +246,8 @@ void initializeParticles(SetupParticles<Mparticles>& setup_p, Balance& bal,
         npt.T[2] = g.Te_par;
       }
       np.n = npt.n;
-      np.p = setup_p.createKappaMultivariate(npt);
+      // CHANGED: Using Maxwellian instead of KappaMultivariate for the Maxwellian case
+      np.p = setup_p.createMaxwellian(npt);
     });
 }
 
@@ -269,7 +269,7 @@ void initializeFields(MfieldsState& mflds)
 void run()
 {
   mpi_printf(MPI_COMM_WORLD,
-             "*** Setting up Mirror Instability Simulation...\n");
+             "*** Setting up Mirror Instability Simulation (Maxwellian Case)...\n");
   setupParameters();
   auto grid_ptr = setupGrid();
   auto& grid = *grid_ptr;
@@ -307,7 +307,7 @@ void run()
   OutputParticlesParams opp{};
   opp.every_step = kParticleOutputStride; // Reactivado usando ADIOS2!
   opp.data_dir = ".";
-  opp.basename = "prt";
+  opp.basename = "prt_maxwellian";
   opp.lo = {0, (grid.domain.gdims[1] - kParticleWindowCells) / 2,
             (grid.domain.gdims[2] - kParticleWindowCells) / 2};
   opp.hi = {0, (grid.domain.gdims[1] + kParticleWindowCells) / 2,
@@ -318,7 +318,7 @@ void run()
   auto diagnostics = makeDiagnosticsDefault(outf, outp, oute);
 
   SetupParticles<Mparticles> setup_p(grid);
-  setup_p.kappa = 3.0;
+  // setup_p.kappa is not needed for Maxwellian, but keeping these config for structure
   setup_p.fractional_n_particles_per_cell = true;
   setup_p.neutralizing_population = MY_ION;
 
