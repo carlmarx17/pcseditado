@@ -187,7 +187,7 @@ Grid_t* setupGrid()
 
   Grid_t::Real3 LL{1., kResolvedDomainDe, kResolvedDomainDe};
   Int3 gd{1, finalGridYZ, finalGridYZ};
-  Int3 np{1, 7, 8}; // 1 * 7 * 8 = 56 MPI tasks
+  Int3 np{1, 4, 8};
 
   Grid_t::Domain dom{gd, LL, -.5 * LL, np};
   psc::grid::BC bc{{BND_FLD_PERIODIC, BND_FLD_PERIODIC, BND_FLD_PERIODIC},
