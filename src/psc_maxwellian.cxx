@@ -143,7 +143,7 @@ void setupParameters()
 {
   psc_params.nmax = 80001;
   psc_params.cfl = 0.95;
-  psc_params.write_checkpoint_every_step = -1000;
+  psc_params.write_checkpoint_every_step = 1000;
   psc_params.stats_every = 1;
 
   g.BB = 1.0;
