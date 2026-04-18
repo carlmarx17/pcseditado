@@ -260,7 +260,7 @@ class SpectralAnalyzer:
 
     def analyze_simulation(
         self,
-        fields_pattern: str = "pfd.*.h5",
+        fields_pattern: str = "pfd.*.bp",
         plane: str = "xy",
         slice_idx: int = None,
         steps_to_process: list[int] = None,
@@ -417,7 +417,7 @@ class SpectralAnalyzer:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Spectral analysis of magnetic-field fluctuations.")
-    parser.add_argument("--fields", type=str, default="pfd.*.h5", help="Glob pattern for field files.")
+    parser.add_argument("--fields", type=str, default="pfd.*.bp", help="Glob pattern for field files.")
     parser.add_argument("--plane", type=str, default="xy", choices=["xy", "xz", "yz"], help="Plane to extract slice.")
     parser.add_argument("--slice", type=int, default=None, help="Fixed slice index along the plane normal.")
     parser.add_argument("--B0", type=float, default=1.0, help="Reference B0 field normalization.")

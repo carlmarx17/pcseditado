@@ -32,6 +32,31 @@ OUTPUT_DIR = "phase_space_plots"
 DPI = 200
 
 
+def load_particle_data(filepath):
+    """Carga partículas desde un archivo ADIOS2 prt.*.bp."""
+    with adios2.open(filepath, "r") as f:
+        vars = f.available_variables()
+
+        def get_var(name):
+            for key in vars:
+                if key.endswith(name):
+                    return f.read(key)
+            raise KeyError(f"Variable ending in '{name}' not found in {filepath}")
+
+        q = get_var("q")
+        px = get_var("px")
+        py = get_var("py")
+        pz = get_var("pz")
+
+    dt = np.dtype([("q", "f8"), ("px", "f8"), ("py", "f8"), ("pz", "f8")])
+    data = np.empty(len(q), dtype=dt)
+    data["q"] = q
+    data["px"] = px
+    data["py"] = py
+    data["pz"] = pz
+    return data
+
+
 def set_light_3d_axes(ax):
     """Aplica estética light al panel 3D."""
     ax.set_facecolor('white')
@@ -201,7 +226,7 @@ def main():
     if len(sys.argv) > 1:
         filepath = sys.argv[1]
     else:
-        filepath = os.path.join(os.path.dirname(__file__), "..", "build", "src", "prt.000000000.h5")
+        filepath = os.path.join(os.path.dirname(__file__), "..", "build", "src", "prt.000000000.bp")
 
     if not os.path.exists(filepath):
         print(f"ERROR: Archivo '{filepath}' no encontrado.")
@@ -212,8 +237,7 @@ def main():
     print(f"Directorio de salida: {outdir}")
 
     print(f"Cargando partículas desde {os.path.basename(filepath)}...")
-    with h5py.File(filepath, 'r') as f:
-        data = f['particles']['p0']['1d'][:]
+    data = load_particle_data(filepath)
 
     ion_idx = data['q'] > 0
     elec_idx = data['q'] < 0

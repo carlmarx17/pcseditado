@@ -18,7 +18,7 @@
 - Restored but distinct:
   `diamagnetic_current.py` is no longer a stale note in the docs; it is back as a real maintained diagnostic with its own outputs.
 - Shared input, different outputs:
-  `plot_prt.py`, `plot_vdf_3d.py`, and `plot_moments_scatter_3d.py` all consume `prt.*.h5`, but they produce different views of the particle distribution.
+  `plot_prt.py`, `plot_vdf_3d.py`, and `plot_moments_scatter_3d.py` all consume `prt.*.bp`, but they produce different views of the particle distribution.
 - Shared field source, different analyses:
   `fluctuationofmagneticfiel.py`, `mirror_physics.py`, `diamagnetic_current.py`, and `spectral_analysis.py` consume overlapping PSC dumps, but they are not interchangeable.
 

@@ -19,7 +19,7 @@ from data_reader import PICDataReader
 plt.switch_backend('Agg')
 
 class FieldImagePlotter:
-    def __init__(self, em_pattern='pfd.*.h5', B0=0.01, fluct_amp=0.1, outdir='field_images', 
+    def __init__(self, em_pattern='pfd.*.bp', B0=0.01, fluct_amp=0.1, outdir='field_images', 
                  smooth_sigma=0.8, dyn_scale=True, comp_magnitude=True, comps_to_plot=['Bx', 'By', 'Bz'],
                  fixed_scale=True):
         self.em_pattern = em_pattern
@@ -247,7 +247,7 @@ class FieldImagePlotter:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--pattern', type=str, default='pfd.*.h5', help='Patrón de archivos HDF5')
+    parser.add_argument('--pattern', type=str, default='pfd.*.bp', help='Patrón de archivos ADIOS2 (*.bp)')
     parser.add_argument('--B0', type=float, default=0.01)
     parser.add_argument('--fluct', type=float, default=0.1)
     parser.add_argument('--plane', type=str, default='xy', choices=['xy','xz','yz'])

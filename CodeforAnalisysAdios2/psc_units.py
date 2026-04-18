@@ -88,9 +88,9 @@ CORI     = 1.0 / NICELL
 
 # ── Constantes auxiliares para análisis ─────────────────────────────────────
 MU0 = 1.0
-FIELD_FILE_PATTERN = "pfd.*.h5"
-MOMENT_FILE_PATTERN = "pfd_moments.*.h5"
-PARTICLE_FILE_PATTERN = "prt.*.h5"
+FIELD_FILE_PATTERN = "pfd.*.bp"
+MOMENT_FILE_PATTERN = "pfd_moments.*.bp"
+PARTICLE_FILE_PATTERN = "prt.*.bp"
 
 # ── Funciones de conversión ───────────────────────────────────────────────────
 

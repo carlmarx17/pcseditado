@@ -13,7 +13,7 @@ Reads HDF5 particle files and generates publication-quality diagnostics:
 Usage:
     python plot_prt.py [path_to_prt_file | directory | glob_pattern]
 
-Defaults to  ../build/src/prt.000000000.h5  if no argument is given.
+Defaults to  ../build/src/prt.000000000.bp  if no argument is given.
 """
 
 import sys
@@ -967,7 +967,7 @@ def plot_macro_evolution(
     else:
         ax.text(
             0.5, 0.5,
-            "No matching pfd.*.h5 field files found for these steps.",
+            "No matching pfd.*.bp field files found for these steps.",
             ha="center", va="center", transform=ax.transAxes,
         )
     ax.set_ylabel("Normalised fluctuation amplitude")
@@ -990,14 +990,14 @@ def main():
         input_path = sys.argv[1]
     else:
         input_path = os.path.join(
-            os.path.dirname(__file__), "..", "build", "src", "prt.000000000.h5"
+            os.path.dirname(__file__), "..", "build", "src", "prt.000000000.bp"
         )
 
     try:
         filepaths = resolve_particle_files(input_path)
     except FileNotFoundError as exc:
         print(f"ERROR: {exc}")
-        print("Usage: python plot_prt.py [path_to_prt_file.h5 | directory | glob]")
+        print("Usage: python plot_prt.py [path_to_prt_file.bp | directory | glob]")
         sys.exit(1)
 
     filepath = filepaths[-1]

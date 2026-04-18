@@ -15,44 +15,44 @@ brazil:
 	@echo "==========================================================="
 	@echo "Generating Brazil Plot (Anisotropy vs Beta)"
 	@echo "==========================================================="
-	$(PYTHON) anisotropy_analysis.py --B0 $(B0_REF) --moments "$(DATA_DIR)/pfd_moments.*.h5" --fields "$(DATA_DIR)/pfd.*.h5"
+	$(PYTHON) anisotropy_analysis.py --B0 $(B0_REF) --moments "$(DATA_DIR)/pfd_moments.*.bp" --fields "$(DATA_DIR)/pfd.*.bp"
 
 mirror:
 	@echo "==========================================================="
 	@echo "Generating Mirror Instability Plots"
 	@echo "==========================================================="
-	$(PYTHON) mirror_physics.py --B0 $(B0_REF) --fields "$(DATA_DIR)/pfd.*.h5"
+	$(PYTHON) mirror_physics.py --B0 $(B0_REF) --fields "$(DATA_DIR)/pfd.*.bp"
 
 diamagnetic:
 	@echo "==========================================================="
 	@echo "Generating Diamagnetic Current plots"
 	@echo "==========================================================="
-	$(PYTHON) diamagnetic_current.py --moments "$(DATA_DIR)/pfd_moments.*.h5" --fields "$(DATA_DIR)/pfd.*.h5"
+	$(PYTHON) diamagnetic_current.py --moments "$(DATA_DIR)/pfd_moments.*.bp" --fields "$(DATA_DIR)/pfd.*.bp"
 
 fields:
 	@echo "==========================================================="
 	@echo "Visualising Magnetic Field Fluctuations"
 	@echo "==========================================================="
-	$(PYTHON) fluctuationofmagneticfiel.py --B0 $(B0_REF) --plane yz --smooth 1.5 --pattern "$(DATA_DIR)/pfd.*.h5"
+	$(PYTHON) fluctuationofmagneticfiel.py --B0 $(B0_REF) --plane yz --smooth 1.5 --pattern "$(DATA_DIR)/pfd.*.bp"
 
 spectral:
 	@echo "==========================================================="
 	@echo "Generating Spectral Analysis Plots (PSD)"
 	@echo "==========================================================="
-	$(PYTHON) spectral_analysis.py --fields "$(DATA_DIR)/pfd.*.h5"
+	$(PYTHON) spectral_analysis.py --fields "$(DATA_DIR)/pfd.*.bp"
 
 validate:
 	@echo "==========================================================="
 	@echo "Validating Moments"
 	@echo "==========================================================="
-	$(PYTHON) validate_moments.py $(DATA_DIR)/prt.000001200.h5
+	$(PYTHON) validate_moments.py $(DATA_DIR)/prt.000001200.bp
 particles:
 	@echo "==========================================================="
 	@echo "Generating Particle VDF and Phase-Space Plots"
 	@echo "==========================================================="
-	$(PYTHON) plot_prt.py "$(DATA_DIR)/prt.*.h5"
-	$(PYTHON) plot_vdf_3d.py $(DATA_DIR)/prt.000001200.h5
-	$(PYTHON) plot_moments_scatter_3d.py $(DATA_DIR)/prt.000001200.h5
+	$(PYTHON) plot_prt.py "$(DATA_DIR)/prt.*.bp"
+	$(PYTHON) plot_vdf_3d.py $(DATA_DIR)/prt.000001200.bp
+	$(PYTHON) plot_moments_scatter_3d.py $(DATA_DIR)/prt.000001200.bp
 report:
 	@echo "==========================================================="
 	@echo "Generating Validation PDF Report"

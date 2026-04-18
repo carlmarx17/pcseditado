@@ -12,9 +12,9 @@ Unidades físicas usando mi/me = 64 (masa artificial):
   Velocidad →  vA = B₀ = 0.1              [en código con c=1]
 
 Usage:
-    python validate_moments.py [path_to_prt_file.h5]
+    python validate_moments.py [path_to_prt_file.bp]
 
-If no path is given, defaults to ../build/src/prt.000000000.h5 (t=0).
+If no path is given, defaults to ../build/src/prt.000000000.bp (t=0).
 """
 
 import sys
@@ -97,12 +97,45 @@ EXPECTED_TOTAL_PER_SPECIES = EXPECTED_PPC * N_CELLS  # ~ 49,152,000
 # ═══════════════════════════════════════════════════════════════════════
 
 def load_particles(filepath):
-    """Load particle data from a PSC prt.*.h5 file."""
+    """Load particle data from a PSC prt.*.bp file."""
     print(f"Loading particles from: {filepath}")
     print(f"  (file size: {os.path.getsize(filepath) / 1e9:.2f} GB)")
-    with h5py.File(filepath, 'r') as f:
-        grp = f['particles']['p0']
-        data = grp['1d'][:]
+    with adios2.open(filepath, "r") as f:
+        vars = f.available_variables()
+
+        def get_var(name, required=True):
+            for key in vars:
+                if key.endswith(name):
+                    return f.read(key)
+            if required:
+                raise KeyError(f"Variable ending in '{name}' not found in {filepath}")
+            return None
+
+        q = get_var("q")
+        m = get_var("m")
+        w = get_var("w", required=False)
+        px = get_var("px")
+        py = get_var("py")
+        pz = get_var("pz")
+
+    if w is None:
+        w = np.ones_like(q, dtype=float)
+
+    dt = np.dtype([
+        ("q", "f8"),
+        ("m", "f8"),
+        ("w", "f8"),
+        ("px", "f8"),
+        ("py", "f8"),
+        ("pz", "f8"),
+    ])
+    data = np.empty(len(q), dtype=dt)
+    data["q"] = q
+    data["m"] = m
+    data["w"] = w
+    data["px"] = px
+    data["py"] = py
+    data["pz"] = pz
     print(f"  Total particles: {len(data):,}")
     print(f"  Fields: {data.dtype.names}")
     return data
@@ -501,11 +534,11 @@ def main():
         filepath = sys.argv[1]
     else:
         filepath = os.path.join(os.path.dirname(__file__),
-                                "..", "build", "src", "prt.000000000.h5")
+                                "..", "build", "src", "prt.000000000.bp")
 
     if not os.path.exists(filepath):
         print(f"ERROR: File not found: {filepath}")
-        print("Usage: python validate_moments.py [path_to_prt_file.h5]")
+        print("Usage: python validate_moments.py [path_to_prt_file.bp]")
         sys.exit(1)
 
     print_expected_parameters()
@@ -535,4 +568,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

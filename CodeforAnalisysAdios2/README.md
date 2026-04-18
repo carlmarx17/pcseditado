@@ -7,7 +7,7 @@ This folder contains Python scripts specifically designed to read, analyze, and 
 These scripts have been modularized and refactored for clarity and performance:
 
 1. **`data_reader.py`**:
-   `PICDataReader` class to encapsulate file searching, HDF5 3D array extraction, and parsing step timestamps for both `.h5` and `pfd_moments.*.h5` fields.
+   `PICDataReader` class to encapsulate file searching, ADIOS2 3D array extraction, and parsing step timestamps for `*.bp` field outputs.
 
 2. **`anisotropy_analysis.py`**:
    Runs over the particle outputs and calculates the temperatures ($T_\parallel$, $T_\perp$), plasma beta ($\beta_\parallel$) and checks their distribution against Mirror and Firehose theoretical thresholds.
@@ -18,7 +18,7 @@ These scripts have been modularized and refactored for clarity and performance:
    - **Outputs generated:** `mirror_physics_step[N].png`
 
 4. **`diamagnetic_current.py`**:
-   Computes ion, electron, and total diamagnetic current maps from `pfd_moments.*.h5` and `pfd.*.h5`, with magnetic-magnitude contours overlaid to correlate current walls with mirror structures.
+   Computes ion, electron, and total diamagnetic current maps from `pfd_moments.*.bp` and `pfd.*.bp`, with magnetic-magnitude contours overlaid to correlate current walls with mirror structures.
    - **Outputs generated:** `diamagnetic_plots/jdia_stepXXXXXX.png`
 
 5. **`fluctuationofmagneticfiel.py`**:
@@ -31,7 +31,7 @@ These scripts have been modularized and refactored for clarity and performance:
    Checks particle density, drift, temperature, anisotropy, and kurtosis against the initialization values defined in `psc_temp_aniso.cxx`.
 
 8. **`plot_prt.py`**:
-   Produces 2D VDF maps, ion Kappa-vs-Maxwellian comparisons, and a temporal evolution map of the 1D distributions when run over multiple `prt.*.h5` files.
+   Produces 2D VDF maps, ion Kappa-vs-Maxwellian comparisons, and a temporal evolution map of the 1D distributions when run over multiple `prt.*.bp` files.
 
 9. **`plot_vdf_3d.py`**:
    Builds a 3D surface rendering of the reduced VDF for ions and electrons.
@@ -44,7 +44,7 @@ These scripts have been modularized and refactored for clarity and performance:
 
 ### How to Use
 
-Simply execute `make` commands using the provided `Makefile`. Ensure that your `.h5` PIC simulation files are available inside this folder (or modify the patterns to search them).
+Simply execute `make` commands using the provided `Makefile`. Ensure that your `*.bp` PIC simulation files are available inside this folder (or modify the patterns to search them).
 
 ```bash
 # Generate the Brazil Plot mapping instable parameter space
