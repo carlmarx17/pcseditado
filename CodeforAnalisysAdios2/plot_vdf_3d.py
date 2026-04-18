@@ -11,12 +11,12 @@ Un colorbar en el lateral indica la escala de densidad.
 
 import sys
 import os
-import adios2
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm, LightSource
 import matplotlib.cm as cm
 from scipy.ndimage import gaussian_filter
+from particle_reader import build_structured_particles
 
 # --- Configuración ---
 OUTPUT_DIR = "fancy_vdf_plots"
@@ -26,33 +26,13 @@ NBINS = 150
 
 def load_particle_data(filepath):
     """Carga partículas desde un archivo ADIOS2 prt.*.bp."""
-    f = adios2.FileReader(filepath)
-    try:
-        vars = f.available_variables()
-
-        def get_var(name):
-            for key in vars:
-                if key.endswith(name):
-                    variable = f.inquire_variable(key)
-                    if variable is None:
-                        break
-                    return f.read(variable)
-            raise KeyError(f"Variable ending in '{name}' not found in {filepath}")
-
-        q = get_var("q")
-        px = get_var("px")
-        py = get_var("py")
-        pz = get_var("pz")
-    finally:
-        f.close()
-
-    dt = np.dtype([("q", "f8"), ("px", "f8"), ("py", "f8"), ("pz", "f8")])
-    data = np.empty(len(q), dtype=dt)
-    data["q"] = q
-    data["px"] = px
-    data["py"] = py
-    data["pz"] = pz
-    return data
+    return build_structured_particles(
+        filepath,
+        include_position=False,
+        include_weight=False,
+        include_mass=False,
+        verbose=False,
+    )
 
 
 def plot_vdf_3d(species_name, pz, p_perp, out_path, cmap_name='magma'):

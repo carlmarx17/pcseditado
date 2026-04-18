@@ -19,37 +19,30 @@ If no path is given, defaults to ../build/src/prt.000000000.bp (t=0).
 
 import sys
 import os
-import adios2
 import numpy as np
 from scipy.special import gamma as gamma_func
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch
+from particle_reader import build_structured_particles
 
 # ═══════════════════════════════════════════════════════════════════════
 # 1. EXPECTED VALUES — Extracted from psc_temp_aniso.cxx
 #    These are the "ground truth" parameters used to generate the particles.
 # ═══════════════════════════════════════════════════════════════════════
 
-# Simulation parameters (from setupParameters())
+# Simulation parameters (from psc_maxwellian.cxx / psc_temp_aniso.cxx)
 BB = 1.0
 Zi = 1.0
 MASS_RATIO = 64.0
 VA_OVER_C = 0.1
 BETA_E_PAR = 1.0
-BETA_I_PAR = 10.0
-TI_PERP_OVER_TI_PAR = 3.5
+BETA_I_PAR = 5.0
+TI_PERP_OVER_TI_PAR = 3.0
 TE_PERP_OVER_TE_PAR = 1.0
 N_DENSITY = 1.0
 KAPPA = 3.0
-
-# Derived quantities (same formulas as C++ code)
-B0 = VA_OVER_C                                     # = 0.1
-TE_PAR = BETA_E_PAR * B0**2 / 2.0                  # = 0.005
-TE_PERP = TE_PERP_OVER_TE_PAR * TE_PAR             # = 0.005
-TI_PAR = BETA_I_PAR * B0**2 / 2.0                  # = 0.05
-TI_PERP = TI_PERP_OVER_TI_PAR * TI_PAR             # = 0.175
 
 # NOTA sobre masas con masa artificial mi/me = 64:
 #   En PSC con masa artificial, el código fija:
@@ -61,6 +54,15 @@ TI_PERP = TI_PERP_OVER_TI_PAR * TI_PAR             # = 0.175
 M_ION      = MASS_RATIO * Zi   # = 64.0  [unidades PSC]
 M_ELECTRON = 1.0               # = 1.0   [unidades PSC, masa artificial]
 
+# Derived quantities (same formulas as current C++ setupParameters())
+RHO_TOTAL = N_DENSITY * (M_ION + M_ELECTRON)
+V_A2 = VA_OVER_C**2
+B0 = np.sqrt(RHO_TOTAL * V_A2 / (1.0 - V_A2))
+TE_PAR = BETA_E_PAR * B0**2 / (2.0 * N_DENSITY)
+TE_PERP = TE_PERP_OVER_TE_PAR * TE_PAR
+TI_PAR = BETA_I_PAR * B0**2 / (2.0 * N_DENSITY)
+TI_PERP = TI_PERP_OVER_TI_PAR * TI_PAR
+
 # Unidades físicas (con c=1, n₀=1, μ₀=1 en PSC)
 VA       = B0                                   # vA = B₀/√(n₀mᵢ) en código
 DI       = np.sqrt(M_ION / N_DENSITY)           # dᵢ = c/ωₚᵢ = 8 celdas
@@ -68,10 +70,11 @@ DE       = np.sqrt(M_ELECTRON / N_DENSITY)      # dₑ = c/ωₚₑ = 1 celda
 OMEGA_CI = Zi * B0 / M_ION                      # Ωcᵢ = 0.001563 rad/t
 OMEGA_CE = 1.0 * B0 / M_ELECTRON               # Ωcₑ = 0.1 rad/t
 
-# Grid parameters (from setupGrid())
-NICELL = 250   # particles per cell per species at density = 1
-N_GRID_Y = 384
-N_GRID_Z = 512
+# Particle output stores only a 64x64 central window.
+NICELL = 1000
+PARTICLE_WINDOW_CELLS = 64
+N_GRID_Y = PARTICLE_WINDOW_CELLS
+N_GRID_Z = PARTICLE_WINDOW_CELLS
 
 # Normalization: dimensionless => beta_norm = 1, cori = 1/nicell
 BETA_NORM = 1.0
@@ -84,12 +87,12 @@ Q_ION      = Zi     # = +1.0
 Q_ELECTRON = -1.0
 
 # Expected number of particles per cell (with fractional_n_particles_per_cell = true)
-# n_in_cell = n / cori + random ~ 250 per species
-EXPECTED_PPC = N_DENSITY / CORI  # = 250
+# n_in_cell = n / cori + random ~ 1000 per species
+EXPECTED_PPC = N_DENSITY / CORI  # = 1000
 
-# Total cells in the 2D grid (X is invariant with 1 cell)
-N_CELLS = 1 * N_GRID_Y * N_GRID_Z  # = 196608
-EXPECTED_TOTAL_PER_SPECIES = EXPECTED_PPC * N_CELLS  # ~ 49,152,000
+# Total cells in the output particle window (X is invariant with 1 cell)
+N_CELLS = 1 * N_GRID_Y * N_GRID_Z  # = 4,096
+EXPECTED_TOTAL_PER_SPECIES = EXPECTED_PPC * N_CELLS  # ~ 4,096,000
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -100,51 +103,21 @@ def load_particles(filepath):
     """Load particle data from a PSC prt.*.bp file."""
     print(f"Loading particles from: {filepath}")
     print(f"  (file size: {os.path.getsize(filepath) / 1e9:.2f} GB)")
-    f = adios2.FileReader(filepath)
-    try:
-        vars = f.available_variables()
-
-        def get_var(name, required=True):
-            for key in vars:
-                if key.endswith(name):
-                    variable = f.inquire_variable(key)
-                    if variable is None:
-                        break
-                    return f.read(variable)
-            if required:
-                raise KeyError(f"Variable ending in '{name}' not found in {filepath}")
-            return None
-
-        q = get_var("q")
-        m = get_var("m")
-        w = get_var("w", required=False)
-        px = get_var("px")
-        py = get_var("py")
-        pz = get_var("pz")
-    finally:
-        f.close()
-
-    if w is None:
-        w = np.ones_like(q, dtype=float)
-
-    dt = np.dtype([
-        ("q", "f8"),
-        ("m", "f8"),
-        ("w", "f8"),
-        ("px", "f8"),
-        ("py", "f8"),
-        ("pz", "f8"),
-    ])
-    data = np.empty(len(q), dtype=dt)
-    data["q"] = q
-    data["m"] = m
-    data["w"] = w
-    data["px"] = px
-    data["py"] = py
-    data["pz"] = pz
+    data = build_structured_particles(
+        filepath,
+        include_position=False,
+        include_weight=True,
+        include_mass=True,
+        verbose=False,
+    )
     print(f"  Total particles: {len(data):,}")
     print(f"  Fields: {data.dtype.names}")
     return data
+
+
+def infer_distribution(filepath):
+    filename = os.path.basename(filepath).lower()
+    return "maxwellian" if "maxwellian" in filename else "kappa"
 
 
 def separate_species(data):
@@ -160,7 +133,8 @@ def separate_species(data):
 # 3. MOMENT COMPUTATIONS
 # ═══════════════════════════════════════════════════════════════════════
 
-def compute_moments(species, species_name, expected_T_perp, expected_T_par, expected_m):
+def compute_moments(species, species_name, expected_T_perp, expected_T_par, expected_m,
+                    distribution):
     """
     Compute the 0th, 1st, and 2nd moments of the distribution and compare
     with the expected values.
@@ -290,22 +264,26 @@ def compute_moments(species, species_name, expected_T_perp, expected_T_par, expe
     status_aniso = "✓ PASS" if aniso_err < 2.0 else "✗ FAIL"
     print(f"    ▸ Status: {status_aniso}")
 
-    # --- Kurtosis (signature of kappa vs Maxwellian) ---
-    # For a 1D kappa distribution with parameter kappa, the excess kurtosis is:
-    # Kurt_excess = 6 / (2*kappa - 5)  for kappa > 5/2
-    # For kappa=3: Kurt_excess = 6 / (6-5) = 6.0
-    # For Maxwellian: Kurt_excess = 0
-    print(f"\n  ── HIGHER MOMENT: KURTOSIS (kappa signature) ──")
-    kappa_kurt_expected = 6.0 / (2.0 * KAPPA - 5.0) if KAPPA > 2.5 else float('inf')
-    print(f"    Expected excess kurtosis for kappa={KAPPA}: {kappa_kurt_expected:.4f}")
-    print(f"    (Maxwellian would give: 0.0)")
+    print(f"\n  ── HIGHER MOMENT: KURTOSIS ──")
+    if distribution == "maxwellian":
+        kurt_expected = 0.0
+        print("    Expected excess kurtosis for Maxwellian: 0.0")
+    else:
+        kurt_expected = 6.0 / (2.0 * KAPPA - 5.0) if KAPPA > 2.5 else float('inf')
+        print(f"    Expected excess kurtosis for kappa={KAPPA}: {kurt_expected:.4f}")
+        print("    (Maxwellian would give: 0.0)")
 
     for field, label in [('px', 'p_x (perp)'), ('py', 'p_y (perp)'), ('pz', 'p_z (par)')]:
         vals = species[field]
         mean = np.average(vals, weights=w)
         var = np.average((vals - mean)**2, weights=w)
         kurt = np.average((vals - mean)**4, weights=w) / var**2 - 3.0
-        kurt_err = abs(kurt - kappa_kurt_expected) / kappa_kurt_expected * 100 if kappa_kurt_expected != float('inf') else float('inf')
+        if kurt_expected == 0.0:
+            kurt_err = abs(kurt) * 100.0
+        elif kurt_expected != float('inf'):
+            kurt_err = abs(kurt - kurt_expected) / kurt_expected * 100.0
+        else:
+            kurt_err = float('inf')
         status_k = "✓" if kurt_err < 10.0 else "~"
         print(f"    {label:<15} excess kurtosis = {kurt:+.4f}  (err: {kurt_err:.1f}%)  {status_k}")
 
@@ -326,15 +304,20 @@ def compute_moments(species, species_name, expected_T_perp, expected_T_par, expe
 # 4. SUMMARY TABLE
 # ═══════════════════════════════════════════════════════════════════════
 
-def print_expected_parameters():
+def print_expected_parameters(distribution):
     """Print the expected simulation parameters for reference."""
     print("\n" + "═"*70)
-    print("  EXPECTED PARAMETERS (from psc_temp_aniso.cxx)")
+    if distribution == "maxwellian":
+        print("  EXPECTED PARAMETERS (from psc_maxwellian.cxx)")
+    else:
+        print("  EXPECTED PARAMETERS (from psc_temp_aniso.cxx)")
     print("═"*70)
-    print(f"  B0 = vA/c              = {B0}")
+    print(f"  distribution           = {distribution}")
+    print(f"  B0                     = {B0}")
     print(f"  n                      = {N_DENSITY}")
     print(f"  mass_ratio             = {MASS_RATIO}")
-    print(f"  kappa                  = {KAPPA}")
+    if distribution == "kappa":
+        print(f"  kappa                  = {KAPPA}")
     print(f"  beta_e_par             = {BETA_E_PAR}")
     print(f"  beta_i_par             = {BETA_I_PAR}")
     print(f"  Ti_perp/Ti_par         = {TI_PERP_OVER_TI_PAR}")
@@ -547,7 +530,8 @@ def main():
         print("Usage: python validate_moments.py [path_to_prt_file.bp]")
         sys.exit(1)
 
-    print_expected_parameters()
+    distribution = infer_distribution(filepath)
+    print_expected_parameters(distribution)
 
     data = load_particles(filepath)
     ions, electrons = separate_species(data)
@@ -556,13 +540,15 @@ def main():
         ions, "IONS",
         expected_T_perp=TI_PERP,   # 0.175
         expected_T_par=TI_PAR,     # 0.05
-        expected_m=M_ION           # 64.0
+        expected_m=M_ION,          # 64.0
+        distribution=distribution,
     )
     electron_results = compute_moments(
         electrons, "ELECTRONS",
         expected_T_perp=TE_PERP,   # 0.005
         expected_T_par=TE_PAR,     # 0.005
-        expected_m=M_ELECTRON      # 1.0
+        expected_m=M_ELECTRON,     # 1.0
+        distribution=distribution,
     )
 
     print_final_summary(ion_results, electron_results)

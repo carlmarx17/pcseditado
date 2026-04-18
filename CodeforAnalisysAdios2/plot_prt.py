@@ -19,8 +19,6 @@ Defaults to  ../build/src/prt.000000000.bp  if no argument is given.
 import sys
 import os
 import glob
-import re
-import adios2
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -37,6 +35,13 @@ try:
     from data_reader import PICDataReader
 except ImportError:
     PICDataReader = None
+from particle_reader import (
+    build_structured_particles,
+    extract_step,
+    is_particle_path,
+    load_particle_arrays,
+    resolve_particle_files,
+)
 from psc_units import B0, KAPPA, MASS_RATIO
 
 # ── Configuration ────────────────────────────────────────────────────────────
@@ -44,8 +49,6 @@ OUTPUT_DIR = "prt_plots"
 DPI = 200
 MAX_EVOLUTION_FILES = 12
 MAX_VDF_SNAPSHOTS = 5
-
-STEP_RE = re.compile(r"\.(\d+)(?:_p\d+)?\.bp$")
 
 # ── Simulation parameters (from psc_temp_aniso.cxx) ─────────────────────────
 Zi: float = 1.0
@@ -65,72 +68,18 @@ M_ION: float = MASS_RATIO * Zi                        # 64.0
 
 def load_particles(filepath: str, verbose: bool = True) -> np.ndarray:
     """Load particle data from a PSC prt.*.bp file/dir."""
-    if verbose:
-        print(f"Loading particles from: {filepath}")
-    
-    f = adios2.FileReader(filepath)
-    try:
-        vars = f.available_variables()
-        
-        # Determine variable names in ADIOS2 (they might be flat or prefixed)
-        def get_var(name):
-            for k in vars.keys():
-                if k.endswith(name):
-                    variable = f.inquire_variable(k)
-                    if variable is None:
-                        break
-                    return f.read(variable)
-            raise KeyError(f"Variable ending in '{name}' not found in {filepath}")
-
-        q = get_var("q")
-        m = get_var("m")
-        x = get_var("x")
-        y = get_var("y")
-        z = get_var("z")
-        px = get_var("px")
-        py = get_var("py")
-        pz = get_var("pz")
-    finally:
-        f.close()
-
-    # Reconstruct a structured array to maintain compatibility with the rest of the script
-    dt = np.dtype([('q', 'f8'), ('m', 'f8'), ('x', 'f8'), ('y', 'f8'), ('z', 'f8'), ('px', 'f8'), ('py', 'f8'), ('pz', 'f8')])
-    data = np.zeros(len(q), dtype=dt)
-    data['q'] = q
-    data['m'] = m
-    data['x'] = x
-    data['y'] = y
-    data['z'] = z
-    data['px'] = px
-    data['py'] = py
-    data['pz'] = pz
-
-    if verbose:
-        print(f"  Total particles: {len(data):,}")
-    return data
+    return build_structured_particles(
+        filepath, include_position=True, include_weight=False, include_mass=True, verbose=verbose
+    )
 
 
 def load_particle_phase_space(filepath: str) -> dict:
     """Load only the momentum fields needed for distribution analysis."""
-    f = adios2.FileReader(filepath)
-    try:
-        vars = f.available_variables()
-        
-        def get_var(name):
-            for k in vars.keys():
-                if k.endswith(name):
-                    variable = f.inquire_variable(k)
-                    if variable is None:
-                        break
-                    return f.read(variable)
-            raise KeyError(f"Variable ending in '{name}' not found in {filepath}")
-            
-        q = get_var("q")
-        px = get_var("px")
-        py = get_var("py")
-        pz = get_var("pz")
-    finally:
-        f.close()
+    arrays = load_particle_arrays(filepath)
+    q = arrays["q"]
+    px = arrays["px"]
+    py = arrays["py"]
+    pz = arrays["pz"]
 
     ion_mask = q > 0
     elec_mask = q < 0
@@ -169,30 +118,6 @@ def load_field_fluctuation_metrics(filepath: str, b0: float = B0) -> dict:
     }
 
 
-def extract_step(filepath: str) -> int:
-    """Extract the integer step from a PSC particle filename."""
-    match = STEP_RE.search(os.path.basename(filepath))
-    if not match:
-        raise ValueError(f"Could not extract step from filename: {filepath}")
-    return int(match.group(1))
-
-
-def resolve_particle_files(input_path: str) -> list[str]:
-    """Resolve a file, directory, or glob pattern into an ordered file list."""
-    if os.path.isdir(input_path):
-        candidates = sorted(glob.glob(os.path.join(input_path, "prt.*.bp")))
-    elif any(ch in input_path for ch in "*?[]"):
-        candidates = sorted(glob.glob(input_path))
-    else:
-        candidates = [input_path]
-
-    files = [p for p in candidates if os.path.isfile(p)]
-    if not files:
-        raise FileNotFoundError(f"No particle files matched: {input_path}")
-
-    return sorted(files, key=extract_step)
-
-
 def resolve_field_files(
     reference_dir: str, pattern: str = "pfd.*.bp"
 ) -> dict[int, str]:
@@ -200,7 +125,7 @@ def resolve_field_files(
     candidates = sorted(glob.glob(os.path.join(reference_dir, pattern)))
     result = {}
     for path in candidates:
-        if os.path.isfile(path):
+        if is_particle_path(path):
             result[extract_step(path)] = path
     return result
 
