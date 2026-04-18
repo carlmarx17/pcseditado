@@ -100,13 +100,17 @@ def load_particles(filepath):
     """Load particle data from a PSC prt.*.bp file."""
     print(f"Loading particles from: {filepath}")
     print(f"  (file size: {os.path.getsize(filepath) / 1e9:.2f} GB)")
-    with adios2.open(filepath, "r") as f:
+    f = adios2.FileReader(filepath)
+    try:
         vars = f.available_variables()
 
         def get_var(name, required=True):
             for key in vars:
                 if key.endswith(name):
-                    return f.read(key)
+                    variable = f.inquire_variable(key)
+                    if variable is None:
+                        break
+                    return f.read(variable)
             if required:
                 raise KeyError(f"Variable ending in '{name}' not found in {filepath}")
             return None
@@ -117,6 +121,8 @@ def load_particles(filepath):
         px = get_var("px")
         py = get_var("py")
         pz = get_var("pz")
+    finally:
+        f.close()
 
     if w is None:
         w = np.ones_like(q, dtype=float)

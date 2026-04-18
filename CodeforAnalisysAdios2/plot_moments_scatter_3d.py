@@ -34,19 +34,25 @@ DPI = 200
 
 def load_particle_data(filepath):
     """Carga partículas desde un archivo ADIOS2 prt.*.bp."""
-    with adios2.open(filepath, "r") as f:
+    f = adios2.FileReader(filepath)
+    try:
         vars = f.available_variables()
 
         def get_var(name):
             for key in vars:
                 if key.endswith(name):
-                    return f.read(key)
+                    variable = f.inquire_variable(key)
+                    if variable is None:
+                        break
+                    return f.read(variable)
             raise KeyError(f"Variable ending in '{name}' not found in {filepath}")
 
         q = get_var("q")
         px = get_var("px")
         py = get_var("py")
         pz = get_var("pz")
+    finally:
+        f.close()
 
     dt = np.dtype([("q", "f8"), ("px", "f8"), ("py", "f8"), ("pz", "f8")])
     data = np.empty(len(q), dtype=dt)

@@ -68,14 +68,18 @@ def load_particles(filepath: str, verbose: bool = True) -> np.ndarray:
     if verbose:
         print(f"Loading particles from: {filepath}")
     
-    with adios2.open(filepath, "r") as f:
+    f = adios2.FileReader(filepath)
+    try:
         vars = f.available_variables()
         
         # Determine variable names in ADIOS2 (they might be flat or prefixed)
         def get_var(name):
             for k in vars.keys():
                 if k.endswith(name):
-                    return f.read(k)
+                    variable = f.inquire_variable(k)
+                    if variable is None:
+                        break
+                    return f.read(variable)
             raise KeyError(f"Variable ending in '{name}' not found in {filepath}")
 
         q = get_var("q")
@@ -86,6 +90,8 @@ def load_particles(filepath: str, verbose: bool = True) -> np.ndarray:
         px = get_var("px")
         py = get_var("py")
         pz = get_var("pz")
+    finally:
+        f.close()
 
     # Reconstruct a structured array to maintain compatibility with the rest of the script
     dt = np.dtype([('q', 'f8'), ('m', 'f8'), ('x', 'f8'), ('y', 'f8'), ('z', 'f8'), ('px', 'f8'), ('py', 'f8'), ('pz', 'f8')])
@@ -106,19 +112,25 @@ def load_particles(filepath: str, verbose: bool = True) -> np.ndarray:
 
 def load_particle_phase_space(filepath: str) -> dict:
     """Load only the momentum fields needed for distribution analysis."""
-    with adios2.open(filepath, "r") as f:
+    f = adios2.FileReader(filepath)
+    try:
         vars = f.available_variables()
         
         def get_var(name):
             for k in vars.keys():
                 if k.endswith(name):
-                    return f.read(k)
+                    variable = f.inquire_variable(k)
+                    if variable is None:
+                        break
+                    return f.read(variable)
             raise KeyError(f"Variable ending in '{name}' not found in {filepath}")
             
         q = get_var("q")
         px = get_var("px")
         py = get_var("py")
         pz = get_var("pz")
+    finally:
+        f.close()
 
     ion_mask = q > 0
     elec_mask = q < 0

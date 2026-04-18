@@ -6,6 +6,11 @@ from typing import Dict, List, Optional
 
 class PICDataReader:
     """Utility class to read and extract data from PIC simulation ADIOS2 output files."""
+
+    @staticmethod
+    def _open_reader(filename: str):
+        """Open an ADIOS2 BP file using the API available in this environment."""
+        return adios2.FileReader(filename)
     
     @staticmethod
     def get_step_from_filename(filename: str) -> Optional[int]:
@@ -30,12 +35,18 @@ class PICDataReader:
     def read_multiple_fields_3d(filename: str, group_prefix: str, dataset_paths: List[str]) -> Dict[str, np.ndarray]:
         """Reads multiple 3D datasets from the ADIOS2 file. group_prefix is ignored."""
         results = {}
-        with adios2.open(filename, 'r') as f:
+        f = PICDataReader._open_reader(filename)
+        try:
             for path in dataset_paths:
                 try:
-                    results[path] = f.read(path)
-                except Exception as e:
+                    variable = f.inquire_variable(path)
+                    if variable is None:
+                        raise KeyError
+                    results[path] = f.read(variable)
+                except Exception:
                     raise KeyError(f"Dataset '{path}' not found in file '{filename}'.")
+        finally:
+            f.close()
         return results
 
     @staticmethod
