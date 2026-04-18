@@ -27,8 +27,7 @@ _DEFAULT_KIND_MASS = {
 
 def _read_var_by_suffix(reader: adios2.FileReader, variables: dict, suffix: str):
     for key in variables:
-        tail = key.split("/")[-1]
-        if tail == suffix:
+        if key == suffix or key.endswith(f"::{suffix}") or key.endswith(f"/{suffix}"):
             variable = reader.inquire_variable(key)
             if variable is None:
                 continue
