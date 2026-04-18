@@ -5,7 +5,9 @@
 PYTHON   = python3
 B0_REF   = 0.1      # Matches vA_over_c = 0.1 in psc_temp_aniso.cxx
 DATA_DIR = ../build/src
-PARTICLE_PATTERN = $(DATA_DIR)/prt.*.bp
+PARTICLE_PATTERN_PRIMARY = $(DATA_DIR)/prt.*.bp
+PARTICLE_PATTERN_SECONDARY = $(DATA_DIR)/prt_maxwellian.*.bp
+PARTICLE_PATTERN = $(if $(wildcard $(PARTICLE_PATTERN_PRIMARY)),$(PARTICLE_PATTERN_PRIMARY),$(PARTICLE_PATTERN_SECONDARY))
 PARTICLE_SAMPLE  = $(lastword $(sort $(wildcard $(PARTICLE_PATTERN))))
 
 .PHONY: all brazil mirror diamagnetic fields spectral validate particles report clean help
@@ -47,13 +49,13 @@ validate:
 	@echo "==========================================================="
 	@echo "Validating Moments"
 	@echo "==========================================================="
-	@if [ -z "$(PARTICLE_SAMPLE)" ]; then echo "No particle BP files found matching $(PARTICLE_PATTERN)"; exit 1; fi
+	@if [ -z "$(PARTICLE_SAMPLE)" ]; then echo "No particle BP files found matching $(PARTICLE_PATTERN_PRIMARY) or $(PARTICLE_PATTERN_SECONDARY)"; exit 1; fi
 	$(PYTHON) validate_moments.py "$(PARTICLE_SAMPLE)"
 particles:
 	@echo "==========================================================="
 	@echo "Generating Particle VDF and Phase-Space Plots"
 	@echo "==========================================================="
-	@if [ -z "$(PARTICLE_SAMPLE)" ]; then echo "No particle BP files found matching $(PARTICLE_PATTERN)"; exit 1; fi
+	@if [ -z "$(PARTICLE_SAMPLE)" ]; then echo "No particle BP files found matching $(PARTICLE_PATTERN_PRIMARY) or $(PARTICLE_PATTERN_SECONDARY)"; exit 1; fi
 	$(PYTHON) plot_prt.py "$(PARTICLE_PATTERN)"
 	$(PYTHON) plot_vdf_3d.py "$(PARTICLE_SAMPLE)"
 	$(PYTHON) plot_moments_scatter_3d.py "$(PARTICLE_SAMPLE)"
