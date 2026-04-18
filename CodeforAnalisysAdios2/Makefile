@@ -5,6 +5,8 @@
 PYTHON   = python3
 B0_REF   = 0.1      # Matches vA_over_c = 0.1 in psc_temp_aniso.cxx
 DATA_DIR = ../build/src
+PARTICLE_PATTERN = $(DATA_DIR)/prt.*.bp
+PARTICLE_SAMPLE  = $(lastword $(sort $(wildcard $(PARTICLE_PATTERN))))
 
 .PHONY: all brazil mirror diamagnetic fields spectral validate particles report clean help
 
@@ -45,14 +47,16 @@ validate:
 	@echo "==========================================================="
 	@echo "Validating Moments"
 	@echo "==========================================================="
-	$(PYTHON) validate_moments.py $(DATA_DIR)/prt.000001200.bp
+	@if [ -z "$(PARTICLE_SAMPLE)" ]; then echo "No particle BP files found matching $(PARTICLE_PATTERN)"; exit 1; fi
+	$(PYTHON) validate_moments.py "$(PARTICLE_SAMPLE)"
 particles:
 	@echo "==========================================================="
 	@echo "Generating Particle VDF and Phase-Space Plots"
 	@echo "==========================================================="
-	$(PYTHON) plot_prt.py "$(DATA_DIR)/prt.*.bp"
-	$(PYTHON) plot_vdf_3d.py $(DATA_DIR)/prt.000001200.bp
-	$(PYTHON) plot_moments_scatter_3d.py $(DATA_DIR)/prt.000001200.bp
+	@if [ -z "$(PARTICLE_SAMPLE)" ]; then echo "No particle BP files found matching $(PARTICLE_PATTERN)"; exit 1; fi
+	$(PYTHON) plot_prt.py "$(PARTICLE_PATTERN)"
+	$(PYTHON) plot_vdf_3d.py "$(PARTICLE_SAMPLE)"
+	$(PYTHON) plot_moments_scatter_3d.py "$(PARTICLE_SAMPLE)"
 report:
 	@echo "==========================================================="
 	@echo "Generating Validation PDF Report"
