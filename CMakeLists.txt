@@ -61,7 +61,9 @@ set(GTENSOR_DEVICE "${PSC_GPU}" CACHE STRING "")
 CPMAddPackage(
   NAME gtensor
   GITHUB_REPOSITORY wdmapp/gtensor
-  GIT_TAG main
+  # Pinned to Sep-2024 commit: last version compatible with CMake 3.20
+  # (newer commits on main require CMake 3.21+ via HIP support)
+  GIT_TAG 10cc9dd808a1f0a265355b9cb17254ea75f200d6
   VERSION 0.0.0
 )
 

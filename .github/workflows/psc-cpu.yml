@@ -12,7 +12,17 @@ jobs:
     container: ghcr.io/psc-code/psc-cpp-ubuntu-20.04
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
+    - name: upgrade cmake
+      run: |
+        apt-get update -qq
+        apt-get install -y --no-install-recommends gpg wget ca-certificates
+        wget -qO- https://apt.kitware.com/keys/kitware-archive-latest.asc \
+          | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg
+        echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ focal main' \
+          > /etc/apt/sources.list.d/kitware.list
+        apt-get update -qq
+        apt-get install -y cmake
     - name: cmake
       run: cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -G Ninja
     - name: build
@@ -25,7 +35,7 @@ jobs:
     container: ghcr.io/psc-code/psc-spack-ubuntu-20.04
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: cmake
       run: cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -G Ninja
     - name: build
@@ -38,7 +48,7 @@ jobs:
     container: ghcr.io/psc-code/psc-spack-cuda-ubuntu-20.04
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: cmake
       run: |
         #. /opt/spack/share/spack/setup-env.sh
