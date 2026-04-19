@@ -35,10 +35,15 @@ from scipy.ndimage import gaussian_filter
 from data_reader import PICDataReader
 from psc_units import (
     B0,
+    DOMAIN_DE,
+    DOMAIN_DI_Y,
+    DOMAIN_DI_Z,
     FIELD_FILE_PATTERN,
     KAPPA,
     MASS_RATIO,
     MOMENT_FILE_PATTERN,
+    N_GRID_Y,
+    N_GRID_Z,
     step_to_omegaci,
 )
 
@@ -267,6 +272,7 @@ class DiamagneticCurrentAnalyzer:
             im = ax.imshow(
                 field.T, origin="lower", cmap=cmap,
                 vmin=-vm, vmax=vm, aspect="auto",
+                extent=[0, DOMAIN_DI_Z, 0, DOMAIN_DI_Y],
             )
             vmin_bmod = float(np.percentile(Bmod, 10))
             vmax_bmod = float(np.percentile(Bmod, 95))
@@ -278,8 +284,8 @@ class DiamagneticCurrentAnalyzer:
             cb.ax.yaxis.set_tick_params(color=TEXT_CLR, labelsize=8)
             plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
 
-            ax.set_xlabel("Z Axis", fontsize=11, color=TEXT_CLR)
-            ax.set_ylabel("Y Axis", fontsize=11, color=TEXT_CLR)
+            ax.set_xlabel(r"Z  [$d_i$]", fontsize=11, color=TEXT_CLR)
+            ax.set_ylabel(r"Y  [$d_i$]", fontsize=11, color=TEXT_CLR)
             ax.set_title(title, fontsize=13, color=TEXT_CLR, pad=8)
             ax.tick_params(colors=TEXT_CLR, direction="in", which="both", top=True, right=True)
             ax.xaxis.set_minor_locator(AutoMinorLocator())
@@ -287,10 +293,11 @@ class DiamagneticCurrentAnalyzer:
             for spine in ax.spines.values():
                 spine.set_edgecolor(GRID_CLR)
 
+        _kappa_str = rf",  $\kappa = {KAPPA}$" if KAPPA is not None else ",  Maxwellian"
         fig.suptitle(
             rf"Diamagnetic Current  —  $t \approx {step_to_omegaci(step):.2f}\ \Omega_{{ci}}^{{-1}}$  (step {step})"
             "\n"
-            rf"PSC  ($m_i/m_e = {int(MASS_RATIO)}$,  $\kappa = {KAPPA}$,  $B_0 = {B0}$)",
+            rf"PSC  ($m_i/m_e = {int(MASS_RATIO)}${_kappa_str},  $B_0 = {B0:.4f}$)",
             fontsize=14, color=TEXT_CLR, y=1.02, fontweight="bold",
         )
         return fig

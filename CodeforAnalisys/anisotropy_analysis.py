@@ -30,11 +30,14 @@ import matplotlib.colors as mcolors
 from pathlib import Path
 
 from data_reader import PICDataReader
-from psc_units import B0, FIELD_FILE_PATTERN, KAPPA, MASS_RATIO, MOMENT_FILE_PATTERN
+from psc_units import (
+    B0, FIELD_FILE_PATTERN, KAPPA, MASS_RATIO, MOMENT_FILE_PATTERN,
+    BETA_I_PAR, BETA_I_PERP_OVER_PAR, TI_PAR, TI_PERP,
+)
 
-# Initial conditions (from psc_temp_aniso.cxx)
-T_PERP_I: float = 0.175     # Ion perpendicular temperature
-T_PAR_I: float  = 0.05      # Ion parallel temperature
+# Initial conditions (from psc_maxwellian.cxx) — derived from psc_units
+T_PERP_I: float = TI_PERP   # Ion perpendicular temperature
+T_PAR_I: float  = TI_PAR    # Ion parallel temperature
 
 warnings.filterwarnings("ignore")
 
@@ -319,7 +322,9 @@ class PlasmaAnisotropyAnalyzer:
         ax.set_title(
             r"Brazil Plot: Anisotropy vs $\beta_\parallel$"
             + "\n"
-            + rf"PSC  ($m_i/m_e = {int(MASS_RATIO)}$,  $\kappa = {KAPPA}$)",
+            + rf"PSC  ($m_i/m_e = {int(MASS_RATIO)}$"
+            + (rf",  $\kappa = {KAPPA}$" if KAPPA is not None else ",  Maxwellian")
+            + ")",
             fontsize=15, fontweight="bold", color=TEXT_CLR, pad=14,
         )
 

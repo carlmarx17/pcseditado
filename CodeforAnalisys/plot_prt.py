@@ -37,7 +37,11 @@ try:
     from data_reader import PICDataReader
 except ImportError:
     PICDataReader = None
-from psc_units import B0, KAPPA, MASS_RATIO
+from psc_units import (
+    B0, KAPPA, MASS_RATIO, TI_PAR, TI_PERP,
+    BETA_I_PAR as _BETA_I_PAR_SIM,
+    BETA_I_PERP_OVER_PAR as _TI_RATIO_SIM,
+)
 
 # ── Configuration ────────────────────────────────────────────────────────────
 OUTPUT_DIR = "prt_plots"
@@ -47,16 +51,14 @@ MAX_VDF_SNAPSHOTS = 5
 
 STEP_RE = re.compile(r"\.(\d+)(?:_p\d+)?\.h5$")
 
-# ── Simulation parameters (from psc_temp_aniso.cxx) ─────────────────────────
+# ── Simulation parameters (from psc_maxwellian.cxx via psc_units) ────────────
 Zi: float = 1.0
 VA_OVER_C: float = B0
-BETA_I_PAR: float = 10.0
-TI_PERP_OVER_TI_PAR: float = 3.5
+BETA_I_PAR: float = _BETA_I_PAR_SIM       # = 5.0  (Maxwellian run)
+TI_PERP_OVER_TI_PAR: float = _TI_RATIO_SIM  # = 3.0
 BETA_NORM: float = 1.0
 
-TI_PAR: float = BETA_I_PAR * B0**2 / 2.0             # 0.05
-TI_PERP: float = TI_PERP_OVER_TI_PAR * TI_PAR        # 0.175
-M_ION: float = MASS_RATIO * Zi                        # 64.0
+M_ION: float = MASS_RATIO * Zi        # 64.0
 
 
 # ══════════════════════════════════════════════════════════════════════════════

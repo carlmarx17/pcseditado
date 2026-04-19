@@ -1,0 +1,17 @@
+---
+# .clangd — LSP configuration for PSC (non-CUDA build)
+#
+# The CUDA implementation files require CUDA headers (cuda_bits.h, etc.)
+# that are only present when building with -DUSE_CUDA=ON.
+# When developing without a CUDA toolkit, clangd reports false errors in
+# those files.  This config excludes them from analysis.
+
+If:
+  PathExclude:
+    - "src/libpsc/cuda/.*"
+    - "src/libpsc/cuda_*.hxx"
+
+CompileFlags:
+  Remove:
+    - "-DUSE_CUDA"
+    - "--cuda-gpu-arch=.*"
