@@ -12,7 +12,7 @@ jobs:
     container: ghcr.io/psc-code/psc-spack-ubuntu-20.04
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: dev-build psc +tests
       run: |
         . /opt/spack/share/spack/setup-env.sh
@@ -23,7 +23,7 @@ jobs:
     container: ghcr.io/psc-code/psc-spack-cuda-ubuntu-20.04
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: dev-build psc +tests +cuda
       run: |
         . /opt/spack/share/spack/setup-env.sh

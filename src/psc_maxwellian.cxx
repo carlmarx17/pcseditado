@@ -49,11 +49,11 @@ static PscParams psc_params;
 namespace
 {
 
-constexpr double kResolvedDomainDe = 64.;
-constexpr int kResolvedGridYZ = 512;
-constexpr int kParticlesPerCell = 1000;
-constexpr int kParticleOutputStride = 500;
-constexpr int kParticleWindowCells = 64;
+constexpr double kDomainSizeDi = 32.; // Increased domain size in units of d_i
+constexpr int kGridSizeYZ = 512;       // Adjusted to maintain performance with 1000 ppc
+constexpr int kParticlesPerCell = 1000; // Restored high particle count
+constexpr int kParticleOutputStride = 1000;
+constexpr int kParticleWindowCells = 128;
 
 int envOrDefault(const char* name, int default_value)
 {
@@ -74,11 +74,7 @@ bool hasEnv(const char* name) { return std::getenv(name) != nullptr; }
 // ----------------------------------------------------------------------
 using Dim = dim_yz;
 
-#ifdef USE_CUDA
-using PscConfig = PscConfig1vbecCuda<Dim>;
-#else
 using PscConfig = PscConfig1vbecSingle<Dim>;
-#endif
 
 #include <kg/io.h>
 #include "writer_adios2.hxx"
@@ -117,46 +113,22 @@ using OutputParticles = OutputParticlesAdios2;
 // ----------------------------------------------------------------------
 // 4. Moment selector setup
 // ----------------------------------------------------------------------
-template <typename Mp, typename Dm, typename Enable = void>
-struct Moment_n_Selector
-{
-  using type = Moment_n_1st<Mp, MfieldsC>;
-};
+using Moment_n = Moment_n_1st<Mparticles, MfieldsC>;
 
-#ifdef USE_CUDA
-template <typename Mp, typename Dm>
-struct Moment_n_Selector<Mp, Dm,
-                         typename std::enable_if<Mp::is_cuda::value>::type>
-{
-  using type = Moment_n_1st_cuda<Mp, Dm>;
-};
-#endif
-using Moment_n = typename Moment_n_Selector<Mparticles, Dim>::type;
-
-template <typename Moment>
 auto make_MfieldsMoment_n(const Grid_t& grid)
 {
   return MfieldsC(grid, grid.kinds.size(), grid.ibn);
 }
-
-#ifdef USE_CUDA
-template <>
-auto make_MfieldsMoment_n<Moment_n>(const Grid_t& grid)
-{
-  return HMFields({-grid.ibn, grid.domain.ldims + 2 * grid.ibn},
-                  grid.kinds.size(), grid.n_patches());
-}
-#endif
 
 // ----------------------------------------------------------------------
 // 5. Parameter setup
 // ----------------------------------------------------------------------
 void setupParameters()
 {
-  psc_params.nmax = envOrDefault("PSC_NMAX", 80001);
+  psc_params.nmax = envOrDefault("PSC_NMAX", 40001); // Reduced default steps, still enough for physics
   psc_params.cfl = 0.95;
-  psc_params.write_checkpoint_every_step = 1000;
-  psc_params.stats_every = 1;
+  psc_params.write_checkpoint_every_step = 5000;
+  psc_params.stats_every = 10;
 
   g.BB = 1.0;
   g.Zi = 1.0;
@@ -164,7 +136,7 @@ void setupParameters()
   g.lambda0 = 20.0;
 
   // Campaign 1 from the documentation: vary kappa at fixed beta_i|| = 5, A = 3.
-  g.vA_over_c = 0.1;
+  g.vA_over_c = 0.05; // Reduced Alfven velocity for more realism
   g.beta_e_par = 1.0;
   g.beta_i_par = 5.0;
   g.Ti_perp_over_Ti_par = 3.0;
@@ -191,21 +163,25 @@ void setupParameters()
 // ----------------------------------------------------------------------
 Grid_t* setupGrid()
 {
-  const int resolved_grid_yz = envOrDefault("PSC_GRID_YZ", kResolvedGridYZ);
+  // Rigorous deep ion length dependent on density and charge squared:
+  g.d_i = std::sqrt(g.mass_ratio / g.n);
+  
+  const double domain_size = kDomainSizeDi * g.d_i;
+  const int resolved_grid_yz = envOrDefault("PSC_GRID_YZ", kGridSizeYZ);
   const int particles_per_cell =
     envOrDefault("PSC_NICELL", kParticlesPerCell);
 
-  // Enforce Debye resolution dynamically (> 3 points per Debye length)
+  // Enforce resolution dynamically (at least 2 cells per lambda_De and resolve d_e)
   double lambda_De = std::sqrt(g.Te_perp);
-  double max_dy = lambda_De / 3.0; // Enforce at least 3 cells per lambda_De
-  int requiredGridYZ = std::ceil(kResolvedDomainDe / max_dy);
+  double max_dx = std::min(0.5, lambda_De / 2.0); 
+  int requiredGridYZ = std::ceil(domain_size / max_dx);
   int finalGridYZ =
     hasEnv("PSC_GRID_YZ") ? resolved_grid_yz
                            : std::max(resolved_grid_yz, requiredGridYZ);
 
-  Grid_t::Real3 LL{1., kResolvedDomainDe, kResolvedDomainDe};
+  Grid_t::Real3 LL{1., domain_size, domain_size};
   Int3 gd{1, finalGridYZ, finalGridYZ};
-  Int3 np{1, 4, 8};
+  Int3 np{1, 8, 8}; // Increased decomposition for server (64 patches)
 
   Grid_t::Domain dom{gd, LL, -.5 * LL, np};
   psc::grid::BC bc{{BND_FLD_PERIODIC, BND_FLD_PERIODIC, BND_FLD_PERIODIC},
@@ -217,10 +193,7 @@ Grid_t* setupGrid()
   kinds[MY_ION] = {g.Zi, g.mass_ratio * g.Zi, "i"};
   kinds[MY_ELECTRON] = {-1., 1., "e"};
 
-  // Rigorous deep ion length dependent on density and charge squared:
-  g.d_i = std::sqrt(kinds[MY_ION].m / (g.n * sqr(kinds[MY_ION].q)));
-
-  mpi_printf(MPI_COMM_WORLD, "d_e = %g, d_i = %g\n", 1., g.d_i);
+  mpi_printf(MPI_COMM_WORLD, "d_e = %g, d_i = %g, L = %g (%g d_i)\n", 1., g.d_i, domain_size, kDomainSizeDi);
   mpi_printf(MPI_COMM_WORLD, "lambda_De = %g\n", sqrt(g.Te_perp));
 
   auto npn = Grid_t::NormalizationParams::dimensionless();
@@ -340,7 +313,7 @@ void run()
   setup_p.fractional_n_particles_per_cell = true;
   setup_p.neutralizing_population = MY_ION;
 
-  auto mf_n = make_MfieldsMoment_n<Moment_n>(grid);
+  auto mf_n = make_MfieldsMoment_n(grid);
 
   if (read_checkpoint_filename.empty()) {
     initializeParticles(setup_p, bal, grid_ptr, mprts);

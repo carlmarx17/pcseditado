@@ -13,7 +13,7 @@ namespace io
 
 inline FileAdios2::FileAdios2(adios2::ADIOS& ad, const std::string& name,
                               Mode mode, const std::string& io_name)
-  : ad_{ad}
+  : ad_{ad}, mode_{mode}
 {
   if (io_name.empty()) {
     io_name_ = "io-" + name;
@@ -34,6 +34,9 @@ inline FileAdios2::FileAdios2(adios2::ADIOS& ad, const std::string& name,
 
 inline FileAdios2::~FileAdios2()
 {
+  if (read_step_active_) {
+    engine_.EndStep();
+  }
   engine_.Close();
   ad_.RemoveIO(io_name_);
 }
@@ -47,11 +50,20 @@ inline void FileAdios2::beginStep(StepMode mode)
     default: std::abort();
   }
   engine_.BeginStep(adios2_mode);
+  read_step_active_ = true;
 }
 
 inline void FileAdios2::endStep()
 {
   engine_.EndStep();
+  read_step_active_ = false;
+}
+
+inline void FileAdios2::ensureReadStep()
+{
+  if (mode_ == Mode::Read && !read_step_active_) {
+    beginStep(StepMode::Read);
+  }
 }
 
 inline void FileAdios2::performPuts()
@@ -89,6 +101,7 @@ inline void FileAdios2::getVariable(const std::string& name, T* data,
                                     const Extents& memory_selection)
 {
   auto& io = const_cast<adios2::IO&>(io_); // FIXME
+  ensureReadStep();
   auto v = io.InquireVariable<T>(name);
   if (!selection.start.empty()) {
     v.SetSelection({selection.start, selection.count});
@@ -170,6 +183,7 @@ inline void FileAdios2::getVariable(const std::string& name, TypePointer data,
 inline Dims FileAdios2::shapeVariable(const std::string& name) const
 {
   auto& io = const_cast<adios2::IO&>(io_); // FIXME
+  const_cast<FileAdios2*>(this)->ensureReadStep();
   auto type = io.VariableType(name);
 
   if (0) {
@@ -204,6 +218,7 @@ inline void FileAdios2::putAttribute(const std::string& name, const T* data,
 template <typename T>
 inline void FileAdios2::getAttribute(const std::string& name, T* data)
 {
+  ensureReadStep();
   auto attr = io_.InquireAttribute<T>(name);
   auto vec = attr.Data();
   std::copy(vec.begin(), vec.end(), data);
@@ -256,6 +271,7 @@ inline void FileAdios2::putAttribute(const std::string& name,
 inline size_t FileAdios2::sizeAttribute(const std::string& name) const
 {
   auto& io = const_cast<adios2::IO&>(io_); // FIXME
+  const_cast<FileAdios2*>(this)->ensureReadStep();
   auto type = io.AttributeType(name);
 
   if (0) {

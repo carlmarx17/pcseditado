@@ -40,6 +40,8 @@ public:
   size_t sizeAttribute(const std::string& name) const override;
 
 private:
+  void ensureReadStep();
+
   struct PutVariable;
   struct GetVariable;
   struct GetAttribute;
@@ -66,6 +68,8 @@ private:
   adios2::IO io_;
   adios2::ADIOS& ad_;   // FIXME, could go away
   std::string io_name_; // FIXME, needs io.Name() and/or Remove by name
+  Mode mode_;
+  bool read_step_active_ = false;
 };
 
 } // namespace io
