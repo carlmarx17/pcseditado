@@ -17,3 +17,27 @@ CodeforAnalisys/fancy_vdf_plots/
 CodeforAnalisys/phase_space_plots/
 CodeforAnalisys/validation_plots/
 *.pdf
+
+# ---- LaTeX / TeX build artifacts ----
+*.tex
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.log
+*.lot
+*.nav
+*.out
+*.run.xml
+*.snm
+*.synctex.gz
+*.toc
+*.vrb
+*.xdv
+_minted-*/
+*.pygtex
+*.pygstyle
+build_pdf.py

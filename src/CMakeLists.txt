@@ -23,6 +23,8 @@ add_psc_executable(psc_radiation)
 add_psc_executable(psc_shock)
 add_psc_executable(psc_temp_aniso)
 add_psc_executable(psc_maxwellian)
+add_psc_executable(psc_mirror_light)
+add_psc_executable(psc_firehose_light)
 add_psc_executable(psc_reconnection)
 
 if(NOT USE_CUDA)
