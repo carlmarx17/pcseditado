@@ -13,7 +13,7 @@
 //   mass_ratio = 100  (reduced from 256/512)
 //   ppc        = 500  (reduced from 1000)
 //   grid       = 64x64 (small but enough for instability growth)
-//   nmax       = 20000 (enough to see mirror growth)
+//   nmax       = 100000 (enough to see mirror growth)
 //   np patches = 2x2  (minimal MPI patches for serial/2-proc run)
 // ======================================================================
 
@@ -133,7 +133,7 @@ void setupParameters()
 {
   // Steps: 20000 gives ≥ 200 ion cyclotron periods (Omega_ci * t_max ~ 200),
   // well into the nonlinear mirror saturation phase.
-  psc_params.nmax                    = envOrDefault("PSC_NMAX", 20000);
+  psc_params.nmax                    = envOrDefault("PSC_NMAX", 100000);
   psc_params.cfl                     = 0.95;
   psc_params.write_checkpoint_every_step = 5000;
   psc_params.stats_every             = 50;

@@ -14,7 +14,7 @@
 //   mass_ratio = 100  (me/mi = 1/100)
 //   ppc        = 500
 //   grid       = 64x64
-//   nmax       = 20000
+//   nmax       = 100000
 //   np patches = 2x2
 // ======================================================================
 
@@ -132,7 +132,7 @@ void setupParameters()
 {
   // 20000 steps => enough to see firehose growth and saturation.
   // Firehose grows faster than mirror (shorter growth timescale at high beta).
-  psc_params.nmax                    = envOrDefault("PSC_NMAX", 20000);
+  psc_params.nmax                    = envOrDefault("PSC_NMAX", 100000);
   psc_params.cfl                     = 0.95;
   psc_params.write_checkpoint_every_step = 5000;
   psc_params.stats_every             = 50;
