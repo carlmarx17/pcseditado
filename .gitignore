@@ -1,12 +1,18 @@
+# ---- Build directories ----
 /build/
 /*.o
 /*.exe
-/*.log
+*.log
+
+# ---- Python ----
 *.pyc
 __pycache__/
+
+# ---- Editor / IDE ----
 .vscode/
 /.codex
-/*.pdf
+
+# ---- Analysis output directories ----
 CodeforAnalisys/anisotropy_plots/
 CodeforAnalisys/field_images/
 CodeforAnalisys/mirror_plots/
@@ -16,7 +22,18 @@ CodeforAnalisys/prt_plots/
 CodeforAnalisys/fancy_vdf_plots/
 CodeforAnalisys/phase_space_plots/
 CodeforAnalisys/validation_plots/
+
+# ---- PDFs / Informes / Presentaciones ----
 *.pdf
+Informes/
+informes/
+Presentaciones/
+presentaciones/
+Reports/
+reports/
+slides/
+*.pptx
+*.ppt
 
 # ---- LaTeX / TeX build artifacts ----
 *.tex
@@ -27,7 +44,6 @@ CodeforAnalisys/validation_plots/
 *.fdb_latexmk
 *.fls
 *.lof
-*.log
 *.lot
 *.nav
 *.out

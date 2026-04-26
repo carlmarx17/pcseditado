@@ -20,6 +20,7 @@ import sys
 import os
 import glob
 import re
+import gc
 import h5py
 import numpy as np
 import matplotlib
@@ -45,9 +46,11 @@ from psc_units import (
 
 # ── Configuration ────────────────────────────────────────────────────────────
 OUTPUT_DIR = "prt_plots"
-DPI = 200
+DPI = 150          # reducido de 200 para menor uso de RAM en savefig
 MAX_EVOLUTION_FILES = 12
 MAX_VDF_SNAPSHOTS = 5
+NBINS_VDF = 250    # reducido de 400; suficiente para resolución publicable
+MAX_PARTICLES = 500_000  # submuestreo global si hay más partículas
 
 STEP_RE = re.compile(r"\.(\d+)(?:_p\d+)?\.h5$")
 
@@ -65,34 +68,68 @@ M_ION: float = MASS_RATIO * Zi        # 64.0
 #  I/O Helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
-def load_particles(filepath: str, verbose: bool = True) -> np.ndarray:
-    """Load particle data from a PSC prt.*.h5 file."""
+def load_particles(filepath: str, verbose: bool = True,
+                   max_particles: int = MAX_PARTICLES) -> np.ndarray:
+    """Load particle data from a PSC prt.*.h5 file.
+
+    Only reads columns needed for analysis (q, m, px, py, pz) to save RAM.
+    Subsamples uniformly if total particles exceeds max_particles.
+    """
     if verbose:
         print(f"Loading particles from: {filepath}")
     with h5py.File(filepath, "r") as f:
-        data = f["particles"]["p0"]["1d"][:]
+        dset = f["particles"]["p0"]["1d"]
+        n_total = dset["q"].shape[0]
+        if n_total > max_particles:
+            idx = np.sort(np.random.choice(n_total, max_particles, replace=False))
+            if verbose:
+                print(f"  Subsampling {max_particles:,} / {n_total:,} particles")
+        else:
+            idx = slice(None)
+        # Read only needed fields — avoids loading x,y,z positions
+        q  = dset["q"][idx].astype(np.float32)
+        m  = dset["m"][idx].astype(np.float32)
+        px = dset["px"][idx].astype(np.float32)
+        py = dset["py"][idx].astype(np.float32)
+        pz = dset["pz"][idx].astype(np.float32)
+
+    # Pack into a structured array (same interface as before)
+    dtype = np.dtype([("q", np.float32), ("m", np.float32),
+                      ("px", np.float32), ("py", np.float32), ("pz", np.float32)])
+    data = np.empty(len(q), dtype=dtype)
+    data["q"]  = q;  data["m"]  = m
+    data["px"] = px; data["py"] = py; data["pz"] = pz
     if verbose:
-        print(f"  Total particles: {len(data):,}")
+        print(f"  Loaded {len(data):,} particles ({data.nbytes / 1e6:.1f} MB)")
     return data
 
 
-def load_particle_phase_space(filepath: str) -> dict:
-    """Load only the momentum fields needed for distribution analysis."""
+def load_particle_phase_space(filepath: str,
+                              max_particles: int = MAX_PARTICLES) -> dict:
+    """Load only momentum fields needed for distribution analysis (memory-light)."""
     with h5py.File(filepath, "r") as f:
         dset = f["particles"]["p0"]["1d"]
-        q = dset["q"][:]
-        px = dset["px"][:]
-        py = dset["py"][:]
-        pz = dset["pz"][:]
+        n_total = dset["q"].shape[0]
+        idx = (
+            np.sort(np.random.choice(n_total, max_particles, replace=False))
+            if n_total > max_particles else slice(None)
+        )
+        q  = dset["q"][idx].astype(np.float32)
+        px = dset["px"][idx].astype(np.float32)
+        py = dset["py"][idx].astype(np.float32)
+        pz = dset["pz"][idx].astype(np.float32)
 
-    ion_mask = q > 0
+    ion_mask  = q > 0
     elec_mask = q < 0
-    return {
-        "ions_pz": pz[ion_mask],
-        "ions_perp": np.sqrt(px[ion_mask] ** 2 + py[ion_mask] ** 2),
-        "electrons_pz": pz[elec_mask],
-        "electrons_perp": np.sqrt(px[elec_mask] ** 2 + py[elec_mask] ** 2),
+    result = {
+        "ions_pz":        pz[ion_mask],
+        "ions_perp":      np.sqrt(px[ion_mask]**2 + py[ion_mask]**2),
+        "electrons_pz":   pz[elec_mask],
+        "electrons_perp": np.sqrt(px[elec_mask]**2 + py[elec_mask]**2),
     }
+    del q, px, py, pz, ion_mask, elec_mask
+    gc.collect()
+    return result
 
 
 def load_field_fluctuation_metrics(filepath: str, b0: float = B0) -> dict:
@@ -264,7 +301,7 @@ def plot_vdf(ions, electrons, outdir: str):
     vth_e_par = np.sqrt(TE_PAR_ / M_ELE) / VA_
     vth_e_perp = np.sqrt(TE_PERP_ / M_ELE) / VA_
 
-    NBINS = 400
+    NBINS = NBINS_VDF
 
     fig, axes = plt.subplots(1, 2, figsize=(17, 7.5))
     fig.patch.set_facecolor("white")
@@ -947,6 +984,127 @@ def plot_macro_evolution(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  Plot 8: Brazil plot — T_perp/T_par vs beta_par (instability thresholds)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def plot_brazil(filepaths: list[str], outdir: str):
+    """Canonical Brazil plot: T_perp/T_par vs beta_parallel for ions.
+
+    Threshold curves (Gary 1993 / Hellinger 2006):
+      Mirror:         A_i = 1 + 0.77 / beta_par
+      Firehose:       A_i = 1 - 2   / beta_par
+      Oblique FH:     A_i = 1 - 1.4 / (beta_par - 0.11)^0.55
+    Each snapshot is one point; colour encodes simulation step.
+    """
+    print("\nBuilding Brazil plot (T_perp/T_par vs beta_par)...")
+
+    sampled_paths = sample_filepaths(filepaths, max_files=MAX_EVOLUTION_FILES)
+    steps_arr = np.array([extract_step(p) for p in sampled_paths], dtype=float)
+
+    aniso_vals    = []
+    beta_par_vals = []
+
+    for path in sampled_paths:
+        ps = load_particle_phase_space(path)
+        # T_par ~ <p_z^2> / m_i;  T_perp ~ <v_perp^2>/2 * m_i (from mean, not var)
+        tpar  = float(np.mean(ps["ions_pz"]  ** 2)) / M_ION
+        tperp = 0.5 * float(np.mean(ps["ions_perp"] ** 2)) / M_ION
+        beta_par = 2.0 * tpar / (B0 ** 2)      # beta_i_par = 2 n T_par / B0^2 (n=1)
+        aniso    = tperp / max(tpar, 1e-30)
+        aniso_vals.append(aniso)
+        beta_par_vals.append(beta_par)
+        del ps
+        gc.collect()
+
+    aniso_vals    = np.asarray(aniso_vals,    dtype=float)
+    beta_par_vals = np.asarray(beta_par_vals, dtype=float)
+
+    # ── Threshold curves ──────────────────────────────────────────────────────
+    beta_range = np.logspace(-2, 2, 500)
+    mirror_thresh   = 1.0 + 0.77 / beta_range
+    firehose_thresh = 1.0 - 2.0  / beta_range
+    with np.errstate(invalid="ignore", divide="ignore"):
+        valid_bf = beta_range > 0.11
+        oblique_fh = np.where(valid_bf,
+                               1.0 - 1.4 / (beta_range - 0.11) ** 0.55,
+                               np.nan)
+
+    # ── Figure ────────────────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(9, 7))
+    fig.patch.set_facecolor("#0d1117")
+    ax.set_facecolor("#111827")
+
+    # Instability regions (shaded)
+    ax.fill_between(beta_range, mirror_thresh, 10.0, alpha=0.12,
+                    color="#e74c3c", label="_nolegend_")
+    ax.fill_between(beta_range, -10.0, np.clip(firehose_thresh, -10, 10), alpha=0.12,
+                    color="#3498db", label="_nolegend_")
+
+    # Threshold lines
+    ax.plot(beta_range, mirror_thresh, "--", color="#e74c3c", linewidth=2.0,
+            label=r"Mirror  $A_i = 1 + 0.77/\beta_{\parallel}$")
+    ax.plot(beta_range, firehose_thresh, "--", color="#3498db", linewidth=2.0,
+            label=r"Firehose  $A_i = 1 - 2/\beta_{\parallel}$")
+    ax.plot(beta_range[valid_bf], oblique_fh[valid_bf], ":",
+            color="#9b59b6", linewidth=1.8,
+            label=r"Oblique firehose (Hellinger 2006)")
+
+    # Isotropic line
+    ax.axhline(1.0, color="#aaaaaa", linestyle=":", linewidth=1.0, alpha=0.6)
+
+    # Data scatter
+    sc = ax.scatter(beta_par_vals, aniso_vals, c=steps_arr,
+                    cmap="plasma", s=90, zorder=5,
+                    edgecolors="white", linewidths=0.6,
+                    norm=plt.Normalize(steps_arr.min(), steps_arr.max()))
+    ax.plot(beta_par_vals, aniso_vals, "-", color="white",
+            linewidth=0.8, alpha=0.4, zorder=4)
+    ax.scatter(beta_par_vals[0],  aniso_vals[0],  marker="D", s=130,
+               color="#2ecc71", zorder=6, label=f"t=0  (step {int(steps_arr[0])})")
+    ax.scatter(beta_par_vals[-1], aniso_vals[-1], marker="*", s=220,
+               color="#f1c40f", zorder=6, label=f"Final (step {int(steps_arr[-1])})")
+
+    # Region labels
+    ax.text(0.015, 6.0, "MIRROR\nUNSTABLE", color="#e74c3c",
+            fontsize=9, alpha=0.9, va="top")
+    ax.text(0.015, 0.42, "FIREHOSE\nUNSTABLE", color="#3498db",
+            fontsize=9, alpha=0.9, va="bottom")
+    ax.text(3.0, 1.05, "STABLE", color="#aaaaaa",
+            fontsize=9, alpha=0.6, va="bottom")
+
+    # Colourbar for time
+    cbar = fig.colorbar(sc, ax=ax, pad=0.02)
+    cbar.set_label("Simulation step", color="white", fontsize=11)
+    cbar.ax.yaxis.set_tick_params(color="white", labelcolor="white")
+    plt.setp(plt.getp(cbar.ax, "yticklabels"), color="white")
+
+    ax.set_xscale("log")
+    ax.set_xlim(0.01, 30)
+    ax.set_ylim(0.3, 8.0)
+    ax.set_xlabel(r"$\beta_{\parallel,i} = 2\,n\,T_{\parallel,i}\,/\,B_0^2$",
+                  fontsize=13, color="white")
+    ax.set_ylabel(r"$A_i = T_{\perp,i}\,/\,T_{\parallel,i}$",
+                  fontsize=13, color="white")
+    ax.set_title(
+        r"Brazil Plot — Ion Temperature Anisotropy vs. $\beta_{\parallel}$",
+        fontsize=14, fontweight="bold", color="white", pad=12,
+    )
+    ax.tick_params(colors="white", which="both")
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#444")
+    ax.grid(True, alpha=0.15, color="white", linestyle="--", which="both")
+    ax.legend(fontsize=9, loc="upper right",
+              facecolor="#1a1a2e", edgecolor="#444",
+              labelcolor="white", framealpha=0.85)
+
+    plt.tight_layout()
+    path = os.path.join(outdir, "brazil_plot.png")
+    plt.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="#0d1117")
+    plt.close()
+    print(f"  Saved: {path}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  Main
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -976,21 +1134,23 @@ def main():
             f"Using latest snapshot for static plots: {os.path.basename(filepath)}"
         )
         field_files = resolve_field_files(os.path.dirname(os.path.abspath(filepath)))
-        plot_vdf_snapshots(filepaths, outdir)
-        plot_distribution_evolution(filepaths, outdir)
-        plot_macro_evolution(filepaths, outdir, field_files=field_files)
+        plot_vdf_snapshots(filepaths, outdir);      gc.collect()
+        plot_distribution_evolution(filepaths, outdir); gc.collect()
+        plot_macro_evolution(filepaths, outdir, field_files=field_files); gc.collect()
+        plot_brazil(filepaths, outdir);             gc.collect()
 
     data = load_particles(filepath)
     ions, electrons = separate_species(data)
+    del data; gc.collect()
 
     print_summary(ions, electrons)
 
     print("\nGenerating plots...")
-    plot_vdf(ions, electrons, outdir)
-    plot_kappa_comparison(ions, outdir)
+    plot_vdf(ions, electrons, outdir);      gc.collect()
+    plot_kappa_comparison(ions, outdir);    gc.collect()
 
     print("\nRunning goodness-of-fit tests (Anderson-Darling & Kolmogorov-Smirnov)...")
-    plot_goodness_of_fit(ions, outdir)
+    plot_goodness_of_fit(ions, outdir);     gc.collect()
 
     print(f"\nAll plots saved to: {outdir}")
 
