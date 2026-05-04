@@ -35,7 +35,7 @@ from psc_units import (
     BETA_I_PAR, BETA_I_PERP_OVER_PAR, TI_PAR, TI_PERP,
 )
 
-# Initial conditions (from psc_maxwellian.cxx) — derived from psc_units
+# Initial conditions — derived from psc_units (profile-dependent)
 T_PERP_I: float = TI_PERP   # Ion perpendicular temperature
 T_PAR_I: float  = TI_PAR    # Ion parallel temperature
 

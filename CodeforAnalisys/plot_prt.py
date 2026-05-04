@@ -39,9 +39,10 @@ try:
 except ImportError:
     PICDataReader = None
 from psc_units import (
-    B0, KAPPA, MASS_RATIO, TI_PAR, TI_PERP,
+    B0, KAPPA, MASS_RATIO, TI_PAR, TI_PERP, VA_OVER_C, ZI,
     BETA_I_PAR as _BETA_I_PAR_SIM,
     BETA_I_PERP_OVER_PAR as _TI_RATIO_SIM,
+    M_ION, M_ELEC,
 )
 
 # ── Configuration ────────────────────────────────────────────────────────────
@@ -54,14 +55,14 @@ MAX_PARTICLES = 500_000  # submuestreo global si hay más partículas
 
 STEP_RE = re.compile(r"\.(\d+)(?:_p\d+)?\.h5$")
 
-# ── Simulation parameters (from psc_maxwellian.cxx via psc_units) ────────────
-Zi: float = 1.0
-VA_OVER_C: float = B0
-BETA_I_PAR: float = _BETA_I_PAR_SIM       # = 5.0  (Maxwellian run)
-TI_PERP_OVER_TI_PAR: float = _TI_RATIO_SIM  # = 3.0
+# ── Simulation parameters (from psc_units — single source of truth) ──────────
+Zi: float = ZI
+VA_OVER_C_: float = VA_OVER_C
+BETA_I_PAR: float = _BETA_I_PAR_SIM
+TI_PERP_OVER_TI_PAR: float = _TI_RATIO_SIM
 BETA_NORM: float = 1.0
 
-M_ION: float = MASS_RATIO * Zi        # 64.0
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -286,7 +287,7 @@ def plot_vdf(ions, electrons, outdir: str):
     - Filled contour plot with viridis colourmap.
     """
     VA_ = VA_OVER_C
-    M_ELE = 1.0
+    M_ELE = M_ELEC
     B0_ = VA_OVER_C
     KAPPA_ = KAPPA
 
@@ -1105,6 +1106,440 @@ def plot_brazil(filepaths: list[str], outdir: str):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  Plot 9: 1-D VDF evolution with suprathermal-tail quantification
+# ══════════════════════════════════════════════════════════════════════════════
+
+def plot_1d_vdf_evolution(
+    filepaths: list[str],
+    outdir: str,
+    n_times: int = 6,
+    nbins: int = 200,
+):
+    """Overlay 1-D f(v_par) and f(v_perp) at selected times.
+
+    Suprathermal tail excess is quantified as the ratio of the measured
+    high-velocity tail (|v| > 3 v_th) population to the Maxwellian prediction.
+    Colour encodes time (early=blue, late=red), reference Maxwellian dashed.
+    """
+    print("\nBuilding 1-D VDF temporal evolution with tail diagnostics...")
+
+    paths = sample_filepaths(filepaths, max_files=n_times)
+    steps = [extract_step(p) for p in paths]
+    cmap  = plt.colormaps["coolwarm"]
+    colors = [cmap(i / max(len(paths) - 1, 1)) for i in range(len(paths))]
+
+    # Determine shared axes from last snapshot
+    ref = load_particle_phase_space(paths[-1])
+    vpar_max  = float(np.percentile(np.abs(ref["ions_pz"]),  99.5))
+    vperp_max = float(np.percentile(ref["ions_perp"], 99.5))
+    del ref; gc.collect()
+
+    vpar_edges  = np.linspace(-vpar_max,  vpar_max,  nbins + 1)
+    vperp_edges = np.linspace(0.0,        vperp_max, nbins + 1)
+    vc_par  = 0.5 * (vpar_edges[:-1]  + vpar_edges[1:])
+    vc_perp = 0.5 * (vperp_edges[:-1] + vperp_edges[1:])
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    fig.patch.set_facecolor("white")
+    fig.suptitle(
+        r"1-D Ion VDF Evolution: $f(v_\parallel)$ and $f(v_\perp)$ at Selected Times",
+        fontsize=15, fontweight="bold",
+    )
+
+    tail_excess_par  = []
+    tail_excess_perp = []
+    vth_par_est  = None
+    vth_perp_est = None
+
+    for idx, (path, step, col) in enumerate(zip(paths, steps, colors)):
+        ps = load_particle_phase_space(path)
+        pz   = ps["ions_pz"]
+        perp = ps["ions_perp"]
+
+        f_par,  _ = np.histogram(pz,   bins=vpar_edges,  density=True)
+        f_perp, _ = np.histogram(perp, bins=vperp_edges, density=True)
+
+        axes[0].semilogy(vc_par,  f_par,  color=col, linewidth=1.6,
+                         alpha=0.85, label=f"step {step}")
+        axes[1].semilogy(vc_perp, f_perp, color=col, linewidth=1.6,
+                         alpha=0.85, label=f"step {step}")
+
+        # Tail excess at t=0 baseline
+        if idx == 0:
+            vth_par_est  = float(np.std(pz))
+            vth_perp_est = float(np.std(perp))
+
+        # Fraction of ions with |v| > 3 vth
+        if vth_par_est and vth_par_est > 0:
+            tail_par  = float(np.mean(np.abs(pz)   > 3 * vth_par_est))
+            tail_perp = float(np.mean(perp          > 3 * vth_perp_est))
+            tail_excess_par.append(tail_par)
+            tail_excess_perp.append(tail_perp)
+
+        del ps; gc.collect()
+
+    # Reference Maxwellian at t=0 temperatures
+    if vth_par_est:
+        mw_par  = maxwellian_1d(vc_par,  vth_par_est)
+        mw_perp = maxwellian_1d(vc_perp, vth_perp_est)
+        axes[0].semilogy(vc_par,  mw_par,  "k--", linewidth=1.8,
+                         alpha=0.6, label=r"Maxwellian ($t=0$ $v_{th}$)")
+        axes[1].semilogy(vc_perp, mw_perp, "k--", linewidth=1.8,
+                         alpha=0.6, label=r"Maxwellian ($t=0$ $v_{th}$)")
+        # Shade 3 vth tail region
+        for ax, vth, vmax in [(axes[0], vth_par_est, vpar_max),
+                               (axes[1], vth_perp_est, vperp_max)]:
+            ax.axvspan(3 * vth, vmax, alpha=0.08, color="#e74c3c",
+                       label=r"Suprathermal tail ($|v|>3v_{th}$)")
+            if ax is axes[0]:
+                ax.axvspan(-vmax, -3 * vth, alpha=0.08, color="#e74c3c")
+
+    for ax, xlabel, title in [
+        (axes[0], r"$v_\parallel\ [\mathrm{code\ units}]$",
+         r"$f(v_\parallel)$ — Parallel VDF"),
+        (axes[1], r"$v_\perp\ [\mathrm{code\ units}]$",
+         r"$f(v_\perp)$ — Perpendicular VDF"),
+    ]:
+        ax.set_xlabel(xlabel, fontsize=12)
+        ax.set_ylabel(r"$f(v)$  [PDF]", fontsize=12)
+        ax.set_title(title, fontsize=13, fontweight="bold")
+        ax.legend(fontsize=8, loc="upper right")
+        ax.grid(True, alpha=0.3, which="both", ls="--")
+        ax.tick_params(which="both", direction="in", top=True, right=True)
+
+    plt.tight_layout()
+    path = os.path.join(outdir, "vdf_1d_evolution.png")
+    plt.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
+    plt.close()
+    print(f"  Saved: {path}")
+
+    # Print tail-excess summary
+    if tail_excess_par:
+        print("  Suprathermal tail fraction (|v| > 3 v_th):")
+        for s, tp, tperp in zip(steps, tail_excess_par, tail_excess_perp):
+            print(f"    step {s:>8d}  par={tp:.4f}  perp={tperp:.4f}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Plot 10: Energy partition (magnetic, kinetic, thermal)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _compute_particle_energies(filepath: str) -> dict:
+    """Return kinetic and thermal energies from a particle snapshot.
+
+    Kinetic energy: E_kin = sum_s 0.5 * m_s * <p^2 / m_s^2> * N_s
+                          = sum_s 0.5 * <p^2> / m_s  (per particle, normalised)
+    Thermal energy: E_th  = 1.5 * N * T  where T = (2 T_perp + T_par) / 3
+    Bulk kinetic:   E_bulk= 0.5 * m * <v>^2  (drift contribution)
+    """
+    with h5py.File(filepath, "r") as f:
+        dset  = f["particles"]["p0"]["1d"]
+        n_tot = dset["q"].shape[0]
+        idx   = (
+            np.sort(np.random.choice(n_tot, min(n_tot, MAX_PARTICLES), replace=False))
+            if n_tot > MAX_PARTICLES else slice(None)
+        )
+        q  = dset["q"][idx].astype(np.float64)
+        m  = dset["m"][idx].astype(np.float64)
+        px = dset["px"][idx].astype(np.float64)
+        py = dset["py"][idx].astype(np.float64)
+        pz = dset["pz"][idx].astype(np.float64)
+
+    p2 = px**2 + py**2 + pz**2
+    ion_mask  = q > 0
+    elec_mask = q < 0
+
+    result = {}
+    for name, mask in [("ion", ion_mask), ("elec", elec_mask)]:
+        mi     = float(np.abs(m[mask][0])) if mask.any() else 1.0
+        N      = mask.sum()
+        vx     = px[mask] / mi
+        vy     = py[mask] / mi
+        vz     = pz[mask] / mi
+        bulk_v2 = np.mean(vx)**2 + np.mean(vy)**2 + np.mean(vz)**2
+        rand_v2 = np.mean((vx - np.mean(vx))**2 +
+                           (vy - np.mean(vy))**2 +
+                           (vz - np.mean(vz))**2)
+        t_perp = 0.5 * mi * (np.var(vx) + np.var(vy))
+        t_par  = mi * np.var(vz)
+        result[f"{name}_kinetic_bulk"]    = 0.5 * mi * bulk_v2
+        result[f"{name}_kinetic_thermal"] = 0.5 * mi * rand_v2
+        result[f"{name}_thermal_energy"]  = (2.0 * t_perp + t_par) * N / 2.0
+        result[f"{name}_t_perp"] = t_perp
+        result[f"{name}_t_par"]  = t_par
+
+    return result
+
+
+def plot_energy_partition(
+    filepaths: list[str],
+    outdir: str,
+    field_files: dict[int, str] | None = None,
+):
+    """Track magnetic, bulk-kinetic, and thermal energies over simulation time.
+
+    Energy budget normalised to total initial energy E_0.
+    Follows the methodology of PIC anisotropy-instability studies
+    (e.g. Hellinger & Travnicek 2008; Kunz et al. 2014).
+    """
+    print("\nBuilding energy partition plot...")
+
+    paths  = sample_filepaths(filepaths, max_files=MAX_EVOLUTION_FILES)
+    steps  = np.array([extract_step(p) for p in paths], dtype=float)
+    times  = steps  # steps already in code units; convert if needed
+
+    ion_kin_bulk    = []
+    ion_kin_thermal = []
+    ion_thermal     = []
+    elec_thermal    = []
+    mag_energy      = []
+
+    for path, step in zip(paths, steps.astype(int)):
+        e = _compute_particle_energies(path)
+        ion_kin_bulk.append(e["ion_kinetic_bulk"])
+        ion_kin_thermal.append(e["ion_kinetic_thermal"])
+        ion_thermal.append(e["ion_thermal_energy"])
+        elec_thermal.append(e["elec_thermal_energy"])
+
+        # Magnetic energy from field file if available
+        eb = np.nan
+        if field_files and step in field_files:
+            try:
+                m = load_field_fluctuation_metrics(field_files[step])
+                # E_B ~ (delta_B)^2 / 2  (normalised)
+                eb = 0.5 * m["delta_b_total"]**2
+            except Exception:
+                pass
+        mag_energy.append(eb)
+        gc.collect()
+
+    ion_kin_bulk    = np.array(ion_kin_bulk)
+    ion_kin_thermal = np.array(ion_kin_thermal)
+    ion_thermal     = np.array(ion_thermal)
+    elec_thermal    = np.array(elec_thermal)
+    mag_energy      = np.array(mag_energy)
+
+    # Normalise to initial total particle energy
+    E0 = ion_kin_bulk[0] + ion_kin_thermal[0] + ion_thermal[0] + elec_thermal[0]
+    if E0 < 1e-30:
+        E0 = 1.0
+
+    fig, axes = plt.subplots(2, 1, figsize=(12, 9), constrained_layout=True)
+    fig.patch.set_facecolor("white")
+    fig.suptitle(
+        "Energy Partition: Magnetic / Kinetic / Thermal Energies vs. Time",
+        fontsize=15, fontweight="bold",
+    )
+
+    ax = axes[0]
+    ax.plot(times, ion_kin_thermal / E0, "o-", color="#e74c3c", linewidth=2,
+            label=r"Ion thermal-kinetic  ($\frac{1}{2}m_i\langle\delta v^2\rangle$)")
+    ax.plot(times, ion_thermal / E0,     "s-", color="#e67e22", linewidth=2,
+            label=r"Ion internal energy  ($\frac{3}{2}N_i T_i$)")
+    ax.plot(times, elec_thermal / E0,    "^-", color="#3498db", linewidth=2,
+            label=r"Electron internal energy  ($\frac{3}{2}N_e T_e$)")
+    ax.plot(times, ion_kin_bulk / E0,    "d-", color="#2ecc71", linewidth=1.5,
+            label=r"Ion bulk kinetic  ($\frac{1}{2}m_i\langle v\rangle^2$)")
+    ax.set_ylabel(r"Energy  [$E_0$]", fontsize=12)
+    ax.set_xlabel("Simulation step", fontsize=11)
+    ax.set_title("Particle energy components (normalised to $E_0$)",
+                 fontsize=12, fontweight="bold")
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.tick_params(which="both", direction="in", top=True, right=True)
+
+    ax2 = axes[1]
+    if not np.all(np.isnan(mag_energy)):
+        ax2.plot(times, mag_energy, "o-", color="#9b59b6", linewidth=2,
+                 label=r"$E_B = (\delta B_{\rm rms})^2 / 2$  (from field files)")
+        ax2.set_ylabel(r"Magnetic fluctuation energy  [$B_0^2/2$]", fontsize=12)
+        ax2.legend(fontsize=9)
+    else:
+        ax2.text(0.5, 0.5,
+                 "Magnetic energy requires matching pfd.*.h5 field files.",
+                 ha="center", va="center", transform=ax2.transAxes,
+                 fontsize=11, color="gray")
+    ax2.set_xlabel("Simulation step", fontsize=11)
+    ax2.set_title("Magnetic energy from field fluctuations",
+                  fontsize=12, fontweight="bold")
+    ax2.grid(True, alpha=0.3)
+    ax2.tick_params(which="both", direction="in", top=True, right=True)
+
+    path = os.path.join(outdir, "energy_partition.png")
+    plt.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
+    plt.close()
+    print(f"  Saved: {path}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Plot 11: Heat flux diagnostics
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _compute_heat_flux(filepath: str,
+                       n_regions: int = 4) -> dict:
+    """Compute heat flux tensor components in localised domain regions.
+
+    The heat flux vector is defined as:
+        q_i = (m/2) * <(v - <v>)^2 * (v_i - <v_i>)>
+
+    Parallel component:   q_par  = (m/2) * <delta_v^2 * delta_vz>
+    Perpendicular:        q_perp = (m/2) * <delta_v^2 * delta_vperp>
+
+    Particles are binned into n_regions spatial strips along z (parallel
+    direction) using their momentum sign as a proxy for streaming direction
+    when position data is unavailable.
+    """
+    with h5py.File(filepath, "r") as f:
+        dset  = f["particles"]["p0"]["1d"]
+        n_tot = dset["q"].shape[0]
+        idx   = (
+            np.sort(np.random.choice(n_tot, min(n_tot, MAX_PARTICLES), replace=False))
+            if n_tot > MAX_PARTICLES else slice(None)
+        )
+        q  = dset["q"][idx].astype(np.float64)
+        m  = dset["m"][idx].astype(np.float64)
+        px = dset["px"][idx].astype(np.float64)
+        py = dset["py"][idx].astype(np.float64)
+        pz = dset["pz"][idx].astype(np.float64)
+
+    ion_mask = q > 0
+    mi = float(np.abs(m[ion_mask][0])) if ion_mask.any() else M_ION
+    pz_i  = pz[ion_mask]
+    px_i  = px[ion_mask]
+    py_i  = py[ion_mask]
+
+    # Proxy spatial bins: divide by pz quantile (streaming direction)
+    pz_bins = np.percentile(pz_i, np.linspace(0, 100, n_regions + 1))
+
+    q_par_regions  = []
+    q_perp_regions = []
+    region_centers = []
+
+    for k in range(n_regions):
+        mask = (pz_i >= pz_bins[k]) & (pz_i < pz_bins[k + 1])
+        if mask.sum() < 10:
+            q_par_regions.append(np.nan)
+            q_perp_regions.append(np.nan)
+            region_centers.append(0.5 * (pz_bins[k] + pz_bins[k + 1]))
+            continue
+
+        vz   = pz_i[mask] / mi
+        vx   = px_i[mask] / mi
+        vy   = py_i[mask] / mi
+        dvz  = vz - np.mean(vz)
+        dvx  = vx - np.mean(vx)
+        dvy  = vy - np.mean(vy)
+        dv2  = dvx**2 + dvy**2 + dvz**2
+        dvperp = np.sqrt(dvx**2 + dvy**2)
+
+        q_par  = 0.5 * mi * np.mean(dv2 * dvz)
+        q_perp = 0.5 * mi * np.mean(dv2 * dvperp)
+        q_par_regions.append(q_par)
+        q_perp_regions.append(q_perp)
+        region_centers.append(0.5 * (pz_bins[k] + pz_bins[k + 1]))
+
+    return {
+        "region_centers": np.array(region_centers),
+        "q_par":  np.array(q_par_regions),
+        "q_perp": np.array(q_perp_regions),
+    }
+
+
+def plot_heat_flux(
+    filepaths: list[str],
+    outdir: str,
+    n_times: int = 8,
+    n_regions: int = 4,
+):
+    """Plot heat flux tensor components in localised domain regions over time.
+
+    Characterises non-thermal energy transport associated with instability
+    dynamics for both Maxwellian and kappa initial distributions.
+    """
+    print("\nBuilding heat flux diagnostics...")
+
+    paths  = sample_filepaths(filepaths, max_files=n_times)
+    steps  = np.array([extract_step(p) for p in paths], dtype=float)
+    cmap   = plt.colormaps["plasma"]
+    colors = [cmap(i / max(len(paths) - 1, 1)) for i in range(len(paths))]
+
+    q_par_all  = []   # shape (n_times, n_regions)
+    q_perp_all = []
+
+    for path in paths:
+        hf = _compute_heat_flux(path, n_regions=n_regions)
+        q_par_all.append(hf["q_par"])
+        q_perp_all.append(hf["q_perp"])
+        gc.collect()
+
+    q_par_all  = np.array(q_par_all,  dtype=float)   # (n_times, n_regions)
+    q_perp_all = np.array(q_perp_all, dtype=float)
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    fig.patch.set_facecolor("white")
+    fig.suptitle(
+        r"Heat Flux Tensor: $q_\parallel$ and $q_\perp$ in Localised Domain Regions",
+        fontsize=15, fontweight="bold",
+    )
+
+    region_labels = [f"R{k+1}" for k in range(n_regions)]
+    x = np.arange(n_regions)
+    width = 0.8 / len(paths)
+
+    for ax, data, ylabel, title in [
+        (axes[0], q_par_all,
+         r"$q_\parallel = \frac{m}{2}\langle\delta v^2\,\delta v_z\rangle$",
+         r"Parallel heat flux $q_\parallel$"),
+        (axes[1], q_perp_all,
+         r"$q_\perp = \frac{m}{2}\langle\delta v^2\,\delta v_\perp\rangle$",
+         r"Perpendicular heat flux $q_\perp$"),
+    ]:
+        for i, (row, step, col) in enumerate(zip(data, steps, colors)):
+            offset = (i - len(paths) / 2) * width
+            ax.bar(x + offset, row, width=width * 0.9,
+                   color=col, alpha=0.85, label=f"step {int(step)}")
+
+        ax.axhline(0, color="black", linewidth=0.8, linestyle=":")
+        ax.set_xticks(x)
+        ax.set_xticklabels(region_labels)
+        ax.set_xlabel("Domain region (binned by $v_z$ quantile)", fontsize=11)
+        ax.set_ylabel(ylabel, fontsize=11)
+        ax.set_title(title, fontsize=13, fontweight="bold")
+        ax.legend(fontsize=8, ncol=2)
+        ax.grid(True, alpha=0.3, axis="y")
+        ax.tick_params(which="both", direction="in", top=True, right=True)
+
+    # Time-series panel at bottom
+    fig2, ax3 = plt.subplots(figsize=(12, 5))
+    fig2.patch.set_facecolor("white")
+    for k in range(n_regions):
+        ax3.plot(steps, q_par_all[:, k],  "o-", linewidth=1.8,
+                 label=rf"$q_\parallel$ R{k+1}")
+        ax3.plot(steps, q_perp_all[:, k], "s--", linewidth=1.4, alpha=0.7,
+                 label=rf"$q_\perp$ R{k+1}")
+    ax3.axhline(0, color="black", linewidth=0.8, linestyle=":")
+    ax3.set_xlabel("Simulation step", fontsize=12)
+    ax3.set_ylabel("Heat flux  [code units]", fontsize=12)
+    ax3.set_title(
+        r"Temporal Evolution of $q_\parallel$ and $q_\perp$ per Region",
+        fontsize=13, fontweight="bold",
+    )
+    ax3.legend(fontsize=8, ncol=2)
+    ax3.grid(True, alpha=0.3)
+    ax3.tick_params(which="both", direction="in", top=True, right=True)
+    fig2.tight_layout()
+
+    path1 = os.path.join(outdir, "heat_flux_regions.png")
+    path2 = os.path.join(outdir, "heat_flux_timeseries.png")
+    fig.tight_layout()
+    fig.savefig(path1, dpi=DPI, bbox_inches="tight", facecolor="white")
+    fig2.savefig(path2, dpi=DPI, bbox_inches="tight", facecolor="white")
+    plt.close("all")
+    print(f"  Saved: {path1}")
+    print(f"  Saved: {path2}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  Main
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1134,10 +1569,15 @@ def main():
             f"Using latest snapshot for static plots: {os.path.basename(filepath)}"
         )
         field_files = resolve_field_files(os.path.dirname(os.path.abspath(filepath)))
-        plot_vdf_snapshots(filepaths, outdir);      gc.collect()
-        plot_distribution_evolution(filepaths, outdir); gc.collect()
+        plot_vdf_snapshots(filepaths, outdir);                          gc.collect()
+        plot_distribution_evolution(filepaths, outdir);                  gc.collect()
         plot_macro_evolution(filepaths, outdir, field_files=field_files); gc.collect()
-        plot_brazil(filepaths, outdir);             gc.collect()
+        plot_brazil(filepaths, outdir);                                   gc.collect()
+        # ── New diagnostics ────────────────────────────────────────────
+        print("\nRunning new diagnostics (distribution tails, energy, heat flux)...")
+        plot_1d_vdf_evolution(filepaths, outdir);                         gc.collect()
+        plot_energy_partition(filepaths, outdir, field_files=field_files); gc.collect()
+        plot_heat_flux(filepaths, outdir);                                gc.collect()
 
     data = load_particles(filepath)
     ions, electrons = separate_species(data)

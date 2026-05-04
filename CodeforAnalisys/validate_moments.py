@@ -4,12 +4,12 @@ validate_moments.py
 ====================
 Valida que los momentos de la distribución (densidad, velocidad macroscópica,
 temperatura) calculados de los datos de partículas coincidan con los parámetros
-utiizados en psc_temp_aniso.cxx (createKappaMultivariate).
+usados en los archivos .cxx de simulación.
 
-Unidades físicas usando mi/me = 64 (masa artificial):
-  Espacial  →  dᵢ = c/ωₚᵢ = √(mᵢ/n₀) = 8  [celdas/dᵢ]
-  Temporal  →  Ωcᵢ = qᵢB₀/mᵢ = 0.1/64    [rad/t_código]
-  Velocidad →  vA = B₀ = 0.1              [en código con c=1]
+Unidades físicas usando mi/me = 100 (masa artificial):
+  Espacial  →  dᵢ = c/ωₚᵢ = √(mᵢ/n₀) = 10  [celdas/dᵢ]
+  Temporal  →  Ωcᵢ = qᵢB₀/mᵢ = 0.05/100    [rad/t_código]
+  Velocidad →  vA = B₀ = 0.05              [en código con c=1]
 
 Usage:
     python validate_moments.py [path_to_prt_file.h5]
@@ -28,68 +28,37 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch
 
 # ═══════════════════════════════════════════════════════════════════════
-# 1. EXPECTED VALUES — Extracted from psc_temp_aniso.cxx
-#    These are the "ground truth" parameters used to generate the particles.
+# 1. EXPECTED VALUES — from psc_units (single source of truth)
 # ═══════════════════════════════════════════════════════════════════════
 
-# Simulation parameters (from setupParameters())
-BB = 1.0
-Zi = 1.0
-MASS_RATIO = 64.0
-VA_OVER_C = 0.1
-BETA_E_PAR = 1.0
-BETA_I_PAR = 10.0
-TI_PERP_OVER_TI_PAR = 3.5
-TE_PERP_OVER_TE_PAR = 1.0
-N_DENSITY = 1.0
-KAPPA = 3.0
+from psc_units import (
+    MASS_RATIO, ZI, VA_OVER_C, B0, VA, N0 as N_DENSITY,
+    BETA_I_PAR, BETA_I_PERP_OVER_PAR as TI_PERP_OVER_TI_PAR,
+    BETA_E_PAR, BETA_E_PERP_OVER_PAR as TE_PERP_OVER_TE_PAR,
+    KAPPA, M_ION, M_ELEC as M_ELECTRON,
+    TI_PAR, TI_PERP, TE_PAR, TE_PERP,
+    DI, DE, OMEGA_CI, OMEGA_CE,
+    N_GRID_Y, N_GRID_Z, NICELL, CORI,
+    SIM_PROFILE,
+)
 
-# Derived quantities (same formulas as C++ code)
-B0 = VA_OVER_C                                     # = 0.1
-TE_PAR = BETA_E_PAR * B0**2 / 2.0                  # = 0.005
-TE_PERP = TE_PERP_OVER_TE_PAR * TE_PAR             # = 0.005
-TI_PAR = BETA_I_PAR * B0**2 / 2.0                  # = 0.05
-TI_PERP = TI_PERP_OVER_TI_PAR * TI_PAR             # = 0.175
-
-# NOTA sobre masas con masa artificial mi/me = 64:
-#   En PSC con masa artificial, el código fija:
-#     m_electron = 1.0  (unidades código)
-#     m_ion      = MASS_RATIO * Zi = 64.0
-#   NO confundir con la masa real del electrón (1/1836 mp).
-#   La simulación es válida porque mi/me = 64 en la simulación,
-#   lo que reduce la separación de escala temporal ce/ci de forma controlada.
-M_ION      = MASS_RATIO * Zi   # = 64.0  [unidades PSC]
-M_ELECTRON = 1.0               # = 1.0   [unidades PSC, masa artificial]
-
-# Unidades físicas (con c=1, n₀=1, μ₀=1 en PSC)
-VA       = B0                                   # vA = B₀/√(n₀mᵢ) en código
-DI       = np.sqrt(M_ION / N_DENSITY)           # dᵢ = c/ωₚᵢ = 8 celdas
-DE       = np.sqrt(M_ELECTRON / N_DENSITY)      # dₑ = c/ωₚₑ = 1 celda
-OMEGA_CI = Zi * B0 / M_ION                      # Ωcᵢ = 0.001563 rad/t
-OMEGA_CE = 1.0 * B0 / M_ELECTRON               # Ωcₑ = 0.1 rad/t
-
-# Grid parameters (from setupGrid())
-NICELL = 250   # particles per cell per species at density = 1
-N_GRID_Y = 384
-N_GRID_Z = 512
-
-# Normalization: dimensionless => beta_norm = 1, cori = 1/nicell
-BETA_NORM = 1.0
-CORI = 1.0 / NICELL
+Zi = ZI
 
 # Definición de especies PSC:
-#   iones:      q = +Zi = +1.0,  m = MASS_RATIO * Zi = 64.0
-#   electrones: q = -1.0,        m = 1.0  (masa artificial, mi/me = 64)
+#   iones:      q = +Zi = +1.0,  m = MASS_RATIO * Zi = 100.0
+#   electrones: q = -1.0,        m = 1.0  (masa artificial, mi/me = 100)
 Q_ION      = Zi     # = +1.0
 Q_ELECTRON = -1.0
 
+# Normalization: dimensionless => beta_norm = 1
+BETA_NORM = 1.0
+
 # Expected number of particles per cell (with fractional_n_particles_per_cell = true)
-# n_in_cell = n / cori + random ~ 250 per species
-EXPECTED_PPC = N_DENSITY / CORI  # = 250
+EXPECTED_PPC = N_DENSITY / CORI  # = 1000
 
 # Total cells in the 2D grid (X is invariant with 1 cell)
-N_CELLS = 1 * N_GRID_Y * N_GRID_Z  # = 196608
-EXPECTED_TOTAL_PER_SPECIES = EXPECTED_PPC * N_CELLS  # ~ 49,152,000
+N_CELLS = 1 * N_GRID_Y * N_GRID_Z  # = 16384
+EXPECTED_TOTAL_PER_SPECIES = EXPECTED_PPC * N_CELLS
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -290,7 +259,7 @@ def compute_moments(species, species_name, expected_T_perp, expected_T_par, expe
 def print_expected_parameters():
     """Print the expected simulation parameters for reference."""
     print("\n" + "═"*70)
-    print("  EXPECTED PARAMETERS (from psc_temp_aniso.cxx)")
+    print(f"  EXPECTED PARAMETERS — profile: {SIM_PROFILE}")
     print("═"*70)
     print(f"  B0 = vA/c              = {B0}")
     print(f"  n                      = {N_DENSITY}")
