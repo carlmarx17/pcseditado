@@ -32,7 +32,7 @@ prt.000001200.h5
     └── p0/
         └── 1d/          ← dataset con structured array
             ├── q[N]     ← carga: +Zi (iones) / -1 (electrones)
-            ├── m[N]     ← masa: 64.0 (iones) / 1.0 (electrones)
+            ├── m[N]     ← masa: 200.0 (iones) / 1.0 (electrones)
             ├── w[N]     ← peso estadístico (= 1.0 con fractional_n=true)
             ├── px[N]    ← momento x  [m * v_x en unidades PSC]
             ├── py[N]    ← momento y
@@ -49,7 +49,7 @@ with h5py.File("prt.000001200.h5", "r") as f:
     dset = f["particles"]["p0"]["1d"]
 
     q  = dset["q"][:]   # +1 iones, -1 electrones
-    m  = dset["m"][:]   # 64.0 ó 1.0
+    m  = dset["m"][:]   # 200.0 ó 1.0
     px = dset["px"][:]  # momento perpendicular x
     py = dset["py"][:]  # momento perpendicular y
     pz = dset["pz"][:]  # momento paralelo
@@ -59,7 +59,7 @@ ions  = np.where(q > 0)
 elecs = np.where(q < 0)
 
 # Temperatura paralela iónica (T = m * Var(v) = Var(p) / m)
-T_par_ions = np.var(pz[ions]) / 64.0
+T_par_ions = np.var(pz[ions]) / 200.0
 ```
 
 ### 2.2 Archivos de Campos — `pfd.*.h5`
@@ -363,9 +363,9 @@ prt.*.h5                             pfd.*.h5 + pfd_moments.*.h5
    │         ├── vdf_time_snapshots.png     │     └── mirror_plots/
    │         ├── distribution_evolution.png │
    │         ├── brazil_plot.png            ├── diamagnetic_current.py
-   │         ├── vdf_1d_evolution.png  ←NEW │     └── diamagnetic_plots/
-   │         ├── energy_partition.png  ←NEW │
-   │         ├── heat_flux_regions.png ←NEW ├── fluctuationofmagneticfiel.py
+   │         ├── vdf_1d_evolution.png       │     └── diamagnetic_plots/
+   │         ├── energy_partition.png       │
+   │         ├── heat_flux_regions.png      ├── fluctuationofmagneticfiel.py
    │         └── heat_flux_timeseries.png   │     └── field_images/
    │                                        │
    ├── validate_moments.py                  └── spectral_analysis.py
@@ -380,18 +380,19 @@ prt.*.h5                             pfd.*.h5 + pfd_moments.*.h5
 
 Todas las constantes físicas derivadas del archivo `.cxx` están aquí:
 
-| Variable       | Valor (Mirror) | Valor (Firehose) | Significado                     |
-|----------------|---------------|------------------|---------------------------------|
-| `MASS_RATIO`   | 100.0         | 100.0            | mᵢ/mₑ artificial                |
-| `B0`           | 0.05          | 0.05             | Campo de fondo [= vA/c]         |
-| `VA`           | 0.05          | 0.05             | Velocidad de Alfvén [c=1]       |
-| `OMEGA_CI`     | 0.0005        | 0.0005           | Frecuencia ciclotrón iónica     |
-| `DI`           | 10.0          | 10.0             | Longitud inercial iónica [celdas]|
-| `BETA_I_PAR`   | 5.0           | 10.0             | Beta paralelo iónico            |
-| `TI_PAR`       | 0.00625       | 0.0125           | Temperatura iónica paralela     |
-| `TI_PERP`      | 0.01875       | 0.00125          | Temperatura iónica perpendicular|
-| `Ti_⊥/Ti_∥`    | 3.0           | 0.1              | Anisotropía iónica              |
-| `KAPPA`        | `3.0`/`None`  | `3.0`/`None`     | Kappa ó Maxwellian              |
+| Variable       | Valor (Mirror) | Valor (Firehose) | Significado                          |
+|----------------|---------------|------------------|--------------------------------------|
+| `MASS_RATIO`   | 200.0         | 200.0            | mᵢ/mₑ artificial                    |
+| `B0`           | 0.05          | 0.05             | Campo de fondo [= vA/c]              |
+| `VA`           | 0.05          | 0.05             | Velocidad de Alfvén [c=1]            |
+| `OMEGA_CI`     | 0.000250      | 0.000250         | Frecuencia ciclotrón iónica          |
+| `DI`           | ≈14.142       | ≈14.142          | Longitud inercial iónica [celdas]    |
+| `NICELL`       | 2000          | 2000             | Partículas por celda                 |
+| `BETA_I_PAR`   | 5.0           | 10.0             | Beta paralelo iónico                 |
+| `TI_PAR`       | 0.00625       | 0.0125           | Temperatura iónica paralela          |
+| `TI_PERP`      | 0.01875       | 0.00125          | Temperatura iónica perpendicular     |
+| `Ti_⊥/Ti_∥`    | 3.0           | 0.1              | Anisotropía iónica                   |
+| `KAPPA`        | `3.0`/`None`  | `3.0`/`None`     | Kappa ó Maxwellian                   |
 
 **Selección de perfil (variable de entorno):**
 

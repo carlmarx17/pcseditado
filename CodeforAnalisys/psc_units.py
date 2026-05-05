@@ -6,12 +6,12 @@ Módulo central de unidades físicas para las simulaciones PSC con masa artifici
 En PSC (en unidades internas del código):
   c = 1,  q_e = 1 (carga del electrón),  mu_0 = 1,  epsilon_0 = 1
 
-Masa artificial: mi/me = 100  =>  me = 1.0,  mi = 100.0
+Masa artificial: mi/me = 200  =>  me = 1.0,  mi = 200.0
 
 Parámetros comunes a las 4 simulaciones:
-  - mass_ratio = 100,  vA/c = 0.05
-  - Dominio: 32 d_i × 32 d_i,  grilla 128×128 celdas
-  - nicell = 1000 ppc
+  - mass_ratio = 200,  vA/c = 0.05
+  - Dominio: 32 d_i × 32 d_i,  grilla 128×128 celdas  (d_i = √200 ≈ 14.14 celdas)
+  - nicell = 2000 ppc
 
 CONFIGURACIONES DE INESTABILIDAD:
   Mirror   :  beta_i_par = 5,   Ti_perp/Ti_par = 3.0   (T_perp > T_par)
@@ -39,7 +39,7 @@ import numpy as np
 
 _PROFILES = {
     "mirror_kappa": {
-        "mass_ratio": 100.0,
+        "mass_ratio": 200.0,
         "vA_over_c": 0.05,
         "beta_i_par": 5.0,
         "Ti_perp_over_Ti_par": 3.0,
@@ -48,7 +48,7 @@ _PROFILES = {
         "kappa": 3.0,
     },
     "mirror_maxwellian": {
-        "mass_ratio": 100.0,
+        "mass_ratio": 200.0,
         "vA_over_c": 0.05,
         "beta_i_par": 5.0,
         "Ti_perp_over_Ti_par": 3.0,
@@ -57,7 +57,7 @@ _PROFILES = {
         "kappa": None,
     },
     "firehose_kappa": {
-        "mass_ratio": 100.0,
+        "mass_ratio": 200.0,
         "vA_over_c": 0.05,
         "beta_i_par": 10.0,
         "Ti_perp_over_Ti_par": 0.1,
@@ -66,7 +66,7 @@ _PROFILES = {
         "kappa": 3.0,
     },
     "firehose_maxwellian": {
-        "mass_ratio": 100.0,
+        "mass_ratio": 200.0,
         "vA_over_c": 0.05,
         "beta_i_par": 10.0,
         "Ti_perp_over_Ti_par": 0.1,
@@ -89,7 +89,7 @@ if SIM_PROFILE not in _PROFILES:
 _active = _PROFILES[SIM_PROFILE]
 
 # ── Parámetros de la simulación (desde los .cxx) ────────────────────────
-MASS_RATIO      = _active["mass_ratio"]       # mi/me = 100
+MASS_RATIO      = _active["mass_ratio"]       # mi/me = 200
 ZI              = 1.0                          # carga iónica (en unidades de e)
 VA_OVER_C       = _active["vA_over_c"]        # vA/c = 0.05
 BETA_I_PAR      = _active["beta_i_par"]       # 5 (mirror) ó 10 (firehose)
@@ -101,7 +101,7 @@ N0              = 1.0                          # densidad de referencia
 
 # ── Masas en unidades de código ─────────────────────────────────────────
 M_ELEC = 1.0                    # masa del electrón  [unidades código]
-M_ION  = MASS_RATIO * ZI        # masa del ión       [unidades código]  = 100.0
+M_ION  = MASS_RATIO * ZI        # masa del ión       [unidades código]  = 200.0
 
 # ── Campo magnético y velocidad de Alfvén ───────────────────────────────
 # En los .cxx: g.B0 = g.vA_over_c = 0.05
@@ -151,13 +151,13 @@ BETA_E_PAR_COMPUTED  = 2.0 * N0 * TE_PAR  / B0**2
 
 # ── Grilla y dominio ─────────────────────────────────────────────────────
 # .cxx: domain_size = 32 * d_i,  gdims = 128x128
-# d_i = sqrt(mi/n) = sqrt(100) = 10  =>  domain_size = 320 celdas
-# 128 celdas => Δ = 320/128 = 2.5 celdas  => 0.25 d_i  ✓
+# d_i = sqrt(mi/n) = sqrt(200) ≈ 14.14  =>  domain_size ≈ 452.5 celdas
+# 128 celdas => Δ ≈ 452.5/128 ≈ 3.54 celdas  ≈ 0.25 d_i  ✓
 N_GRID_Y  = 128              # celdas en Y
 N_GRID_Z  = 128              # celdas en Z
 DOMAIN_DI = 32.0             # extensión física del dominio en d_i
-DOMAIN_DE = DOMAIN_DI * DI   # extensión en d_e  (= 320)
-NICELL    = 1000             # partículas por celda (ver setupGrid)
+DOMAIN_DE = DOMAIN_DI * DI   # extensión en d_e  (≈ 452.5)
+NICELL    = 2000             # partículas por celda (ver setupGrid)
 CORI      = 1.0 / NICELL
 
 # Tamaño del dominio en d_i (calculado a partir de DI)

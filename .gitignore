@@ -1,16 +1,58 @@
+# ============================================================
+# .gitignore — Proyecto PSC Plasma Simulation
+# ============================================================
+
 # ---- Build directories ----
 /build/
-/*.o
-/*.exe
+/src/build/
+*.o
+*.a
+*.so
+*.so.*
+*.exe
 *.log
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile.cmake
+install_manifest.txt
+CTestTestfile.cmake
+_CPack_Packages/
 
 # ---- Python ----
 *.pyc
+*.pyo
+*.pyd
 __pycache__/
+*.egg-info/
+dist/
+.eggs/
+*.egg
+.Python
+
+# ---- Virtual environments ----
+.venv/
+venv/
+env/
+ENV/
 
 # ---- Editor / IDE ----
 .vscode/
-/.codex
+.idea/
+*.swp
+*.swo
+*~
+.codex
+.cache/
+
+# ---- Simulation data output (large binary files) ----
+*.bp/
+*.bp
+*.h5
+*.hdf5
+*.mrc
+checkpoint_*/
+plasma_results_temp/
 
 # ---- Analysis output directories ----
 CodeforAnalisys/anisotropy_plots/
@@ -22,6 +64,8 @@ CodeforAnalisys/prt_plots/
 CodeforAnalisys/fancy_vdf_plots/
 CodeforAnalisys/phase_space_plots/
 CodeforAnalisys/validation_plots/
+CodeforAnalisys/__pycache__/
+CodeforAnalisysAdios2/
 
 # ---- PDFs / Informes / Presentaciones ----
 *.pdf
@@ -57,3 +101,13 @@ _minted-*/
 *.pygtex
 *.pygstyle
 build_pdf.py
+
+# ---- SLURM / HPC job files ----
+*.out.slurm
+slurm-*.out
+job_*.sh
+
+# ---- OS / System files ----
+.DS_Store
+Thumbs.db
+desktop.ini

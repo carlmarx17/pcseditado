@@ -94,7 +94,7 @@ void setupParameters()
 
   g.BB = 1.0;
   g.Zi = 1.;
-  g.mass_ratio = 100.;
+  g.mass_ratio = 200.;
   g.lambda0 = 20.;
 
   // Firehose Instability Parameters
@@ -122,11 +122,11 @@ Grid_t* setupGrid()
 {
   g.d_i = std::sqrt(g.mass_ratio / g.n);
 
-  // Dominio de 32 d_i, con tamano de celda 0.25 d_i -> 128 celdas
+  // Dominio de 32 d_i;  d_i = sqrt(200) ≈ 14.14 celdas → 128 celdas ≈ 0.22 d_i/celda
   double domain_size = 32.0 * g.d_i;
 
-  Grid_t::Real3 LL = {1.0, domain_size, domain_size}; 
-  Int3         gdims = {1, 128, 128};   
+  Grid_t::Real3 LL = {1.0, domain_size, domain_size};
+  Int3         gdims = {1, 128, 128};
   Int3         np    = {1, 4, 4}; // 16 patches
 
   Grid_t::Domain domain{gdims, LL, -.5 * LL, np};
@@ -145,7 +145,7 @@ Grid_t* setupGrid()
              sqrt(g.Te_par));
 
   auto norm_params = Grid_t::NormalizationParams::dimensionless();
-  norm_params.nicell = 1000; // ppc
+  norm_params.nicell = 2000; // ppc
 
   double dt = psc_params.cfl * courant_length(domain);
   Grid_t::Normalization norm{norm_params};
