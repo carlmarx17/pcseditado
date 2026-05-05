@@ -127,7 +127,7 @@ Grid_t* setupGrid()
 
   Grid_t::Real3 LL = {1.0, domain_size, domain_size};
   Int3         gdims = {1, 128, 128};
-  Int3         np    = {1, 4, 4}; // 16 patches
+  Int3         np    = {1, 8, 4}; // 32 patches for 32 MPI ranks
 
   Grid_t::Domain domain{gdims, LL, -.5 * LL, np};
 
@@ -258,9 +258,13 @@ void run()
   OutputFields<MfieldsState, Mparticles, Dim, Writer> outf{grid, outf_params};
 
   OutputParticlesParams outp_params{};
-  outp_params.every_step = 5000;
+  outp_params.every_step = 500;
   outp_params.data_dir = ".";
   outp_params.basename = "prt_firehose_maxwellian";
+  // Save only particles from the central 8×8 d_i region (cells 48–80)
+  // to reduce storage from ~577 GB to ~36 GB over 200 snapshots
+  outp_params.lo = {0, 48, 48};
+  outp_params.hi = {1, 80, 80};
   OutputParticles outp{grid, outp_params};
 
   int oute_interval = -100;

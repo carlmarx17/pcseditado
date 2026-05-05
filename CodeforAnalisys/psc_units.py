@@ -164,6 +164,13 @@ CORI      = 1.0 / NICELL
 DOMAIN_DI_Y = DOMAIN_DI   # 32 d_i
 DOMAIN_DI_Z = DOMAIN_DI   # 32 d_i
 
+# ── Región de salida de partículas ───────────────────────────────────────
+# Solo se guardan partículas de la región central 8×8 d_i (celdas 48–80)
+# para optimizar almacenamiento (~180 MB/snapshot vs 2.88 GB del dominio completo)
+PRT_OUTPUT_LO = (0, 48, 48)
+PRT_OUTPUT_HI = (1, 80, 80)
+PRT_OUTPUT_EVERY = 500       # cada 500 pasos (≈ 200 snapshots en nmax=100000)
+
 # ── Constantes auxiliares para análisis ─────────────────────────────────
 MU0 = 1.0
 FIELD_FILE_PATTERN = "pfd.*.h5"
