@@ -179,9 +179,9 @@ class DiamagneticCurrentAnalyzer:
             + PICDataReader.flatten_2d_slice(moments["tyy_e/p0/3d"])
         )
 
-        bx = PICDataReader.flatten_2d_slice(fields["hx_fc/p0/3d"]) * B0
-        by = PICDataReader.flatten_2d_slice(fields["hy_fc/p0/3d"]) * B0
-        bz = PICDataReader.flatten_2d_slice(fields["hz_fc/p0/3d"]) * B0
+        bx = PICDataReader.flatten_2d_slice(fields["hx_fc/p0/3d"])
+        by = PICDataReader.flatten_2d_slice(fields["hy_fc/p0/3d"])
+        bz = PICDataReader.flatten_2d_slice(fields["hz_fc/p0/3d"])
 
         smooth = lambda arr: gaussian_filter(arr.astype(float), sigma=self.sigma)
         pperp_i, pperp_e = smooth(pperp_i), smooth(pperp_e)
@@ -278,7 +278,8 @@ class DiamagneticCurrentAnalyzer:
             vmax_bmod = float(np.percentile(Bmod, 95))
             if vmax_bmod > vmin_bmod + 1e-8:
                 lvls = np.linspace(vmin_bmod, vmax_bmod, 7)
-                ax.contour(Bmod.T, levels=lvls, colors="white", linewidths=0.5, alpha=0.4)
+                ax.contour(Bmod.T, levels=lvls, colors="white", linewidths=0.5, alpha=0.4,
+                           extent=[0, DOMAIN_DI_Z, 0, DOMAIN_DI_Y])
             cb = fig.colorbar(im, ax=ax, pad=0.01, aspect=30)
             cb.set_label(lbl, fontsize=10, color=TEXT_CLR)
             cb.ax.yaxis.set_tick_params(color=TEXT_CLR, labelsize=8)

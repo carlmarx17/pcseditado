@@ -87,7 +87,7 @@ using OutputParticles = PscConfig::OutputParticles;
 
 void setupParameters()
 {
-  psc_params.nmax = 100000;
+  psc_params.nmax = 600000;  // dt 6× smaller than 128²; same t_max=59.4 Ω_ci⁻¹
   psc_params.cfl = 0.95;
   psc_params.write_checkpoint_every_step = 5000;
   psc_params.stats_every = 50;
@@ -122,12 +122,15 @@ Grid_t* setupGrid()
 {
   g.d_i = std::sqrt(g.mass_ratio / g.n);
 
-  // Dominio de 32 d_i;  d_i = sqrt(200) ≈ 14.14 celdas → 128 celdas ≈ 0.22 d_i/celda
+  // Dominio: 32 d_i × 768 celdas  →  Δ = 0.589 d_e = 0.0417 d_i
+  // Resuelve d_e (skin depth electrónica, Δ < 1 d_e).
+  // RAM ~75 GB sobre 100 GB disponibles; 24 GB libres para SO/buffers MPI.
+  // d_i = sqrt(mi/me) * d_e = sqrt(200) d_e ≈ 14.14 d_e
   double domain_size = 32.0 * g.d_i;
 
   Grid_t::Real3 LL = {1.0, domain_size, domain_size};
-  Int3         gdims = {1, 128, 128};
-  Int3         np    = {1, 8, 4}; // 32 patches for 32 MPI ranks
+  Int3         gdims = {1, 768, 768};
+  Int3         np    = {1, 8, 4}; // 32 patches (96×192 celdas/patch)
 
   Grid_t::Domain domain{gdims, LL, -.5 * LL, np};
 
@@ -263,10 +266,10 @@ void run()
   outp_params.every_step = 500;
   outp_params.data_dir = ".";
   outp_params.basename = "prt_firehose_kappa";
-  // Save only particles from the central 8×8 d_i region (cells 48–80)
-  // to reduce storage from ~577 GB to ~36 GB over 200 snapshots
-  outp_params.lo = {0, 48, 48};
-  outp_params.hi = {1, 80, 80};
+  // Save only particles from the central 8×8 d_i region
+  // 8 d_i = 8/32 * 768 = 192 cells → center±96 → [288, 480]
+  outp_params.lo = {0, 288, 288};
+  outp_params.hi = {1, 480, 480};
   OutputParticles outp{grid, outp_params};
 
   int oute_interval = -100;

@@ -394,14 +394,23 @@ Todas las constantes físicas derivadas del archivo `.cxx` están aquí:
 | `Ti_⊥/Ti_∥`    | 3.0           | 0.1              | Anisotropía iónica                   |
 | `KAPPA`        | `3.0`/`None`  | `3.0`/`None`     | Kappa ó Maxwellian                   |
 
-> **Nota sobre resolución de λ_De:**  Estas simulaciones usan `PscConfig1vbecSingle`
-> (one-velocity Boltzmann electron closure) donde los electrones son un **fluido
-> Boltzmann**, no partículas cinéticas.  La restricción `Δ < λ_De` aplica solo a PIC
-> electrónico completo.  Con 1vBEC la escala mínima a resolver es `d_i`, y la grilla
-> actual satisface `Δ/d_i = 0.25`, dentro del estándar de la literatura
-> (Kunz et al. 2014; Hellinger & Trávníček 2008).  El calentamiento numérico se
-> controla con `ppc = 2000`, manteniendo `(Δ/λ_De)²/ppc` constante respecto a
-> configuraciones previas.
+> **Resolución de grilla (corregida por indicación del director):**
+>
+> Los parámetros de grilla dependen del perfil de simulación:
+>
+> | Perfil | Dominio | Grid | Δx [d_i] | Δx [d_e] | nmax | RAM |
+> |---|---|---|---|---|---|---|
+> | Mirror (kappa / maxwellian) | 32 × 32 d_i | 448² | 0.071 | **1.01** | 350,000 | ~26 GB |
+> | Firehose (kappa / maxwellian) | 32 × 32 d_i | 128² | 0.250 | 3.54 | 100,000 | ~2 GB |
+>
+> - `d_e = c/ω_pe = 1` celda de código (PSC: c=1, n₀=1, mₑ=1)
+> - `d_i = √(mᵢ/mₑ) × d_e = √200 ≈ 14.14 d_e`
+> - **Mirror** ahora resuelve la skin depth electrónica (Δ ≈ 1 d_e) manteniendo dominio 32 d_i, consistente con Riquelme et al. 2015.
+> - **Firehose** mantiene resolución iónica estándar (Δ = 0.25 d_i).
+> - Ambos alcanzan el mismo tiempo físico: **t_max ≈ 59 Ω_ci⁻¹**.
+>
+> `PscConfig1vbecSingle` = **full PIC** (1st order Villasenor-Buneman Edge-Centered).
+> Ambas especies (iones y electrones) son **partículas cinéticas**.
 
 **Selección de perfil (variable de entorno):**
 

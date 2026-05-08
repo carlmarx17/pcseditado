@@ -225,22 +225,25 @@ class PlasmaAnisotropyAnalyzer:
         aniso_v = aniso_sub[valid]
 
         # ── Axis range ───────────────────────────────────────────────────────
+        # Clip to physically meaningful range:
+        #   beta_par:   0.3 – 300  (beyond 300 is numerical heating artifact)
+        #   anisotropy: 0.5 – 15   (sub-0.5 cells are boundary/low-n artifacts)
+        xmin, xmax = 0.3, 300.0
+        ymin, ymax = 0.5, 15.0
         if len(beta_v) > 0:
-            bp1, bp99 = np.percentile(beta_v, [0.5, 99.5])
-            ap1, ap99 = np.percentile(aniso_v, [0.5, 99.5])
-            xmin = min(0.3, bp1 * 0.5)
-            xmax = max(300.0, bp99 * 2.0)
-            ymin = min(0.3, ap1 * 0.5)
-            ymax = max(12.0, ap99 * 1.5)
-        else:
-            xmin, xmax = 0.3, 300.0
-            ymin, ymax = 0.3, 12.0
+            ap99 = np.percentile(aniso_v[(aniso_v < 15) & (beta_v < 300)], 99.5)
+            ymax = max(5.0, min(15.0, ap99 * 1.3))
+
+        # Apply data filter to the clipped range
+        in_range = (beta_v >= xmin) & (beta_v <= xmax) & (aniso_v >= ymin) & (aniso_v <= ymax)
+        beta_plot  = beta_v[in_range]
+        aniso_plot = aniso_v[in_range]
 
         # ── 2D histogram ─────────────────────────────────────────────────────
         h = ax.hist2d(
-            beta_v,
-            aniso_v,
-            bins=130,
+            beta_plot,
+            aniso_plot,
+            bins=150,
             cmap="plasma",
             norm=mcolors.LogNorm(vmin=1),
             cmin=1,
@@ -340,11 +343,22 @@ class PlasmaAnisotropyAnalyzer:
 
         # ── Metadata annotation ───────────────────────────────────────────────
         n_snaps = len(self.snapshots) if self.snapshots else "?"
+        t_total  = self.snapshots[-1] if self.snapshots else 0
+        from psc_units import step_to_omegaci
+        t_final_oci = step_to_omegaci(t_total) if t_total else 0
         ax.text(
             0.99, 0.02,
-            f"{n_sub:,} points  |  {n_snaps} snapshots",
+            f"{len(beta_plot):,} points  |  {n_snaps} snapshots  |  "
+            rf"$t_{{max}} \approx {t_final_oci:.1f}\,\Omega_{{ci}}^{{-1}}$",
             transform=ax.transAxes, ha="right", va="bottom",
             fontsize=9.5, color="#8890aa",
+        )
+        # Arrow: direction of time evolution
+        ax.annotate(
+            r"time $\rightarrow$",
+            xy=(8, 2.5), xytext=(1.5, 2.8),
+            fontsize=9, color="#aab0cc",
+            arrowprops=dict(arrowstyle="->", color="#aab0cc", lw=1.2),
         )
 
         if save:

@@ -3,13 +3,13 @@
 
 # Variables
 PYTHON   = python3
-B0_REF   = 0.1      # Matches vA_over_c = 0.1 in psc_temp_aniso.cxx
-DATA_DIR = ../build/src
+B0_REF   = 0.05     # Matches vA_over_c = 0.05 in psc_mirror_maxwellian.cxx
+DATA_DIR = ../build2/all_h5_feynman
 
-.PHONY: all brazil mirror diamagnetic fields spectral validate particles report clean help
+.PHONY: all brazil mirror diamagnetic fields spectral validate particles heatflux report clean help
 
 # spectral_analysis is excluded from 'all' — still in development
-all: brazil mirror diamagnetic fields validate particles
+all: brazil mirror diamagnetic fields validate particles heatflux
 
 brazil:
 	@echo "==========================================================="
@@ -45,14 +45,19 @@ validate:
 	@echo "==========================================================="
 	@echo "Validating Moments"
 	@echo "==========================================================="
-	$(PYTHON) validate_moments.py $(DATA_DIR)/prt.000001200.h5
+	$(PYTHON) validate_moments.py $(DATA_DIR)/prt_mirror_maxwellian.000001000.h5
 particles:
 	@echo "==========================================================="
 	@echo "Generating Particle VDF and Phase-Space Plots"
 	@echo "==========================================================="
-	$(PYTHON) plot_prt.py "$(DATA_DIR)/prt.*.h5"
-	$(PYTHON) plot_vdf_3d.py $(DATA_DIR)/prt.000001200.h5
-	$(PYTHON) plot_moments_scatter_3d.py $(DATA_DIR)/prt.000001200.h5
+	$(PYTHON) plot_prt.py "$(DATA_DIR)/prt_mirror_maxwellian.*.h5"
+	$(PYTHON) plot_vdf_3d.py $(DATA_DIR)/prt_mirror_maxwellian.000001000.h5
+	$(PYTHON) plot_moments_scatter_3d.py $(DATA_DIR)/prt_mirror_maxwellian.000001000.h5
+heatflux:
+	@echo "==========================================================="
+	@echo "Generating Heat Flux and Anisotropy Analysis"
+	@echo "==========================================================="
+	$(PYTHON) heat_flux_analysis.py --moments "$(DATA_DIR)/pfd_moments.*.h5" --fields "$(DATA_DIR)/pfd.*.h5"
 report:
 	@echo "==========================================================="
 	@echo "Generating Validation PDF Report"
@@ -63,7 +68,7 @@ clean:
 	@echo "==========================================================="
 	@echo "Cleaning generated plots"
 	@echo "==========================================================="
-	rm -rf anisotropy_plots/ mirror_plots/ field_images/ spectral_plots/ prt_plots/ fancy_vdf_plots/ phase_space_plots/ diamagnetic_plots/
+	rm -rf anisotropy_plots/ mirror_plots/ field_images/ spectral_plots/ prt_plots/ fancy_vdf_plots/ phase_space_plots/ diamagnetic_plots/ heatflux_plots/
 
 help:
 	@echo "Available targets:"
@@ -74,6 +79,7 @@ help:
 	@echo "  make spectral     - Spectral analysis (PSD)              (spectral_analysis.py)"
 	@echo "  make validate     - Moment validation                    (validate_moments.py)"
 	@echo "  make particles    - VDFs and phase-space plots           (plot_prt.py, plot_vdf_3d.py, ...)"
+	@echo "  make heatflux     - Heat flux + anisotropy analysis      (heat_flux_analysis.py)"
 	@echo "  make report       - Generate PDF validation report       (generar_pdf_reporte.py)"
 	@echo "  make all          - Run all targets (except spectral and report)"
 	@echo "  make clean        - Remove all generated plot directories"

@@ -15,11 +15,16 @@ from scipy.ndimage import gaussian_filter
 from matplotlib.colors import LinearSegmentedColormap
 
 from data_reader import PICDataReader
+from psc_units import step_to_omegaci, DOMAIN_DI_Y, DOMAIN_DI_Z, B0 as B0_DEFAULT
 
 plt.switch_backend('Agg')
+DARK_BG  = "#0c0e14"
+PANEL_BG = "#12151f"
+TEXT_CLR  = "#dde2f0"
+GRID_CLR  = "#2a2f45"
 
 class FieldImagePlotter:
-    def __init__(self, em_pattern='pfd.*.h5', B0=0.01, fluct_amp=0.1, outdir='field_images', 
+    def __init__(self, em_pattern='pfd.*.h5', B0=B0_DEFAULT, fluct_amp=0.1, outdir='field_images', 
                  smooth_sigma=0.8, dyn_scale=True, comp_magnitude=True, comps_to_plot=['Bx', 'By', 'Bz'],
                  fixed_scale=True):
         self.em_pattern = em_pattern
@@ -36,38 +41,21 @@ class FieldImagePlotter:
         self.global_vmax = {}
         self.file_map = PICDataReader.find_files(self.em_pattern)
         
-        # Paleta de colores personalizada - Alto contraste
+        # Paletas de colores de calidad de publicación
         self.palettes = {
-            'Bx': self.create_dark_divergent_cmap('blue', 'red'),
-            'By': self.create_dark_divergent_cmap('green', 'purple'),
-            'Bz': self.create_dark_divergent_cmap('cyan', 'orange'),
-            'Bmag': self.create_yellow_green_cmap()  # Paleta amarillo-verde-negro
+            'Bx': 'RdBu_r',       # Divergente rojo-azul
+            'By': 'PuOr_r',       # Divergente naranja-púrpura 
+            'Bz': 'seismic',      # Divergente frío-caliente
+            'Bmag': 'plasma',     # Secuencial perceptualmente uniforme
         }
 
     def create_dark_divergent_cmap(self, color1, color2):
-        """Mapas divergentes con alto contraste y extremos oscuros"""
-        palettes = {
-            'blue_red': ['#00001F', '#00008F', '#0000FF', '#0066FF', '#FF0000', '#8B0000', '#450000'],
-            'green_purple': ['#001F00', '#004400', '#00FF00', '#66FF00', '#800080', '#4B0082', '#2A0045'],
-            'cyan_orange': ['#002A2A', '#006666', '#00FFFF', '#00CCCC', '#FF8C00', '#FF4500', '#8B2500']
-        }
-        
-        if 'blue' in color1 and 'red' in color2:
-            colors = palettes['blue_red']
-        elif 'green' in color1 and 'purple' in color2:
-            colors = palettes['green_purple']
-        else:
-            colors = palettes['cyan_orange']
-            
-        return LinearSegmentedColormap.from_list(f'hi_contrast_{color1}_{color2}', colors, N=256)
+        """Mantenido por compatibilidad — ahora se usa matplotlib builtin."""
+        return 'RdBu_r'
 
     def create_yellow_green_cmap(self):
-        """Paleta secuencial de alto contraste (amarillo-verde-negro)"""
-        colors = [
-            '#FFFF00', '#EEEE00', '#CCCC00', '#AAAA00', '#888800',
-            '#00FF00', '#008800', '#004400', '#002200', '#001100', '#000000'
-        ]
-        return LinearSegmentedColormap.from_list('hi_contrast_yellow_green', colors, N=256)
+        """Mantenido por compatibilidad — ahora se usa 'plasma'."""
+        return 'plasma'
 
     def _process_component(self, data):
         """Procesa un componente: normalización y suavizado"""
@@ -107,9 +95,9 @@ class FieldImagePlotter:
             
             try:
                 fields = PICDataReader.read_multiple_fields_3d(fn, "jeh-", ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"])
-                bx3d = fields["hx_fc/p0/3d"] * self.B0
-                by3d = fields["hy_fc/p0/3d"] * self.B0
-                bz3d = fields["hz_fc/p0/3d"] * self.B0
+                bx3d = fields["hx_fc/p0/3d"]
+                by3d = fields["hy_fc/p0/3d"]
+                bz3d = fields["hz_fc/p0/3d"]
             except Exception as e:
                 print(f"Error leyendo step {step} para limites: {e}")
                 continue
@@ -149,16 +137,26 @@ class FieldImagePlotter:
             
         try:
             fields = PICDataReader.read_multiple_fields_3d(fn, "jeh-", ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"])
-            bx3d = fields["hx_fc/p0/3d"] * self.B0
-            by3d = fields["hy_fc/p0/3d"] * self.B0
-            bz3d = fields["hz_fc/p0/3d"] * self.B0
+            bx3d = fields["hx_fc/p0/3d"]
+            by3d = fields["hy_fc/p0/3d"]
+            bz3d = fields["hz_fc/p0/3d"]
         except Exception as e:
             print(f"Error procesando step {step}: {e}")
             return False
 
         bx2d, by2d, bz2d, xlabel, ylabel = self._get_slice(bx3d, by3d, bz3d, plane, slice_index)
 
-        time_omega_ci = step * 0.00104961
+        time_omega_ci = step_to_omegaci(step)
+
+        # Determinar extent físico en unidades d_i
+        # PSC: shape (Nz, Ny), eje horizontal = Z, eje vertical = Y
+        ny, nz = bz2d.shape[1] if bz2d.ndim > 1 else 1, bz2d.shape[0]
+        # Tras _get_slice + .T: imshow recibe (Ny, Nz)
+        #   → extent = [z_min, z_max, y_min, y_max]
+        extent_phys = [0, DOMAIN_DI_Z, 0, DOMAIN_DI_Y]
+
+        xlabel_phys = rf"$Z\ [d_i]$"
+        ylabel_phys = rf"$Y\ [d_i]$"
 
         # Magnitud
         if self.comp_magnitude:
@@ -169,21 +167,33 @@ class FieldImagePlotter:
             if self.fixed_scale and 'Bmag' in self.global_vmin:
                 vmin, vmax = self.global_vmin['Bmag'], self.global_vmax['Bmag']
             elif self.dyn_scale:
-                vmax = max(np.percentile(mag, 99.8), 1e-4) # Mejor contraste 99.8 
+                vmax = max(np.percentile(mag, 99.5), 1e-4)
                 vmin = 0
             else:
                 vmin, vmax = 0, self.fluct_amp
 
-            fig, ax = plt.subplots(figsize=(10, 8))
-            im = ax.imshow(mag.T, origin='lower', cmap=self.palettes['Bmag'], vmin=vmin, vmax=vmax, aspect='auto')
-            fig.colorbar(im, ax=ax).set_label(r'$|\delta B| / B_0$', fontsize=14)
-            ax.set_xlabel(xlabel, fontsize=12)
-            ax.set_ylabel(ylabel, fontsize=12)
-            ax.set_title(rf'Magnitude $|\delta B| / B_0$ | Step {step} | $t \approx {time_omega_ci:.2f} \Omega_{{ci}}^{{-1}}$', fontsize=14)
-            ax.grid(True, linestyle=':', alpha=0.7)
+            fig, ax = plt.subplots(figsize=(9, 8))
+            fig.patch.set_facecolor(DARK_BG)
+            ax.set_facecolor(PANEL_BG)
+            im = ax.imshow(mag.T, origin='lower', cmap=self.palettes['Bmag'],
+                           vmin=vmin, vmax=vmax, aspect='auto', extent=extent_phys)
+            cb = fig.colorbar(im, ax=ax, pad=0.02)
+            cb.set_label(r'$|\delta B|/B_0$', fontsize=14, color=TEXT_CLR)
+            cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
+            plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
+            ax.set_xlabel(xlabel_phys, fontsize=13, color=TEXT_CLR)
+            ax.set_ylabel(ylabel_phys, fontsize=13, color=TEXT_CLR)
+            ax.set_title(
+                rf'$|\delta B|/B_0$  —  $t \approx {time_omega_ci:.2f}\,\Omega_{{ci}}^{{-1}}$ (step {step})',
+                fontsize=14, color=TEXT_CLR, fontweight='bold'
+            )
+            ax.tick_params(colors=TEXT_CLR, direction='in', which='both', top=True, right=True)
+            ax.grid(True, linestyle=':', alpha=0.25, color=GRID_CLR)
+            for spine in ax.spines.values():
+                spine.set_edgecolor(GRID_CLR)
             
             outname = self.outdir / f'Bmag_fluct_step{step}_{plane}.png'
-            fig.savefig(outname, dpi=200, bbox_inches='tight')
+            fig.savefig(outname, dpi=200, bbox_inches='tight', facecolor=DARK_BG)
             plt.close(fig)
 
         # Componentes
@@ -195,21 +205,33 @@ class FieldImagePlotter:
             if self.fixed_scale and comp in self.global_vmin:
                 vmin, vmax = self.global_vmin[comp], self.global_vmax[comp]
             elif self.dyn_scale:
-                vmax = max(np.percentile(np.abs(fluct), 99.8), 1e-4)
+                vmax = max(np.percentile(np.abs(fluct), 99.5), 1e-4)
                 vmin = -vmax
             else:
                 vmin, vmax = -self.fluct_amp, self.fluct_amp
 
-            fig, ax = plt.subplots(figsize=(10, 8))
-            im = ax.imshow(fluct.T, origin='lower', cmap=self.palettes[comp], vmin=vmin, vmax=vmax, aspect='auto')
-            fig.colorbar(im, ax=ax).set_label(rf'$\delta {comp} / B_0$', fontsize=14)
-            ax.set_xlabel(xlabel, fontsize=12)
-            ax.set_ylabel(ylabel, fontsize=12)
-            ax.set_title(rf'Fluct. $\delta {comp} / B_0$ | Step {step} | $t \approx {time_omega_ci:.2f} \Omega_{{ci}}^{{-1}}$', fontsize=14)
-            ax.grid(True, linestyle=':', alpha=0.5)
+            fig, ax = plt.subplots(figsize=(9, 8))
+            fig.patch.set_facecolor(DARK_BG)
+            ax.set_facecolor(PANEL_BG)
+            im = ax.imshow(fluct.T, origin='lower', cmap=self.palettes[comp],
+                           vmin=vmin, vmax=vmax, aspect='auto', extent=extent_phys)
+            cb = fig.colorbar(im, ax=ax, pad=0.02)
+            cb.set_label(rf'$\delta B_{comp[-1]}/B_0$', fontsize=14, color=TEXT_CLR)
+            cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
+            plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
+            ax.set_xlabel(xlabel_phys, fontsize=13, color=TEXT_CLR)
+            ax.set_ylabel(ylabel_phys, fontsize=13, color=TEXT_CLR)
+            ax.set_title(
+                rf'$\delta B_{comp[-1]}/B_0$  —  $t \approx {time_omega_ci:.2f}\,\Omega_{{ci}}^{{-1}}$ (step {step})',
+                fontsize=14, color=TEXT_CLR, fontweight='bold'
+            )
+            ax.tick_params(colors=TEXT_CLR, direction='in', which='both', top=True, right=True)
+            ax.grid(True, linestyle=':', alpha=0.25, color=GRID_CLR)
+            for spine in ax.spines.values():
+                spine.set_edgecolor(GRID_CLR)
             
             outname = self.outdir / f'{comp}fluct_step{step}_{plane}.png'
-            fig.savefig(outname, dpi=200, bbox_inches='tight')
+            fig.savefig(outname, dpi=200, bbox_inches='tight', facecolor=DARK_BG)
             plt.close(fig)
 
         return True

@@ -10,8 +10,12 @@ Masa artificial: mi/me = 200  =>  me = 1.0,  mi = 200.0
 
 Parámetros comunes a las 4 simulaciones:
   - mass_ratio = 200,  vA/c = 0.05
-  - Dominio: 32 d_i × 32 d_i,  grilla 128×128 celdas  (d_i = √200 ≈ 14.14 celdas)
   - nicell = 2000 ppc
+
+Configuraciones de grilla (perfil-dependiente):
+  Mirror:   32 d_i × 32 d_i,  grilla 448×448  (Δ ≈ 1 d_e,  resuelve d_e)
+  Firehose: 32 d_i × 32 d_i,  grilla 128×128  (Δ = 3.54 d_e, escala iónica)
+
 
 CONFIGURACIONES DE INESTABILIDAD:
   Mirror   :  beta_i_par = 5,   Ti_perp/Ti_par = 3.0   (T_perp > T_par)
@@ -150,32 +154,56 @@ BETA_I_PERP_COMPUTED = 2.0 * N0 * TI_PERP / B0**2
 BETA_E_PAR_COMPUTED  = 2.0 * N0 * TE_PAR  / B0**2
 
 # ── Grilla y dominio ─────────────────────────────────────────────────────
-# .cxx: domain_size = 32 * d_i,  gdims = 128x128
-# d_i = sqrt(mi/n) = sqrt(200) ≈ 14.14  =>  domain_size ≈ 452.5 celdas
-# 128 celdas => Δ ≈ 452.5/128 ≈ 3.54 celdas  ≈ 0.25 d_i  ✓
-N_GRID_Y  = 128              # celdas en Y
-N_GRID_Z  = 128              # celdas en Z
-DOMAIN_DI = 32.0             # extensión física del dominio en d_i
-DOMAIN_DE = DOMAIN_DI * DI   # extensión en d_e  (≈ 452.5)
-NICELL    = 2000             # partículas por celda (ver setupGrid)
+# Los parámetros de grilla dependen del perfil (mirror vs firehose).
+#
+# PSC 1vbec = full PIC (1st order Villasenor-Buneman Edge-Centered).
+# Ambas especies (iones y electrones) son partículas cinéticas.
+#
+# Todos los perfiles: 32 d_i × 768²  →  Δ = 0.589 d_e = 0.042 d_i
+# Resuelve d_e (Δ < 1 d_e). RAM ~75 GB, 24 GB libres para SO/MPI en servidor 100 GB.
+# Jerarquía de escalas: d_i = 14.14 d_e,  λ_De = 0.0354 d_e,  Δ/λ_De ≈ 16.6
+
+_GRID_CONFIGS = {
+    "mirror_kappa":        {"domain_di": 32.0, "ngrid": 768, "nmax": 600000},
+    "mirror_maxwellian":   {"domain_di": 32.0, "ngrid": 768, "nmax": 600000},
+    "firehose_kappa":      {"domain_di": 32.0, "ngrid": 768, "nmax": 600000},
+    "firehose_maxwellian": {"domain_di": 32.0, "ngrid": 768, "nmax": 600000},
+}
+
+_grid = _GRID_CONFIGS[SIM_PROFILE]
+
+N_GRID_Y  = _grid["ngrid"]              # celdas en Y
+N_GRID_Z  = _grid["ngrid"]              # celdas en Z
+DOMAIN_DI = _grid["domain_di"]          # extensión del dominio en d_i
+NMAX      = _grid["nmax"]               # número máximo de pasos
+DOMAIN_DE = DOMAIN_DI * DI              # extensión en d_e
+DX_DI     = DOMAIN_DI / N_GRID_Y       # resolución [d_i / celda]
+DX_DE     = DOMAIN_DE / N_GRID_Y       # resolución [d_e / celda]
+NICELL    = 2000                        # partículas por celda (ver setupGrid)
 CORI      = 1.0 / NICELL
 
-# Tamaño del dominio en d_i (calculado a partir de DI)
-DOMAIN_DI_Y = DOMAIN_DI   # 32 d_i
-DOMAIN_DI_Z = DOMAIN_DI   # 32 d_i
+# Tamaño del dominio en d_i
+DOMAIN_DI_Y = DOMAIN_DI
+DOMAIN_DI_Z = DOMAIN_DI
 
 # ── Región de salida de partículas ───────────────────────────────────────
-# Solo se guardan partículas de la región central 8×8 d_i (celdas 48–80)
-# para optimizar almacenamiento (~180 MB/snapshot vs 2.88 GB del dominio completo)
-PRT_OUTPUT_LO = (0, 48, 48)
-PRT_OUTPUT_HI = (1, 80, 80)
-PRT_OUTPUT_EVERY = 500       # cada 500 pasos (≈ 200 snapshots en nmax=100000)
+# Central 8×8 d_i region (ajustada al tamaño de grilla)
+_prt_half = int(round(8.0 / DOMAIN_DI * N_GRID_Y / 2))  # celdas del centro
+_prt_center = N_GRID_Y // 2
+PRT_OUTPUT_LO = (0, _prt_center - _prt_half, _prt_center - _prt_half)
+PRT_OUTPUT_HI = (1, _prt_center + _prt_half, _prt_center + _prt_half)
+PRT_OUTPUT_EVERY = 500
 
 # ── Constantes auxiliares para análisis ─────────────────────────────────
 MU0 = 1.0
+# dt del código: dt = CFL * courant_length(domain)
+# courant_length(2D) = dx / sqrt(2),  dx = domain_de / N_grid
+_dx_code = DOMAIN_DE / N_GRID_Y
+DT_CODE = 0.95 * _dx_code / np.sqrt(2.0)
 FIELD_FILE_PATTERN = "pfd.*.h5"
 MOMENT_FILE_PATTERN = "pfd_moments.*.h5"
-PARTICLE_FILE_PATTERN = "prt.*.h5"
+PARTICLE_FILE_PATTERN = "prt_mirror_maxwellian.*.h5"
+
 
 # ── Funciones de conversión ───────────────────────────────────────────────
 
@@ -208,7 +236,7 @@ def temp_to_va2mi(T_code, m=M_ION):
     return T_code / (m * VA**2)
 
 
-def step_to_omegaci(step: int, dt_code: float = 1.0) -> float:
+def step_to_omegaci(step: int, dt_code: float = DT_CODE) -> float:
     """Convierte un step de simulación a tiempo normalizado por Ωci^-1."""
     return step * dt_code * OMEGA_CI
 
