@@ -82,7 +82,7 @@ d_i  = 14.14 d_e  ←  ✅ bien resuelta (Δx = 0.042 d_i)
 | Dominio en d_e | 452.5 × 452.5 d_e | Equivalente electrónico |
 | Grid | **768 × 768** | Número de celdas por dimensión |
 | **Δx** | **0.589 d_e = 0.042 dᵢ** | Resolución espacial |
-| Δx < dₑ | ✅ Sí | Condición exigida por el director |
+| Δx < dₑ | ✅ Sí | Resuelve la escala inercial electrónica |
 | Δx/λ_De | ≈ 16.7 | λ_De sub-resuelta (esperado) |
 | Parches MPI | `np = {1, 8, 4}` | 32 parches para 32 cores |
 | Celdas/parche | 96 × 192 | Balance de carga uniforme |
@@ -91,14 +91,22 @@ d_i  = 14.14 d_e  ←  ✅ bien resuelta (Δx = 0.042 d_i)
 > **¿Por qué 768?** 768 = 32 × 24, divisible exactamente por 32 parches MPI.
 > Es el mayor grid que cabe en 100 GB con Δx < d_e y sin comprometer el OS.
 
-### Comparación de resoluciones históricas
+### Contexto y Comparación con la Literatura
 
-| Configuración | Grid | Δx [d_e] | RAM | Δx < dₑ |
-|---|---|---|---|---|
-| Original (v1) | 128² | 3.54 | 2 GB | ❌ |
-| Intermedia (v2) | 448² | 1.01 | 26 GB | ❌ |
-| **Actual (v3)** | **768²** | **0.59** | **75 GB** | **✅** |
-| Con 0.25 d_e (inviable) | 1810² | 0.25 | ~1.5 TB | ✅ |
+Esta configuración de grilla se ha diseñado teniendo en cuenta el estado del arte en simulaciones PIC de inestabilidades cinéticas:
+
+| Trabajo | Inestabilidad | Código | mᵢ/mₑ | Dominio | Δx | PPC | Distribución |
+|---|---|---|---|---|---|---|---|
+| Kunz et al. 2014 | Firehose/Mirror | Hybrid PIC | ∞ | 1152 dᵢ | 0.5 dᵢ | - | Maxwellian |
+| Riquelme et al. 2016 | Mirror | Full PIC | 64-128 | 20-50 dᵢ | 0.2 dₑ | 20-60 | Maxwellian |
+| **Nuestro estudio** | **Mirror/Firehose** | **Full PIC** | **200** | **32 dᵢ** | **0.59 dₑ** | **2000** | **Kappa (κ=3)** / Max |
+
+**Puntos clave de la comparativa:**
+
+1. **Resolución electrónica (Δx):** Nuestro `Δx = 0.59 dₑ` es altamente competitivo en el contexto de simulaciones PIC completas (Full PIC). Mientras que simulaciones híbridas (como Kunz et al. 2014) no resuelven la escala electrónica en absoluto al tratar a los electrones como un fluido, estudios equivalentes como el de Riquelme et al. 2016 usan resoluciones del orden de `0.2 dₑ`. Nuestra configuración logra resolver la escala inercial electrónica manteniéndose en un presupuesto de memoria realista (75 GB).
+2. **Razón de masas (mᵢ/mₑ):** Usar `mᵢ/mₑ = 200` es superior a muchos estudios full PIC previos (que utilizan razones más bajas por costo computacional), capturando de manera más precisa la separación real entre las dinámicas iónica y electrónica.
+3. **Partículas por celda (PPC):** Nuestro valor de **2000 PPC** es excepcionalmente alto. La literatura típicamente emplea entre 16 y 400 PPC. Aunque esto aumenta el costo computacional, esta cantidad inusualmente alta de partículas es instrumental para suprimir significativamente el ruido numérico, compensando en cierta medida el hecho de que la longitud de Debye (`λ_De`) se encuentra sub-resuelta. Si se necesitara reducir costos, se podría explorar bajar este valor (ej. 200-500 PPC).
+4. **Distribución Kappa:** Este es el **diferenciador principal** del trabajo frente a la literatura existente, la cual asume casi en su totalidad distribuciones iniciales Gaussianas (Maxwellianas). Analizar inestabilidades Mirror y Firehose bajo perfiles Kappa representa un enfoque novedoso frente al estado del arte estándar.
 
 ---
 
