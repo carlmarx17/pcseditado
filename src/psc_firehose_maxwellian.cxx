@@ -122,14 +122,14 @@ Grid_t* setupGrid()
 {
   g.d_i = std::sqrt(g.mass_ratio / g.n);
 
-  // Dominio: 20 d_i × 1280 celdas
-  // Resuelve d_e y mantiene λ_De casi perfecto (Δx/λ_De ≈ 1.22)
-  // RAM esperada: ~105 GB (para 1000 ppc). Deja margen seguro para el OS.
+  // Dominio: 20 d_i × 1024 celdas
+  // Resuelve d_e (skin depth electrónica) y mantiene λ_De seguro (Δx/λ_De ≈ 1.53)
+  // RAM esperada: ~67 GB base. Evita OOM Killer durante el paso de Sorting.
   // d_i = sqrt(mi/me) * d_e = sqrt(100) d_e = 10 d_e
   double domain_size = 20.0 * g.d_i;
 
   Grid_t::Real3 LL = {1.0, domain_size, domain_size};
-  Int3         gdims = {1, 1280, 1280};
+  Int3         gdims = {1, 1024, 1024};
   Int3         np    = {1, 8, 4}; // 32 patches
 
   Grid_t::Domain domain{gdims, LL, -.5 * LL, np};
