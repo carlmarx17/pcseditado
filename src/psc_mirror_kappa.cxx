@@ -87,18 +87,18 @@ using OutputParticles = PscConfig::OutputParticles;
 
 void setupParameters()
 {
-  psc_params.nmax = 600000;  // dt 6× smaller than 128²; same t_max=59.4 Ω_ci⁻¹
+  psc_params.nmax = 1200000;  // dt ajustado para nueva malla y B0=0.1
   psc_params.cfl = 0.95;
   psc_params.write_checkpoint_every_step = 5000;
   psc_params.stats_every = 50;
 
   g.BB = 1.0;
   g.Zi = 1.;
-  g.mass_ratio = 200.;
+  g.mass_ratio = 100.;
   g.lambda0 = 20.;
 
   // Mirror Instability Parameters
-  g.vA_over_c = 0.05;
+  g.vA_over_c = 0.1;
   g.beta_e_par = 1.0;
   g.beta_i_par = 5.0;
   g.Ti_perp_over_Ti_par = 3.0;
@@ -122,15 +122,14 @@ Grid_t* setupGrid()
 {
   g.d_i = std::sqrt(g.mass_ratio / g.n);
 
-  // Dominio: 32 d_i × 768 celdas  →  Δ = 0.589 d_e = 0.0417 d_i
-  // Resuelve d_e (skin depth electrónica, Δ < 1 d_e).
-  // RAM ~75 GB sobre 100 GB disponibles; 24 GB libres para SO/buffers MPI.
-  // d_i = sqrt(mi/me) * d_e = sqrt(200) d_e ≈ 14.14 d_e
+  // Dominio: 32 d_i × 1152 celdas
+  // Resuelve d_e (skin depth electrónica) y se acerca a λ_De (Δx/λ_De ≈ 1.57)
+  // d_i = sqrt(mi/me) * d_e = sqrt(100) d_e = 10 d_e
   double domain_size = 32.0 * g.d_i;
 
   Grid_t::Real3 LL = {1.0, domain_size, domain_size};
-  Int3         gdims = {1, 768, 768};
-  Int3         np    = {1, 8, 4}; // 32 patches (96×192 celdas/patch)
+  Int3         gdims = {1, 1152, 1152};
+  Int3         np    = {1, 8, 4}; // 32 patches
 
   Grid_t::Domain domain{gdims, LL, -.5 * LL, np};
 
@@ -148,7 +147,7 @@ Grid_t* setupGrid()
              sqrt(g.Te_perp));
 
   auto norm_params = Grid_t::NormalizationParams::dimensionless();
-  norm_params.nicell = 2000; // ppc
+  norm_params.nicell = 1000; // ppc
 
   double dt = psc_params.cfl * courant_length(domain);
   Grid_t::Normalization norm{norm_params};
