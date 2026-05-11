@@ -27,6 +27,8 @@ import argparse
 from io import BytesIO
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import AutoMinorLocator
@@ -39,7 +41,6 @@ from psc_units import (
     DOMAIN_DI_Y,
     DOMAIN_DI_Z,
     FIELD_FILE_PATTERN,
-    KAPPA,
     MASS_RATIO,
     MOMENT_FILE_PATTERN,
     N_GRID_Y,
@@ -52,19 +53,17 @@ try:
 except ImportError:
     Image = None
 
-plt.switch_backend("Agg")
-
 # ── Dark-theme colour palette ────────────────────────────────────────────────
-DARK_BG   = "#0c0e14"
-PANEL_BG  = "#12151f"
-TEXT_CLR  = "#dde2f0"
-GRID_CLR  = "#232840"
+DARK_BG   = "#0d1117"
+PANEL_BG  = "#161b22"
+TEXT_CLR  = "#e6edf3"
+GRID_CLR  = "#21262d"
 
-# Steps to plot individually (representative subset)
-PLOT_STEPS: list[int] = [0, 500, 1000, 2000, 3000, 5000, 7000, 9000, 11600]
+# Steps to plot individually — build2 range (0–75000, stride 500)
+PLOT_STEPS: list[int] = [0, 2500, 5000, 10000, 15000, 25000, 35000, 50000, 65000, 75000]
 
-# GIF decimation factor
-GIF_STRIDE: int = 5
+# GIF decimation factor — build2 has 151 snapshots, stride 10 → ~15 frames
+GIF_STRIDE: int = 10
 
 
 class DiamagneticCurrentAnalyzer:
@@ -294,11 +293,10 @@ class DiamagneticCurrentAnalyzer:
             for spine in ax.spines.values():
                 spine.set_edgecolor(GRID_CLR)
 
-        _kappa_str = rf",  $\kappa = {KAPPA}$" if KAPPA is not None else ",  Maxwellian"
         fig.suptitle(
-            rf"Diamagnetic Current  —  $t \approx {step_to_omegaci(step):.2f}\ \Omega_{{ci}}^{{-1}}$  (step {step})"
+            rf"Diamagnetic Current  —  $t \approx {step_to_omegaci(step):.2f}\,\Omega_{{ci}}^{{-1}}$  (step {step})"
             "\n"
-            rf"PSC  ($m_i/m_e = {int(MASS_RATIO)}${_kappa_str},  $B_0 = {B0:.4f}$)",
+            rf"Mirror Maxwellian  ($m_i/m_e = {int(MASS_RATIO)}$,  $B_0 = {B0:.4f}$)",
             fontsize=14, color=TEXT_CLR, y=1.02, fontweight="bold",
         )
         return fig
