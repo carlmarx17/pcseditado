@@ -1,6 +1,5 @@
 #!/bin/bash -l
 #SBATCH --job-name=psc_mirror_max2k
-#SBATCH --clusters=fisica
 #SBATCH --partition=cpu.cecc
 #SBATCH --nodelist=nodo-00
 #SBATCH --qos=low
