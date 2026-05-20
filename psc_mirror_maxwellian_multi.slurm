@@ -27,7 +27,7 @@ module load MPI/openmpi/4.1.1
 module load lang/gcc/9.2
 
 # Directorio de trabajo
-WORKDIR=/scratchsan/observatorio/cmartinezsi/pcseditado/mirror_maxwellian_1536
+WORKDIR=/scratchsan/observatorio/Cmartinezsi/pcseditado/mirror_maxwellian_1536
 mkdir -p ${WORKDIR}
 cd ${WORKDIR}
 
@@ -44,7 +44,7 @@ echo "=========================================================="
 # Ejecutar usando el nodo-00 completo (128 cores)
 mpirun -np 128 \
        --bind-to core \
-       /scratchsan/observatorio/cmartinezsi/pcseditado/build/src/psc_mirror_maxwellian
+       /scratchsan/observatorio/Cmartinezsi/pcseditado/build/src/psc_mirror_maxwellian
 
 EXIT_CODE=$?
 echo "=========================================================="
