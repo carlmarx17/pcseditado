@@ -31,7 +31,7 @@ module purge
 module load MPI/openmpi/4.1.1
 module load lang/gcc/9.2
 
-RUNDIR=/scratchsan/observatorio/cmartinezsi/mirror_maxwellian_2k
+RUNDIR=/scratchsan/observatorio/Cmartinezsi/mirror_maxwellian_2k
 mkdir -p ${RUNDIR}
 cd ${RUNDIR}
 
@@ -46,7 +46,7 @@ echo "========================================"
 mpirun -np 128 \
     --bind-to core \
     --map-by core \
-    /scratchsan/observatorio/cmartinezsi/pcseditado/build/src/psc_mirror_maxwellian_2k
+    /scratchsan/observatorio/Cmartinezsi/pcseditado/build/src/psc_mirror_maxwellian_2k
 
 EXIT_CODE=$?
 echo "Fin: $(date)  |  Exit: ${EXIT_CODE}"
