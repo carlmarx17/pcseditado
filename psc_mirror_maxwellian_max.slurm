@@ -1,26 +1,23 @@
 #!/bin/bash -l
 #============================================================
-# Job: psc_mirror_maxwellian — Mirror Instability (Maxwelliana)
+# Job: psc_mirror_maxwellian_2k — Mirror (Maxwelliana 2k)
 # Resolución: 2048×2048 | Dominio: 20 d_i | 1000 ppc
-# Nodos: feynman-00 (72) + nodo-00 (128) + boltzmann (56) = 256 CPUs
-# Total: 256 CPUs | 1024 patches MPI (32×32) | RAM estimada: ~265 GB
-# Tiempo físico: ~657 Ω_i^{-1} | nmax=2,400,000 | 7 días
-#
-# Mejora respecto a malla 1024/1536:
-#   dx/λ_De: 0.77  (sub-Debye completa)
-#   dx/d_e:  0.098 (máxima resolución de escala electrónica)
+# Nodo: nodo-00 (128 CPUs, ~514 GB RAM)
+# Clúster: cecc | Partición: cpu.cecc
+# Tareas MPI: 128 | Patches: 1024 (32×32)
+# RAM estimada: ~265 GB (cabe holgado en los 514 GB de nodo-00)
 #============================================================
-#SBATCH --job-name=psc_mirror_mxw_2048
-#SBATCH --clusters=fisica
+#SBATCH --job-name=psc_mirror_mxw_2k
+#SBATCH --clusters=cecc
 #SBATCH --partition=cpu.cecc
 #SBATCH --qos=low
-#SBATCH --nodes=3
-#SBATCH --nodelist=feynman-00,nodo-00,boltzmann
-#SBATCH --ntasks=256
+#SBATCH --nodes=1
+#SBATCH --nodelist=nodo-00
+#SBATCH --ntasks=128
 #SBATCH --time=7-00:00:00
 #SBATCH --exclusive
-#SBATCH --output=psc_mirror_mxw_2048_%j.out
-#SBATCH --error=psc_mirror_mxw_2048_%j.err
+#SBATCH --output=psc_mirror_mxw_2k_%j.out
+#SBATCH --error=psc_mirror_mxw_2k_%j.err
 
 # ------------------------------------------------------------------
 # Entorno
@@ -29,30 +26,23 @@ module purge
 module load MPI/openmpi/4.1.1
 module load lang/gcc/9.2
 
-# Directorio de trabajo (checkpoints y salidas de diagnóstico)
+# Directorio de trabajo
 WORKDIR=/scratchsan/observatorio/cmartinezsi/pcseditado/mirror_maxwellian_2048
 mkdir -p ${WORKDIR}
 cd ${WORKDIR}
 
 echo "=========================================================="
-echo "  PSC Mirror Maxwellian — Malla 2048×2048 (Sub-Debye)"
+echo "  PSC Mirror Maxwellian 2k — Clúster CECC (nodo-00)"
 echo "=========================================================="
 echo "Job ID      : ${SLURM_JOB_ID}"
-echo "Nodos       : ${SLURM_JOB_NODELIST}"
-echo "Tareas MPI  : ${SLURM_NTASKS}"
-echo "Patches     : 1024 (32×32)"
-echo "RAM estimada: ~265 GB"
-echo "Directorio  : ${WORKDIR}"
+echo "Nodo        : nodo-00"
+echo "Tareas MPI  : 128"
+echo "RAM Node    : 514 GB"
 echo "Inicio      : $(date)"
 echo "=========================================================="
 
-# ------------------------------------------------------------------
-# Ejecutar Mirror Maxwellian con resolución 2048×2048
-# Distribución explícita por nodo (72 + 128 + 56 CPUs)
-# ------------------------------------------------------------------
-mpirun -H feynman-00:72,nodo-00:128,boltzmann:56 \
-       -np 256 \
-       --map-by slot \
+# Ejecutar usando el nodo-00 completo (128 cores) para evitar overhead de red
+mpirun -np 128 \
        --bind-to core \
        /scratchsan/observatorio/cmartinezsi/pcseditado/build/src/psc_mirror_maxwellian_2k
 
