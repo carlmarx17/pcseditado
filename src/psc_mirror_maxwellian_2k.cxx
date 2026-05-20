@@ -91,7 +91,7 @@ void setupParameters()
   // Tiempo físico total: ~657 Ω_i^{-1}
   psc_params.nmax = 2400000;
   psc_params.cfl = 0.95;
-  psc_params.write_checkpoint_every_step = 10000;  // cada ~2.7 Ω_i^{-1} (escala con dt)
+  psc_params.write_checkpoint_every_step = 0;  // Desactivado (0)
   psc_params.stats_every = 50;
 
   g.BB = 1.0;
