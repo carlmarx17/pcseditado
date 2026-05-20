@@ -51,7 +51,7 @@ if [ ! -f "${EXECUTABLE}" ]; then
 fi
 
 mpirun -np 128 \
-       --bind-to core \
+       --bind-to hwthread \
        ${EXECUTABLE}
 
 EXIT_CODE=$?
