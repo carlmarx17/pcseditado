@@ -1,11 +1,10 @@
 #!/bin/bash -l
 #============================================================
 # Job: psc_mirror_maxwellian_2k — Mirror (Maxwelliana 2k)
-# Resolución: 2048×2048 | Dominio: 20 d_i | 1000 ppc
+# Resolución: 2048×2048 | Dominio: 20 d_i | 1000 ppc | mass_ratio: 200
 # Nodo: nodo-00 (128 CPUs, ~514 GB RAM)
 # Clúster: cecc | Partición: cpu.cecc
-# Tareas MPI: 128 | Patches: 1024 (32×32) | mass_ratio: 200
-# RAM estimada: ~265 GB (cabe holgado en los 514 GB de nodo-00)
+# Filesystem compartido: /homes/observatorio/cmartinezsi (NFS desde perseus)
 # Tiempo máximo en cecc: 4 días
 #============================================================
 #SBATCH --job-name=psc_mirror_mxw_2k
@@ -26,8 +25,11 @@ module purge
 module load MPI/openmpi/4.1.1
 module load lang/gcc/9.2
 
-# Directorio de trabajo
-WORKDIR=/scratchsan/observatorio/Cmartinezsi/pcseditado/mirror_maxwellian_2048
+# Rutas (nodo-00 ve /homes/observatorio/cmartinezsi vía NFS)
+BASEDIR=/homes/observatorio/cmartinezsi/pcs_run
+WORKDIR=${BASEDIR}/mirror_maxwellian_2048
+EXECUTABLE=${BASEDIR}/psc_mirror_maxwellian_2k
+
 mkdir -p ${WORKDIR}
 cd ${WORKDIR}
 
@@ -35,16 +37,24 @@ echo "=========================================================="
 echo "  PSC Mirror Maxwellian 2k — Clúster CECC (nodo-00)"
 echo "=========================================================="
 echo "Job ID      : ${SLURM_JOB_ID}"
-echo "Nodo        : nodo-00"
-echo "Tareas MPI  : 128"
-echo "RAM Node    : 514 GB"
+echo "Nodo        : ${SLURM_JOB_NODELIST}"
+echo "Tareas MPI  : ${SLURM_NTASKS}"
+echo "Ejecutable  : ${EXECUTABLE}"
+echo "Directorio  : ${WORKDIR}"
 echo "Inicio      : $(date)"
 echo "=========================================================="
 
-# Ejecutar usando el nodo-00 completo (128 cores) para evitar overhead de red
+# Verificar que el ejecutable existe
+if [ ! -f "${EXECUTABLE}" ]; then
+    echo "ERROR: Ejecutable no encontrado: ${EXECUTABLE}"
+    echo "Copia el ejecutable con:"
+    echo "  cp /scratchsan/observatorio/Cmartinezsi/pcseditado/build/src/psc_mirror_maxwellian_2k ~/pcs_run/"
+    exit 1
+fi
+
 mpirun -np 128 \
        --bind-to core \
-       /scratchsan/observatorio/Cmartinezsi/pcseditado/build/src/psc_mirror_maxwellian_2k
+       ${EXECUTABLE}
 
 EXIT_CODE=$?
 echo "=========================================================="
