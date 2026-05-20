@@ -1,14 +1,13 @@
 #!/bin/bash -l
 #SBATCH --job-name=psc_mirror_max2k
 #SBATCH --clusters=fisica
-#SBATCH --partition=cpu.cecc
+#SBATCH --partition=mpi.cecc
 #SBATCH --qos=low
 #SBATCH --nodes=1
 #SBATCH --nodelist=nodo-00
 #SBATCH --ntasks=128
 #SBATCH --time=7-00:00:00
 #SBATCH --exclusive
-#SBATCH --mem=250G                    # ~50% de los 502 GB de nodo-00
 #SBATCH --output=psc_mirror_max2k_%j.out
 #SBATCH --error=psc_mirror_max2k_%j.err
 
