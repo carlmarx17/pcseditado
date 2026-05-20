@@ -86,12 +86,12 @@ using OutputParticles = PscConfig::OutputParticles;
 
 void setupParameters()
 {
-  // Malla 1536×1536, dominio 20 d_i, 1000 ppc
-  // dt ∝ dx → nmax = 1200000 × (1536/1024) = 1800000 para mismo tiempo físico
+  // Malla 2048×2048, dominio 20 d_i, 1000 ppc — resolución máxima (256 CPUs)
+  // dt ∝ dx → nmax = 1200000 × (2048/1024) = 2400000 para mismo tiempo físico
   // Tiempo físico total: ~657 Ω_i^{-1}
-  psc_params.nmax = 1800000;
+  psc_params.nmax = 2400000;
   psc_params.cfl = 0.95;
-  psc_params.write_checkpoint_every_step = 7500;  // cada ~2.7 Ω_i^{-1} (escala con dt)
+  psc_params.write_checkpoint_every_step = 10000;  // cada ~2.7 Ω_i^{-1} (escala con dt)
   psc_params.stats_every = 50;
 
   g.BB = 1.0;
@@ -124,18 +124,18 @@ Grid_t* setupGrid()
 {
   g.d_i = std::sqrt(g.mass_ratio / g.n);
 
-  // Dominio: 20 d_i × 1536 celdas — resolución mejorada
+  // Dominio: 20 d_i × 2048 celdas — resolución sub-Debye completa
   // d_i = sqrt(mass_ratio) = 10,  d_e = 1  (unidades de código)
-  // dx = 200/1536 ≈ 0.130,  λ_De = sqrt(Te_par) ≈ 0.127
-  // dx/λ_De ≈ 1.02 (casi sub-Debye; ↓ de 1.53 con malla 1024)
-  // dx/d_e  ≈ 0.130 → resuelve la escala electrónica ✓
-  // RAM esperada: ~150 GB base (2 especies × 1536² × 1000 ppc × 28 B)
-  // Cabe holgado en nodo-00 (502 GB RAM) + feynman-00 (123 GB)
+  // dx = 200/2048 ≈ 0.098,  λ_De = sqrt(Te_par) ≈ 0.127
+  // dx/λ_De ≈ 0.77  ← sub-Debye  ✓  (mejor que cualquier config anterior)
+  // dx/d_e  ≈ 0.098 → resuelve escala electrónica con margen ✓
+  // RAM esperada: ~265 GB base (2 especies × 2048² × 1000 ppc × 28 B)
+  // Requiere nodo-00 (502 GB) como nodo principal; feynman-00 (123 GB) + boltzmann (123 GB)
   double domain_size = 20.0 * g.d_i;
 
   Grid_t::Real3 LL = {1.0, domain_size, domain_size};
-  Int3         gdims = {1, 1536, 1536};
-  Int3         np    = {1, 16, 16}; // 256 patches → ~1.28 patches/CPU con 200 MPI ranks
+  Int3         gdims = {1, 2048, 2048};
+  Int3         np    = {1, 32, 32}; // 1024 patches → 4 patches/CPU con 256 MPI ranks (mejor LB)
 
   Grid_t::Domain domain{gdims, LL, -.5 * LL, np};
 
@@ -230,7 +230,7 @@ void run()
     read_checkpoint(read_checkpoint_filename, grid, mprts, mflds);
   }
 
-  psc_params.balance_interval = 750;  // escala con dt (antes 500 @ 1024)
+  psc_params.balance_interval = 1000;  // escala con dt (1000 @ 2048 ≈ 500 @ 1024)
   Balance balance{3};
 
   psc_params.sort_interval = 10;
@@ -259,22 +259,22 @@ void run()
 
   OutputFieldsItemParams outf_item_params{};
   OutputFieldsParams outf_params{};
-  outf_item_params.pfield.out_interval = 750;   // ~0.27 Ω_i^{-1} por snapshot (escala con dt)
-  outf_item_params.tfield.out_interval = 750;
-  outf_item_params.tfield.average_every = 150;
+  outf_item_params.pfield.out_interval = 1000;   // ~0.27 Ω_i^{-1} por snapshot (escala con dt)
+  outf_item_params.tfield.out_interval = 1000;
+  outf_item_params.tfield.average_every = 200;
   outf_params.fields = outf_item_params;
   outf_params.moments = outf_item_params;
   OutputFields<MfieldsState, Mparticles, Dim, Writer> outf{grid, outf_params};
 
   OutputParticlesParams outp_params{};
-  outp_params.every_step = 750;   // escala con dt
+  outp_params.every_step = 1000;   // escala con dt (2048 ≈ 2× el paso de 1024)
   outp_params.data_dir = ".";
-  outp_params.basename = "prt_mirror_maxwellian";
+  outp_params.basename = "prt_mirror_maxwellian_2k";
   // Partículas de la región central 8×8 d_i
-  // 8 d_i / (20 d_i) × 1536 = 614 celdas → centro 768 ± 307
-  // [461, 1075] — captura la región de inestabilidad mirror
-  outp_params.lo = {0, 461, 461};
-  outp_params.hi = {1, 1075, 1075};
+  // 8 d_i / (20 d_i) × 2048 = 819 celdas → centro 1024 ± 410
+  // [614, 1434] — captura la región de inestabilidad mirror
+  outp_params.lo = {0, 614, 614};
+  outp_params.hi = {1, 1434, 1434};
   OutputParticles outp{grid, outp_params};
 
   int oute_interval = -100;

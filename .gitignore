@@ -72,6 +72,7 @@ CodeforAnalisys/prt_plots/
 CodeforAnalisys/fancy_vdf_plots/
 CodeforAnalisys/phase_space_plots/
 CodeforAnalisys/validation_plots/
+reconnection_local_output/
 
 # ---- Python ----
 *.pyc
