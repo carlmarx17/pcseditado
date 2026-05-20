@@ -4,8 +4,7 @@
 # Resolución: 1536×1536 | Dominio: 20 d_i | 1000 ppc | mass_ratio: 200
 # Nodo: nodo-00 (128 CPUs, ~514 GB RAM)
 # Clúster: cecc | Partición: cpu.cecc
-# Filesystem compartido: /homes/observatorio/cmartinezsi (NFS desde perseus)
-# Tiempo máximo en cecc: 4 días
+# Filesystem: /homes/observatorio/cmartinezsi (NFS desde perseus)
 #============================================================
 #SBATCH --job-name=psc_mirror_mxw_cecc
 #SBATCH --clusters=cecc
@@ -15,8 +14,9 @@
 #SBATCH --ntasks=128
 #SBATCH --time=4-00:00:00
 #SBATCH --exclusive
-#SBATCH --output=psc_mirror_mxw_cecc_%j.out
-#SBATCH --error=psc_mirror_mxw_cecc_%j.err
+#SBATCH --chdir=/homes/observatorio/cmartinezsi/pcs_run
+#SBATCH --output=/homes/observatorio/cmartinezsi/pcs_run/psc_mirror_mxw_cecc_%j.out
+#SBATCH --error=/homes/observatorio/cmartinezsi/pcs_run/psc_mirror_mxw_cecc_%j.err
 
 # ------------------------------------------------------------------
 # Entorno
@@ -25,7 +25,7 @@ module purge
 module load MPI/openmpi/4.1.1
 module load lang/gcc/9.2
 
-# Rutas (nodo-00 ve /homes/observatorio/cmartinezsi vía NFS)
+# Rutas
 BASEDIR=/homes/observatorio/cmartinezsi/pcs_run
 WORKDIR=${BASEDIR}/mirror_maxwellian_1536
 EXECUTABLE=${BASEDIR}/psc_mirror_maxwellian
@@ -44,11 +44,8 @@ echo "Directorio  : ${WORKDIR}"
 echo "Inicio      : $(date)"
 echo "=========================================================="
 
-# Verificar que el ejecutable existe
 if [ ! -f "${EXECUTABLE}" ]; then
     echo "ERROR: Ejecutable no encontrado: ${EXECUTABLE}"
-    echo "Copia el ejecutable con:"
-    echo "  cp /scratchsan/observatorio/Cmartinezsi/pcseditado/build/src/psc_mirror_maxwellian ~/pcs_run/"
     exit 1
 fi
 
