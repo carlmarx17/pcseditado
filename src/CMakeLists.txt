@@ -22,7 +22,7 @@ add_psc_executable(psc_2d_shock)
 add_psc_executable(psc_radiation)
 add_psc_executable(psc_shock)
 add_psc_executable(psc_mirror_maxwellian)
-add_psc_executable(psc_mirror_maxwellian_2k)   # 2048×2048 sub-Debye, 256 CPUs
+add_psc_executable(psc_mirror_maxwellian_2k)   # 2048×2048 sub-Debye, 128 CPUs en nodo-00
 add_psc_executable(psc_firehose_maxwellian)
 add_psc_executable(psc_mirror_kappa)
 add_psc_executable(psc_firehose_kappa)

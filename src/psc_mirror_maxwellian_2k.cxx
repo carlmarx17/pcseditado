@@ -130,13 +130,14 @@ Grid_t* setupGrid()
   // dx = 282.8/2048 ≈ 0.138,  λ_De = sqrt(Te_par) ≈ 0.127
   // dx/λ_De ≈ 1.09  (prácticamente sub-Debye ✓)
   // dx/d_e  ≈ 0.138 → resuelve escala electrónica con margen ✓
-  // RAM esperada: ~265 GB base (2 especies × 2048² × 1000 ppc × 28 B)
-  // Requiere nodo-00 (514 GB) — Clúster cecc
+  // RAM: 2 × 2048² × 1000 ppc × 28 B ≈ 235 GB + ~15 GB overhead = ~250 GB
+  // nodo-00 (502 GB disponibles) — Clúster cecc
+  // 128 MPI ranks: 1024 parches / 128 = 8 parches/rank (balance perfecto)
   double domain_size = 20.0 * g.d_i;
 
   Grid_t::Real3 LL = {1.0, domain_size, domain_size};
   Int3         gdims = {1, 2048, 2048};
-  Int3         np    = {1, 32, 32}; // 1024 patches → 4 patches/CPU con 256 MPI ranks (mejor LB)
+  Int3         np    = {1, 32, 32}; // 1024 parches → 8 parches/CPU con 128 MPI ranks
 
   Grid_t::Domain domain{gdims, LL, -.5 * LL, np};
 
