@@ -3,7 +3,6 @@
 #SBATCH --cluster=cecc
 #SBATCH --partition=cpu.cecc
 #SBATCH --nodelist=nodo-00
-#SBATCH --qos=low
 #SBATCH --nodes=1
 #SBATCH --ntasks=128
 #SBATCH --time=3-00:00:00
