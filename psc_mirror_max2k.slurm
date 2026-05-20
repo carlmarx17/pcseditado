@@ -2,11 +2,12 @@
 #SBATCH --job-name=psc_mirror_max2k
 #SBATCH --clusters=fisica
 #SBATCH --partition=cpu.cecc
+#SBATCH --nodelist=nodo-00
 #SBATCH --qos=low
 #SBATCH --nodes=1
 #SBATCH --ntasks=128
-#SBATCH --mem=250G
 #SBATCH --time=7-00:00:00
+#SBATCH --exclusive
 #SBATCH --output=psc_mirror_max2k_%j.out
 #SBATCH --error=psc_mirror_max2k_%j.err
 
