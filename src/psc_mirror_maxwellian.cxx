@@ -96,7 +96,7 @@ void setupParameters()
 
   g.BB = 1.0;
   g.Zi = 1.;
-  g.mass_ratio = 100.;
+  g.mass_ratio = 200.;  // Aumentado de 100 → 200 para más separación de escalas ión/electrón
   g.lambda0 = 20.;
 
   // Mirror Instability Parameters
@@ -124,13 +124,14 @@ Grid_t* setupGrid()
 {
   g.d_i = std::sqrt(g.mass_ratio / g.n);
 
-  // Dominio: 20 d_i × 1536 celdas — resolución mejorada
-  // d_i = sqrt(mass_ratio) = 10,  d_e = 1  (unidades de código)
-  // dx = 200/1536 ≈ 0.130,  λ_De = sqrt(Te_par) ≈ 0.127
-  // dx/λ_De ≈ 1.02 (casi sub-Debye; ↓ de 1.53 con malla 1024)
-  // dx/d_e  ≈ 0.130 → resuelve la escala electrónica ✓
+  // Dominio: 20 d_i × 1536 celdas — resolución mejorada | mass_ratio=200
+  // d_i = sqrt(mass_ratio) = sqrt(200) ≈ 14.14,  d_e = 1  (unidades de código)
+  // domain_size = 20 * 14.14 ≈ 282.8
+  // dx = 282.8/1536 ≈ 0.184,  λ_De = sqrt(Te_par) ≈ 0.127
+  // dx/λ_De ≈ 1.45  (buena resolución, mejor que con malla 1024 @ mr=100)
+  // dx/d_e  ≈ 0.184 → resuelve la escala electrónica ✓
   // RAM esperada: ~150 GB base (2 especies × 1536² × 1000 ppc × 28 B)
-  // Cabe holgado en nodo-00 (502 GB RAM) + feynman-00 (123 GB)
+  // Cabe holgado en nodo-00 (514 GB RAM) — Clúster cecc
   double domain_size = 20.0 * g.d_i;
 
   Grid_t::Real3 LL = {1.0, domain_size, domain_size};

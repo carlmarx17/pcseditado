@@ -4,17 +4,17 @@
 # Resolución: 2048×2048 | Dominio: 20 d_i | 1000 ppc
 # Nodo: nodo-00 (128 CPUs, ~514 GB RAM)
 # Clúster: cecc | Partición: cpu.cecc
-# Tareas MPI: 128 | Patches: 1024 (32×32)
+# Tareas MPI: 128 | Patches: 1024 (32×32) | mass_ratio: 200
 # RAM estimada: ~265 GB (cabe holgado en los 514 GB de nodo-00)
+# Tiempo máximo en cecc: 4 días
 #============================================================
 #SBATCH --job-name=psc_mirror_mxw_2k
 #SBATCH --clusters=cecc
 #SBATCH --partition=cpu.cecc
-#SBATCH --qos=low
 #SBATCH --nodes=1
 #SBATCH --nodelist=nodo-00
 #SBATCH --ntasks=128
-#SBATCH --time=7-00:00:00
+#SBATCH --time=4-00:00:00
 #SBATCH --exclusive
 #SBATCH --output=psc_mirror_mxw_2k_%j.out
 #SBATCH --error=psc_mirror_mxw_2k_%j.err
