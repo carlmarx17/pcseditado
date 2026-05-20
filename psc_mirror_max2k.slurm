@@ -41,10 +41,7 @@ echo "RAM total:   $(free -h | awk '/Mem:/{print $2}')"
 echo "Límite job:  250 GB"
 echo "========================================"
 
-mpirun -np 128 \
-    --bind-to core \
-    --map-by core \
-    /scratchsan/observatorio/Cmartinezsi/pcseditado/build/src/psc_mirror_maxwellian_2k
+mpirun -np 128 /scratchsan/observatorio/Cmartinezsi/pcseditado/build/src/psc_mirror_maxwellian_2k
 
 EXIT_CODE=$?
 echo "Fin: $(date)  |  Exit: ${EXIT_CODE}"
