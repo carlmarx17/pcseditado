@@ -1,17 +1,16 @@
 #!/bin/bash -l
 # ============================================================
-#  PSC Mirror Maxwellian 2k — Multi-nodo híbrido
-#  Nodos: pauli (246 GB) + feynman-00 (126 GB)
-#  128 ranks MPI = 64 por nodo → ~125 GB por nodo
-#  1024 parches / 128 ranks = 8 parches/rank  ✓
+#  PSC Mirror Maxwellian 2k — Nodo único pauli
+#  Nodo: pauli (246 GB RAM, 64 CPUs)
+#  64 ranks MPI → ~120 GB estimados
+#  1024 parches / 64 ranks = 16 parches/rank  ✓
 # ============================================================
 #SBATCH --job-name=psc_mirror_max2k
 #SBATCH --clusters=cecc
 #SBATCH --partition=cpu.cecc
-#SBATCH --nodes=2
-#SBATCH --nodelist=pauli,feynman-00
-#SBATCH --ntasks=128
-#SBATCH --ntasks-per-node=64
+#SBATCH --nodes=1
+#SBATCH --nodelist=pauli
+#SBATCH --ntasks=64
 #SBATCH --time=4-00:00:00
 #SBATCH --chdir=/homes/observatorio/cmartinezsi/pcs_run
 #SBATCH --output=/homes/observatorio/cmartinezsi/pcs_run/psc_mirror_max2k_%j.out
@@ -31,10 +30,10 @@ fi
 echo "=========================================="
 echo "Inicio : $(date)"
 echo "Nodos  : $SLURM_JOB_NODELIST"
-echo "Ranks  : $SLURM_NTASKS  ($SLURM_NTASKS_PER_NODE por nodo)"
+echo "Ranks  : $SLURM_NTASKS"
 echo "=========================================="
 
-mpirun -np 128 $EXECUTABLE
+mpirun -np 64 $EXECUTABLE
 
 echo "=========================================="
 echo "Fin    : $(date)"
