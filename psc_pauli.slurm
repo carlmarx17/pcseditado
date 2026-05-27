@@ -1,0 +1,56 @@
+#!/bin/bash -l
+# ============================================================
+#  PSC Mirror Maxwellian Pauli — Nodo pauli (64 CPUs, 247 GB)
+#  Resolución: 1408×1408 | Dominio: 20 d_i | 2000 ppc | mass_ratio: 200
+#  64 parches {8,8} → 1 parche/rank en 64 MPI ranks
+#  RAM estimada: ~222 GB (~90% de 247 GB)
+# ============================================================
+#SBATCH --job-name=psc_mirror_pauli
+#SBATCH --clusters=cecc
+#SBATCH --partition=cpu.cecc
+#SBATCH --nodes=1
+#SBATCH --nodelist=pauli
+#SBATCH --ntasks=64
+#SBATCH --time=4-00:00:00
+#SBATCH --exclusive
+#SBATCH --chdir=/homes/observatorio/cmartinezsi/pcs_run
+#SBATCH --output=/homes/observatorio/cmartinezsi/pcs_run/psc_mirror_pauli_%j.out
+#SBATCH --error=/homes/observatorio/cmartinezsi/pcs_run/psc_mirror_pauli_%j.err
+
+module purge
+module load MPI/openmpi/4.1.1
+module load lang/gcc/9.2
+
+BASEDIR=/homes/observatorio/cmartinezsi/pcs_run
+WORKDIR=${BASEDIR}/mirror_maxwellian_pauli
+EXECUTABLE=${BASEDIR}/psc_mirror_maxwellian_pauli
+
+mkdir -p ${WORKDIR}
+cd ${WORKDIR}
+
+echo "=========================================================="
+echo "  PSC Mirror Maxwellian Pauli — 1408², 2000 ppc"
+echo "=========================================================="
+echo "Job ID      : ${SLURM_JOB_ID}"
+echo "Nodo        : ${SLURM_JOB_NODELIST}"
+echo "Tareas MPI  : ${SLURM_NTASKS}"
+echo "Ejecutable  : ${EXECUTABLE}"
+echo "Directorio  : ${WORKDIR}"
+echo "Inicio      : $(date)"
+echo "=========================================================="
+
+if [ ! -f "${EXECUTABLE}" ]; then
+    echo "ERROR: Ejecutable no encontrado: ${EXECUTABLE}"
+    exit 1
+fi
+
+mpirun -np 64 \
+       --bind-to core \
+       ${EXECUTABLE}
+
+EXIT_CODE=$?
+echo "=========================================================="
+echo "Fin         : $(date)"
+echo "mpirun exit : ${EXIT_CODE}"
+echo "=========================================================="
+exit ${EXIT_CODE}

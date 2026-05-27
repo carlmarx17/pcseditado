@@ -11,8 +11,8 @@ set -euo pipefail
 REMOTE_USER="cmartinezsi"
 REMOTE_HOST="perseus"                                      # login node
 REMOTE_DIR="/homes/observatorio/cmartinezsi/pcs_run"
-EXECUTABLE="./psc_mirror_maxwellian_2k"
-SLURM_SCRIPT="psc_mirror_max2k.slurm"
+EXECUTABLE="./psc_mirror_maxwellian_pauli"
+SLURM_SCRIPT="psc_pauli.slurm"
 
 # --- Colores ---
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
@@ -39,7 +39,7 @@ scp -v "$EXECUTABLE" "$SLURM_SCRIPT" \
 # --- Permisos en remoto ---
 info "Ajustando permisos del ejecutable..."
 ssh "${REMOTE_USER}@${REMOTE_HOST}" \
-    "chmod +x ${REMOTE_DIR}/psc_mirror_maxwellian_2k"
+    "chmod +x ${REMOTE_DIR}/psc_mirror_maxwellian_pauli"
 
 # --- Enviar job ---
 info "Enviando job SLURM desde pauli..."
@@ -62,5 +62,5 @@ if [ -n "$JOBID" ]; then
     echo ""
     info "Para seguir el output:"
     echo "  ssh ${REMOTE_USER}@${REMOTE_HOST}"
-    echo "  tail -f ${REMOTE_DIR}/psc_mirror_max2k_${JOBID}.out"
+    echo "  tail -f ${REMOTE_DIR}/psc_mirror_pauli_${JOBID}.out"
 fi
