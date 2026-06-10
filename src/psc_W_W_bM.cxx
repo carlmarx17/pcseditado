@@ -47,7 +47,7 @@ Grid_t* setupGrid() {
   g.d_i = std::sqrt(g.mass_ratio / g.n);
   double domain_size = 20.0 * g.d_i;
   Grid_t::Real3 LL = {1.0, domain_size, domain_size};
-  Int3 gdims = {1, 1408, 1408}; Int3 np = {1, 8, 8};
+  Int3 gdims = {1, 1408, 1408}; Int3 np = {1, 64, 16}; // 1024 MPI patches
   Grid_t::Domain domain{gdims, LL, -.5 * LL, np};
   psc::grid::BC bc{{BND_FLD_PERIODIC, BND_FLD_PERIODIC, BND_FLD_PERIODIC},
                    {BND_FLD_PERIODIC, BND_FLD_PERIODIC, BND_FLD_PERIODIC},

@@ -131,7 +131,7 @@ Grid_t* setupGrid()
 
   Grid_t::Real3 LL = {1.0, domain_size, domain_size};
   Int3         gdims = {1, 1024, 1024};
-  Int3         np    = {1, 8, 4}; // 32 patches
+  Int3         np    = {1, 64, 16}; // 1024 patches: 1 patch por MPI rank
 
   Grid_t::Domain domain{gdims, LL, -.5 * LL, np};
 
