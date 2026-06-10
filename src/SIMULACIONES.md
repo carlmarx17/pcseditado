@@ -1,247 +1,192 @@
-# Documentación de Simulaciones PSC
+# Documentación de Simulaciones PSC — Anisotropías
 
 ## Visión general
 
-Este directorio contiene cuatro simulaciones PIC (Particle-In-Cell) para estudiar
-inestabilidades cinéticas en plasmas magnetizados. Todas usan el integrador
-`PscConfig1vbecSingle` (1st-order Villasenor-Buneman Edge-Centered), que es
-**full PIC**: tanto iones como electrones son partículas cinéticas.
-
-| Archivo | Inestabilidad | Distribución |
-|---|---|---|
-| `psc_mirror_kappa.cxx` | Mirror | Kappa (κ=3) |
-| `psc_mirror_maxwellian.cxx` | Mirror | Maxwellian |
-| `psc_firehose_kappa.cxx` | Firehose | Kappa (κ=3) |
-| `psc_firehose_maxwellian.cxx` | Firehose | Maxwellian |
+Simulaciones PIC (Particle-In-Cell) de inestabilidades cinéticas **Mirror** y **Firehose**
+en plasmas magnetizados. Todas usan `PscConfig1vbecSingle` (Villasenor-Buneman Edge-Centered
+1er orden) en 2D (dim_yz), full PIC (iones + electrones cinéticos).
 
 ---
 
-## Parámetros físicos
+## Catálogo de códigos de anisotropía
 
-### Parámetros comunes a las 4 simulaciones
+| Archivo | Inestabilidad | Distribución | mr | Grilla | ppc | vA/c | βᵢ‖ | Tᵢ⊥/Tᵢ‖ | RAM |
+|---|---|---|---|---|---|---|---|---|---|
+| `psc_mirror_kappa` | Mirror | Kappa (κ=3) | 100 | 1024² | 1000 | 0.05 | 5.0 | 3.0 | ~67 GB |
+| `psc_mirror_maxwellian` | Mirror | Maxwellian | 200 | 1536² | 1000 | 0.05 | 5.0 | 3.0 | ~150 GB |
+| `psc_mirror_maxwellian_2k` | Mirror | Maxwellian | 200 | 2048² | 1000 | 0.05 | 5.0 | 3.0 | ~250 GB |
+| `psc_mirror_maxwellian_pauli` | Mirror | Maxwellian | 200 | 1408² | **2000** | 0.05 | 5.0 | 3.0 | ~222 GB |
+| `psc_firehose_kappa` | Firehose | Kappa (κ=3) | 100 | 1024² | 1000 | 0.05 | 10.0 | 0.1 | ~67 GB |
+| `psc_firehose_maxwellian` | Firehose | Maxwellian | 100 | 1024² | 1000 | 0.05 | 10.0 | 0.1 | ~67 GB |
 
-| Parámetro | Símbolo | Valor | Descripción |
-|---|---|---|---|
-| Razón de masas | `mᵢ/mₑ` | 200 | Masa artificial (real ≈ 1836) |
-| Velocidad de Alfvén | `vA/c` | 0.05 | Campo magnético de fondo |
-| Campo magnético | `B₀` | 0.05 | `B₀ = vA/c` en unidades PSC |
-| Densidad | `n` | 1.0 | Densidad de referencia |
-| Carga iónica | `Zᵢ` | 1 | Singly ionized |
-| Longitud de Coulomb | `λ₀` | 20 | Parámetro de colisiones |
-| ppc | `nicell` | 2000 | Partículas por celda por especie |
+> Todos con βₑ‖ = 1.0, Tₑ⊥/Tₑ‖ = 1.0 (electrones isotrópicos), λ₀ = 20, n = 1.
 
-### Parámetros de anisotropía
+---
 
-| Parámetro | Mirror | Firehose | Descripción |
-|---|---|---|---|
-| `βᵢ‖` | **5.0** | **10.0** | Beta iónico paralelo |
-| `Tᵢ⊥/Tᵢ‖` | **3.0** | **0.1** | Anisotropía iónica |
-| `βₑ‖` | 1.0 | 1.0 | Beta electrónico paralelo |
-| `Tₑ⊥/Tₑ‖` | 1.0 | 1.0 | Electrones isotrópicos |
+## Parámetros físicos comunes
 
-La **inestabilidad mirror** requiere `Tᵢ⊥ > Tᵢ‖` (exceso de energía perpendicular):
+| Parámetro | Símbolo | Valor |
+|---|---|---|
+| Razón de masas | mᵢ/mₑ | 100–200 |
+| Velocidad de Alfvén | vA/c | 0.05 |
+| Campo magnético | B₀ | 0.05 |
+| Densidad | n | 1.0 |
+| Carga iónica | Zᵢ | 1 |
+| Longitud de Coulomb | λ₀ | 20 |
+| CFL | — | 0.95 |
 
-```
-Condición mirror: βᵢ⊥ - βᵢ‖ > 1  →  βᵢ‖(Tᵢ⊥/Tᵢ‖ - 1) > 1
-                  5.0 × (3.0 - 1) = 10.0  ✓ inestable
-```
-
-La **inestabilidad firehose** requiere `Tᵢ‖ > Tᵢ⊥` (exceso de energía paralela):
+### Cálculo de λ_De
 
 ```
-Condición firehose: βᵢ‖ - βᵢ⊥ > 2  →  βᵢ‖(1 - Tᵢ⊥/Tᵢ‖) > 2
-                    10.0 × (1 - 0.1) = 9.0  ✓ inestable
+Te_par = β_e‖ × B0²/2 = 1.0 × 0.05²/2 = 0.00125
+λ_De   = √Te_par = √0.00125 ≈ 0.0354
+```
+
+Este valor es más realista para un plasma no relativista porque `vA/c = 0.05`
+mantiene la velocidad de Alfvén claramente por debajo de la velocidad de la luz.
+La consecuencia numérica es que `λ_De` queda más pequeña y por eso no se
+resuelve con la grilla actual. Ese compromiso es aceptable aquí porque el
+objetivo principal es la dinámica cinética de Mirror/Firehose a escala de
+`d_e` y `d_i`, no resolver oscilaciones electrostáticas Debye.
+
+### Condiciones de inestabilidad
+
+**Mirror** requiere Tᵢ⊥ > Tᵢ‖:
+```
+βᵢ⊥ - βᵢ‖ > 1  →  5.0×(3.0 - 1) = 10.0  ✓
+```
+
+**Firehose** requiere Tᵢ‖ > Tᵢ⊥:
+```
+βᵢ‖ - βᵢ⊥ > 2  →  10.0×(1 - 0.1) = 9.0  ✓
 ```
 
 ---
 
-## Parámetros de grilla y resolución
+## Resolución de grilla y Debye
 
-### Jerarquía de escalas de longitud
-
-En PSC, las unidades se definen como `c = 1`, `ωₚₑ = 1`, `mₑ = 1`, lo que implica:
-
-| Escala | Símbolo | Valor en unidades de código | Valor en d_e |
-|---|---|---|---|
-| Skin depth electrónica | `dₑ = c/ωₚₑ` | **1.0** (por definición) | 1.0 |
-| Skin depth iónica | `dᵢ = c/ωₚᵢ` | `√(mᵢ/mₑ) = √200` | **≈ 14.14** |
-| Longitud de Debye | `λ_De = vₜₑ/ωₚₑ` | `√(Tₑ‖) = √(βₑ B₀²/2)` | **≈ 0.035** |
-
-La jerarquía completa:
-```
-λ_De ≈ 0.035 d_e  ←  sub-resuelta (inevitable con masa artificial)
-d_e  = 1.000 d_e  ←  ✅ RESUELTA (Δx = 0.59 d_e)
-d_i  = 14.14 d_e  ←  ✅ bien resuelta (Δx = 0.042 d_i)
-```
-
-### Configuración de grilla (igual para los 4 perfiles)
-
-| Parámetro | Valor | Descripción |
-|---|---|---|
-| Dominio | 32 × 32 dᵢ | Extensión física en unidades iónicas |
-| Dominio en d_e | 452.5 × 452.5 d_e | Equivalente electrónico |
-| Grid | **768 × 768** | Número de celdas por dimensión |
-| **Δx** | **0.589 d_e = 0.042 dᵢ** | Resolución espacial |
-| Δx < dₑ | ✅ Sí | Resuelve la escala inercial electrónica |
-| Δx/λ_De | ≈ 16.7 | λ_De sub-resuelta (esperado) |
-| Parches MPI | `np = {1, 8, 4}` | 32 parches para 32 cores |
-| Celdas/parche | 96 × 192 | Balance de carga uniforme |
-| RAM estimada | **~75.5 GB** | 24.5 GB libres en servidor 100 GB |
-
-> **¿Por qué 768?** 768 = 32 × 24, divisible exactamente por 32 parches MPI.
-> Es el mayor grid que cabe en 100 GB con Δx < d_e y sin comprometer el OS.
-
-### Contexto y Comparación con la Literatura
-
-Esta configuración de grilla se ha diseñado teniendo en cuenta el estado del arte en simulaciones PIC de inestabilidades cinéticas:
-
-| Trabajo | Inestabilidad | Código | mᵢ/mₑ | Dominio | Δx | PPC | Distribución |
+| Código | mr | dᵢ | Dominio | dx | dx/dₑ | dx/λ_De | ¿Resuelve Debye? |
 |---|---|---|---|---|---|---|---|
-| Kunz et al. 2014 | Firehose/Mirror | Hybrid PIC | ∞ | 1152 dᵢ | 0.5 dᵢ | - | Maxwellian |
-| Riquelme et al. 2016 | Mirror | Full PIC | 64-128 | 20-50 dᵢ | 0.2 dₑ | 20-60 | Maxwellian |
-| **Nuestro estudio** | **Mirror/Firehose** | **Full PIC** | **200** | **32 dᵢ** | **0.59 dₑ** | **2000** | **Kappa (κ=3)** / Max |
+| `mirror_kappa` | 100 | 10.0 | 200 | 0.195 | 0.20 ✅ | **5.52** | No |
+| `mirror_maxwellian` | 200 | 14.14 | 282.8 | 0.184 | 0.184 ✅ | **5.21** | No |
+| `mirror_maxwellian_2k` | 200 | 14.14 | 282.8 | 0.138 | 0.14 ✅ | **3.90** | No |
+| `mirror_maxwellian_pauli` | 200 | 14.14 | 282.8 | 0.201 | 0.20 ✅ | **5.68** | No |
+| `firehose_kappa` | 100 | 10.0 | 200 | 0.195 | 0.20 ✅ | **5.52** | No |
+| `firehose_maxwellian` | 100 | 10.0 | 200 | 0.195 | 0.20 ✅ | **5.52** | No |
 
-**Puntos clave de la comparativa:**
-
-1. **Resolución electrónica (Δx):** Nuestro `Δx = 0.59 dₑ` es altamente competitivo en el contexto de simulaciones PIC completas (Full PIC). Mientras que simulaciones híbridas (como Kunz et al. 2014) no resuelven la escala electrónica en absoluto al tratar a los electrones como un fluido, estudios equivalentes como el de Riquelme et al. 2016 usan resoluciones del orden de `0.2 dₑ`. Nuestra configuración logra resolver la escala inercial electrónica manteniéndose en un presupuesto de memoria realista (75 GB).
-2. **Razón de masas (mᵢ/mₑ):** Usar `mᵢ/mₑ = 200` es superior a muchos estudios full PIC previos (que utilizan razones más bajas por costo computacional), capturando de manera más precisa la separación real entre las dinámicas iónica y electrónica.
-3. **Partículas por celda (PPC):** Nuestro valor de **2000 PPC** es excepcionalmente alto. La literatura típicamente emplea entre 16 y 400 PPC. Aunque esto aumenta el costo computacional, esta cantidad inusualmente alta de partículas es instrumental para suprimir significativamente el ruido numérico, compensando en cierta medida el hecho de que la longitud de Debye (`λ_De`) se encuentra sub-resuelta. Si se necesitara reducir costos, se podría explorar bajar este valor (ej. 200-500 PPC).
-4. **Distribución Kappa:** Este es el **diferenciador principal** del trabajo frente a la literatura existente, la cual asume casi en su totalidad distribuciones iniciales Gaussianas (Maxwellianas). Analizar inestabilidades Mirror y Firehose bajo perfiles Kappa representa un enfoque novedoso frente al estado del arte estándar.
-
----
-
-## Parámetros temporales
-
-| Parámetro | Valor | Descripción |
-|---|---|---|
-| `CFL` | 0.95 | Condición de Courant-Friedrichs-Lewy |
-| `dt` | ≈ 0.396 | `CFL × Δx / √2` (en unidades código) |
-| `nmax` | **600,000** | Pasos de integración totales |
-| `t_max` | **59.4 Ω_cᵢ⁻¹** | Tiempo físico máximo |
-| `Ωᵢ` | `ZᵢB₀/mᵢ = 0.05/200` | Frecuencia ciclotrónica iónica |
-| Checkpoints | cada 5,000 pasos | Para reanudación de simulaciones |
-
-> **¿Por qué nmax = 600,000?** El timestep es ~6× más pequeño que la configuración
-> original (128², dt ≈ 2.375). Para alcanzar el mismo tiempo físico (59.4 Ω_ci⁻¹)
-> se necesitan 6× más pasos: 100,000 × 6 ≈ 600,000.
+> Nota: con `vA/c = 0.05`, la longitud de Debye queda más sub-resuelta
+> (`dx/λ_De ~ 4-6`). Por eso estas corridas deben interpretarse como
+> simulaciones orientadas a escalas inerciales y a crecimiento Mirror/Firehose,
+> no como estudios de física Debye fina. El ruido numérico se reduce con alto
+> ppc (1000-2000), chequeos de Gauss/Marder y diagnósticos de energía.
 
 ---
 
-## Salida de datos
+## Capacidad actual del cluster
 
-### Campos y momentos (`outf`)
+Esta lectura viene de `squeue`, `sinfo` y `scontrol show nodes` tomada el
+27 de mayo de 2026. La dejo en la documentación porque para mi tesis no basta
+con tener una simulación interesante: también necesito que el caso pueda
+terminar sin que SLURM lo mate por memoria o por pedir más núcleos de los
+necesarios.
 
-| Parámetro | Valor |
-|---|---|
-| `pfield.out_interval` | 500 pasos |
-| `tfield.out_interval` | 500 pasos |
-| `tfield.average_every` | 100 pasos |
-| Formato | HDF5 (WriterDefault) |
+### Nodos IDLE útiles para estas simulaciones
 
-Con `nmax = 600,000` y salida cada 500 pasos → **1,200 snapshots** de campos.
-
-### Partículas (`outp`)
-
-Las partículas se guardan solo de la región central `8 × 8 dᵢ`:
-
-| Grid | Región central | Celdas guardadas | Fracción |
+| Nodo | CPUs | RAM | Ideal para |
 |---|---|---|---|
-| 768² | [288, 480] × [288, 480] | 192 × 192 | 6.25% |
+| **pauli** | 64 | 247 GB | 1408² (222 GB), 1536² (150 GB), 1024² (67 GB) |
+| **planck** | 64 | 248 GB | Ídem pauli |
+| **feynman-00** | 72 | 126 GB | 1024² (67 GB) |
+| **maxwell** | 64 | 64 GB | Solo pruebas controladas; 1024² queda demasiado justo |
+| **hercules7** | 32 | 62 GB | No recomendado para producción 1024² |
+| **egeo-016** | 64 | 63 GB | No recomendado para producción 1024² |
+| **hercules3** | 16 | 52 GB | Solo versiones pequeñas o debug |
 
-Esto reduce el storage de partículas de ~TB a manejable (~62 GB total).
+### Nodos MIX
 
-### Energías (`oute`)
+| Nodo | Estado observado | Ideal para |
+|---|---|---|
+| **nodo-00** | mixed, 128 CPUs y 514 GB totales, con muchos jobs de otro usuario | 1536² o 2048² si SLURM da recursos |
+| **nodo-01** | mixed, 256 CPUs y 514 GB totales, algunos jobs activos y GPU MI210 | 1536² o 2048² si SLURM da recursos |
 
-Diagnóstico de energías cada 100 pasos (ligero, siempre activo).
+### Nodos que no debo usar para producción ahora
 
----
-
-## Distribuciones de velocidad
-
-### Maxwellian
-
-Distribución gaussiana estándar. Función de distribución:
-```
-f(v) ∝ exp(-v²/2T)
-```
-
-### Kappa (κ = 3)
-
-Distribución con colas en ley de potencia, típica de plasmas espaciales:
-```
-f(v) ∝ (1 + v²/(κ·Tₑff))^(-(κ+1))
-```
-con κ = 3 (colas supra-térmicas pronunciadas, característica del viento solar).
-
-Las temperaturas efectivas se ajustan para que `⟨v²⟩` sea el mismo que en la Maxwellian:
-```
-Tₑff = T × (κ - 3/2) / κ   para κ > 3/2
-```
-
----
-
-## Colisiones Coulomb
-
-El operador de colisiones se activa con `collision_interval = -10`
-(negativo = fracción de pasos, no periódico fijo).
-
-```cpp
-collision_nu = 3.76 × Tₑ‖² / (Zᵢ × λ₀)
-```
-
----
-
-## Corrección de Marder
-
-Para mantener la condición `∇·E = ρ/ε₀` numéricamente:
-
-| Parámetro | Valor |
+| Nodo | Motivo |
 |---|---|
-| `marder_diffusion` | 0.9 |
-| `marder_loop` | 3 |
-| `marder_interval` | 100 pasos |
-| `gauss.check_interval` | 100 pasos |
+| **boltzmann**, **hercules6**, **egeo-020..024**, **logcecc**, **hubble** | `down*` / no responden |
+| **hercules1** | `inval` / mantenimiento |
+| **hercules2**, **hercules4**, **nas2** | `drain` |
+| **hercules5** | `allocated`, casi sin memoria libre en la lectura |
+
+> Nota importante: aunque el nodo se llame **maxwell**, no es el mejor para las
+> simulaciones Maxwellian de producción. Tiene ~64 GB y los casos 1024² están
+> estimados en ~67 GB antes del overhead de PSC, sort, buffers y salida. Para no
+> arriesgar OOM, lo dejo como nodo de prueba pequeña, no como nodo de tesis.
 
 ---
 
-## Diferencias entre los 4 archivos
+## Recomendación para el primer objetivo de tesis
 
-| Archivo | `beta_i_par` | `Ti_perp/Ti_par` | Distribución | Inestabilidad activa |
-|---|---|---|---|---|
-| `psc_mirror_kappa.cxx` | 5.0 | 3.0 | Kappa (κ=3) | Mirror |
-| `psc_mirror_maxwellian.cxx` | 5.0 | 3.0 | Maxwellian | Mirror |
-| `psc_firehose_kappa.cxx` | 10.0 | 0.1 | Kappa (κ=3) | Firehose |
-| `psc_firehose_maxwellian.cxx` | 10.0 | 0.1 | Maxwellian | Firehose |
+Mi primer objetivo debe priorizar una simulación **Maxwellian** porque funciona
+como caso base: si luego comparo contra Kappa, necesito primero una referencia
+Maxwellian bien documentada, estable y reproducible. Con la capacidad actual,
+el mejor equilibrio entre ciencia, tiempo y seguridad de memoria es:
 
-Las 4 simulaciones tienen **exactamente la misma grilla, dominio, nmax y condiciones
-de contorno** — solo difieren en la anisotropía inicial y la forma de la distribución.
-Esto permite comparar directamente el efecto de la distribución (Kappa vs Maxwellian)
-y el tipo de inestabilidad (Mirror vs Firehose).
+### Ganador: `psc_firehose_maxwellian` en `feynman-00`
 
----
+| Aspecto | Evaluación |
+|---|---|
+| **Por qué este código** | Es Maxwellian, entonces sirve como línea base directa para la tesis |
+| **RAM** | ~67 GB; en `feynman-00` puedo pedir 110-120 GB y dejar margen |
+| **CPUs** | 32 parches; correr con 32 MPI ranks es suficiente y evita pedir 64 sin necesidad |
+| **Costo** | 1024², 1000 ppc, 1.2M pasos; es el Maxwellian más razonable para iniciar |
+| **Física** | Firehose crece más rápido que Mirror, así que permite validar antes la evolución |
+| **Riesgo** | Mucho menor que `mirror_maxwellian`, `mirror_maxwellian_pauli` o `mirror_maxwellian_2k` |
 
-## Compilación y ejecución
+### Recomendación ordenada (mejor a peor):
+
+1. **`psc_firehose_maxwellian`** → mejor primer caso Maxwellian. Usar `feynman-00`, 32 ranks, 110-120 GB. Es el más seguro para no morir por RAM.
+2. **`psc_mirror_maxwellian`** → segundo objetivo Maxwellian. Usar `pauli` o `planck`, 64 ranks, 180-220 GB. Es más pesado y más lento, pero más cercano al caso Mirror principal.
+3. **`psc_mirror_maxwellian_pauli`** → solo si `pauli` o `planck` están completamente libres. Pide ~222 GB; dejar margen con `--mem=235G` o más.
+4. **`psc_mirror_maxwellian_2k`** → no lo usaría primero. Necesita nodos grandes (`nodo-00`/`nodo-01`) y puede tardar demasiado para una primera validación.
+5. **Kappa (`psc_firehose_kappa`, `psc_mirror_kappa`)** → importante como comparación posterior, pero no debe reemplazar la línea base Maxwellian del primer objetivo.
+
+### Script recomendado para empezar ahora
 
 ```bash
-# Desde el directorio build:
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make psc_mirror_kappa psc_mirror_maxwellian psc_firehose_kappa psc_firehose_maxwellian -j32
+#SBATCH --partition=cpu.cecc
+#SBATCH --nodes=1
+#SBATCH --nodelist=feynman-00
+#SBATCH --ntasks=32
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=115G
+#SBATCH --time=7-00:00:00
+#SBATCH --job-name=firehose_max
 
-# Ejecución con 32 MPI ranks:
-mpirun -n 32 ./psc_mirror_kappa
-mpirun -n 32 ./psc_mirror_maxwellian
-mpirun -n 32 ./psc_firehose_kappa
-mpirun -n 32 ./psc_firehose_maxwellian
+mpirun -np 32 --bind-to core ./psc_firehose_maxwellian
 ```
 
-> **Nota de memoria**: cada simulación requiere ~75 GB de RAM. No correr más de una
-> simultáneamente en el servidor de 100 GB.
+### Alternativa si quiero Mirror Maxwellian como primer resultado
 
----
+```bash
+#SBATCH --partition=cpu.cecc
+#SBATCH --nodes=1
+#SBATCH --nodelist=pauli
+#SBATCH --ntasks=64
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=220G
+#SBATCH --time=14-00:00:00
+#SBATCH --job-name=mirror_max
 
-## Referencias
+mpirun -np 64 --bind-to core ./psc_mirror_maxwellian
+```
 
-- Hellinger & Trávníček 2008 (JGR 113): Full PIC mirror, mᵢ/mₑ=64, Δ≈4 dₑ
-- Riquelme et al. 2015 (ApJ 800): Full PIC, mᵢ/mₑ=100, Δ=1 dₑ
-- Kunz et al. 2014 (ApJL 814): Hybrid PIC mirror, Δ=0.5 dᵢ
-- Birdsall & Langdon 1991: *Plasma Physics via Computer Simulation* (PIC fundamentos)
+> Regla práctica: para no matar el job por memoria, pedir siempre más memoria
+> que la estimación. Para ~67 GB pido 110-120 GB; para ~150 GB pido 200-220 GB;
+> para ~222 GB pido 235-240 GB. No usar `--exclusive` si solo necesito 32 ranks
+> y el scheduler permite compartir nodo, porque puede aumentar la espera.
+
+> Recomendación concreta: ejecutar primero `psc_firehose_maxwellian` en
+> `feynman-00` con 32 ranks y 115 GB. Después, si ese caso valida bien energía,
+> campo y crecimiento de la inestabilidad, correr `psc_mirror_maxwellian` en
+> `pauli` o `planck` con 64 ranks y 220 GB.

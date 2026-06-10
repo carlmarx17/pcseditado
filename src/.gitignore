@@ -8,3 +8,26 @@ psc_shear
 psc_flatfoil_yz
 psc_harris_xz
 
+# --- Kappa simulation codes (tracked separately, not part of bM scan) ---
+# Mirror Kappa
+psc_M_S_K5.cxx
+psc_M_S_K3.cxx
+psc_M_M_K5.cxx
+psc_M_M_K3.cxx
+psc_M_W_K5.cxx
+psc_M_W_K3.cxx
+# Firehose Kappa
+psc_F_S_K5.cxx
+psc_F_S_K3.cxx
+psc_F_M_K5.cxx
+psc_F_M_K3.cxx
+psc_F_W_K5.cxx
+psc_F_W_K3.cxx
+# Whistler Kappa
+psc_W_S_K5.cxx
+psc_W_S_K3.cxx
+psc_W_M_K5.cxx
+psc_W_M_K3.cxx
+psc_W_W_K5.cxx
+psc_W_W_K3.cxx
+
