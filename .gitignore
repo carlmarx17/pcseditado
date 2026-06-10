@@ -74,6 +74,21 @@ CodeforAnalisys/phase_space_plots/
 CodeforAnalisys/validation_plots/
 reconnection_local_output/
 
+# ---- Local-only simulations and analysis ----
+# Reduced workstation variants, their documentation, run data, and diagnostics
+# are intentionally kept outside the shared repository.
+/corridas_locales/
+/runs_local/
+/CodeforAnalisysLocal/
+/src/*_local.cxx
+/src/*local*.hxx
+/src/*_local.sh
+/src/*LOCAL*.md
+/src/*local*.md
+/src/psc_mirror_maxwellian_2k.cxx
+/src/psc_mirror_maxwellian_pauli.cxx
+/src/psc_reconnection_mini.cxx
+
 # ---- Python ----
 *.pyc
 *.pyo

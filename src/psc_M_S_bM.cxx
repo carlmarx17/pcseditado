@@ -1,3 +1,12 @@
+// ======================================================================
+// psc_M_S_bM — Mirror Strong Bi-Maxwellian
+//
+// Label:  M-S-bM
+// Inst:   Mirror  |  Regime: Strong  |  Dist: Bi-Maxwellian
+// βi∥=5.0  Ai=Ti⊥/Ti∥=3.0  βe∥=1.0  Ae=Te⊥/Te∥=1.0
+// mass_ratio=200, 2000 ppc, 1408×1408 (dx ≈ 0.2 d_e)
+// ======================================================================
+
 #include <psc.hxx>
 #include <setup_fields.hxx>
 #include <setup_particles.hxx>
@@ -8,18 +17,12 @@
 
 #include "../libpsc/psc_heating/psc_heating_impl.hxx"
 
-// ======================================================================
-// Particle kinds
-
 enum
 {
   MY_ELECTRON,
   MY_ION,
   N_MY_KINDS,
 };
-
-// ======================================================================
-// PscFlatfoilParams
 
 struct PscFlatfoilParams
 {
@@ -35,7 +38,6 @@ struct PscFlatfoilParams
   double Te_perp_over_Te_par;
   double n;
 
-  // calculated from the above
   double B0;
   double Te_par;
   double Te_perp;
@@ -46,9 +48,6 @@ struct PscFlatfoilParams
 
   double d_i;
 };
-
-// ======================================================================
-// Global parameters
 
 namespace
 {
@@ -61,16 +60,11 @@ PscParams psc_params;
 
 } // namespace
 
-// ======================================================================
-// PSC configuration
-
 using Dim = dim_yz;
 
 using PscConfig = PscConfig1vbecSingle<Dim>;
 
-using Writer = WriterDefault; // can choose WriterMrc, WriterAdios2
-
-// ======================================================================
+using Writer = WriterDefault;
 
 using MfieldsState = PscConfig::MfieldsState;
 using Mparticles = PscConfig::Mparticles;
@@ -81,26 +75,25 @@ using Marder = PscConfig::Marder;
 using OutputParticles = PscConfig::OutputParticles;
 
 // ======================================================================
-
 // setupParameters
 
 void setupParameters()
 {
-  // Malla 2048×2048, dominio 20 d_i, 1000 ppc — resolución máxima (256 CPUs)
-  // dt ∝ dx → nmax = 1200000 × (2048/1024) = 2400000 para mismo tiempo físico
-  // Tiempo físico total: ~657 Ω_i^{-1}
-  psc_params.nmax = 2400000;
+  // M-S-bM: Mirror Strong Bi-Maxwellian
+  // 1408×1408, 2000 ppc, mass_ratio=200
+  // RAM ≈ 2 × 1408² × 2000 × 28 B ≈ 222 GB
+  psc_params.nmax = 1650000;
   psc_params.cfl = 0.95;
-  psc_params.write_checkpoint_every_step = 0;  // Desactivado (0)
+  psc_params.write_checkpoint_every_step = 0;
   psc_params.stats_every = 50;
 
   g.BB = 1.0;
   g.Zi = 1.;
-  g.mass_ratio = 200.;  // Aumentado de 100 → 200 para más separación de escalas ión/electrón
+  g.mass_ratio = 200.;
   g.lambda0 = 20.;
 
-  // Mirror Instability Parameters
-  g.vA_over_c = 0.18;
+  // Mirror Strong: βi∥=5.0, Ai=3.0
+  g.vA_over_c = 0.05;
   g.beta_e_par = 1.0;
   g.beta_i_par = 5.0;
   g.Ti_perp_over_Ti_par = 3.0;
@@ -124,20 +117,12 @@ Grid_t* setupGrid()
 {
   g.d_i = std::sqrt(g.mass_ratio / g.n);
 
-  // Dominio: 20 d_i × 2048 celdas — resolución sub-Debye | mass_ratio=200
-  // d_i = sqrt(mass_ratio) = sqrt(200) ≈ 14.14,  d_e = 1  (unidades de código)
-  // domain_size = 20 * 14.14 ≈ 282.8
-  // dx = 282.8/2048 ≈ 0.138,  λ_De = sqrt(Te_par) ≈ 0.127
-  // dx/λ_De ≈ 1.09  (prácticamente sub-Debye ✓)
-  // dx/d_e  ≈ 0.138 → resuelve escala electrónica con margen ✓
-  // RAM: 2 × 2048² × 1000 ppc × 28 B ≈ 235 GB + ~15 GB overhead = ~250 GB
-  // nodo-00 (502 GB disponibles) — Clúster cecc
-  // 128 MPI ranks: 1024 parches / 128 = 8 parches/rank (balance perfecto)
+  // dx ≈ 0.201, dx/d_e ≈ 0.20, dx/λ_De ≈ 5.68
   double domain_size = 20.0 * g.d_i;
 
   Grid_t::Real3 LL = {1.0, domain_size, domain_size};
-  Int3         gdims = {1, 2048, 2048};
-  Int3         np    = {1, 32, 32}; // 1024 parches → 8 parches/CPU con 128 MPI ranks
+  Int3         gdims = {1, 1408, 1408};
+  Int3         np    = {1, 8, 8};
 
   Grid_t::Domain domain{gdims, LL, -.5 * LL, np};
 
@@ -152,10 +137,10 @@ Grid_t* setupGrid()
 
   mpi_printf(MPI_COMM_WORLD, "d_e = %g, d_i = %g\n", 1., g.d_i);
   mpi_printf(MPI_COMM_WORLD, "lambda_De (background) = %g\n",
-             sqrt(g.Te_perp));
+             sqrt(g.Te_par));
 
   auto norm_params = Grid_t::NormalizationParams::dimensionless();
-  norm_params.nicell = 1000; // ppc
+  norm_params.nicell = 2000;
 
   double dt = psc_params.cfl * courant_length(domain);
   Grid_t::Normalization norm{norm_params};
@@ -180,7 +165,6 @@ Grid_t* setupGrid()
 void initializeParticles(SetupParticles<Mparticles>& setup_particles,
                          Balance& balance, Grid_t*& grid_ptr, Mparticles& mprts)
 {
-  // Using npt directly means setup_particles creates a Maxwellian
   partitionAndSetupParticles(setup_particles, balance, grid_ptr, mprts,
                              [&](int kind, Double3 crd, psc_particle_npt& npt) {
                                switch (kind) {
@@ -219,7 +203,7 @@ void initializeFields(MfieldsState& mflds)
 
 void run()
 {
-  mpi_printf(MPI_COMM_WORLD, "*** Setting up Maxwellian Mirror...\n");
+  mpi_printf(MPI_COMM_WORLD, "*** Setting up M-S-bM (Mirror Strong Bi-Maxwellian) ...\n");
 
   setupParameters();
 
@@ -232,7 +216,7 @@ void run()
     read_checkpoint(read_checkpoint_filename, grid, mprts, mflds);
   }
 
-  psc_params.balance_interval = 1000;  // escala con dt (1000 @ 2048 ≈ 500 @ 1024)
+  psc_params.balance_interval = 700;
   Balance balance{3};
 
   psc_params.sort_interval = 10;
@@ -261,22 +245,19 @@ void run()
 
   OutputFieldsItemParams outf_item_params{};
   OutputFieldsParams outf_params{};
-  outf_item_params.pfield.out_interval = 1000;   // ~0.27 Ω_i^{-1} por snapshot (escala con dt)
-  outf_item_params.tfield.out_interval = 1000;
-  outf_item_params.tfield.average_every = 200;
+  outf_item_params.pfield.out_interval = 690;
+  outf_item_params.tfield.out_interval = 690;
+  outf_item_params.tfield.average_every = 138;
   outf_params.fields = outf_item_params;
   outf_params.moments = outf_item_params;
   OutputFields<MfieldsState, Mparticles, Dim, Writer> outf{grid, outf_params};
 
   OutputParticlesParams outp_params{};
-  outp_params.every_step = 1000;   // escala con dt (2048 ≈ 2× el paso de 1024)
+  outp_params.every_step = 400;
   outp_params.data_dir = ".";
-  outp_params.basename = "prt_mirror_maxwellian_2k";
-  // Partículas de la región central 8×8 d_i
-  // 8 d_i / (20 d_i) × 2048 = 819 celdas → centro 1024 ± 410
-  // [614, 1434] — captura la región de inestabilidad mirror
-  outp_params.lo = {0, 614, 614};
-  outp_params.hi = {1, 1434, 1434};
+  outp_params.basename = "prt_M_S_bM";
+  outp_params.lo = {0, int(0.3 * 1408), int(0.3 * 1408)};
+  outp_params.hi = {1, int(0.7 * 1408), int(0.7 * 1408)};
   OutputParticles outp{grid, outp_params};
 
   int oute_interval = -100;

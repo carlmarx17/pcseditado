@@ -100,7 +100,7 @@ void setupParameters()
   g.lambda0 = 20.;
 
   // Mirror Instability Parameters
-  g.vA_over_c = 0.18;
+  g.vA_over_c = 0.05;
   g.beta_e_par = 1.0;
   g.beta_i_par = 5.0;
   g.Ti_perp_over_Ti_par = 3.0;
@@ -127,8 +127,8 @@ Grid_t* setupGrid()
   // Dominio: 20 d_i × 1536 celdas — resolución mejorada | mass_ratio=200
   // d_i = sqrt(mass_ratio) = sqrt(200) ≈ 14.14,  d_e = 1  (unidades de código)
   // domain_size = 20 * 14.14 ≈ 282.8
-  // dx = 282.8/1536 ≈ 0.184,  λ_De = sqrt(Te_par) ≈ 0.127
-  // dx/λ_De ≈ 1.45  (buena resolución, mejor que con malla 1024 @ mr=100)
+  // dx = 282.8/1536 ≈ 0.184,  λ_De = sqrt(Te_par) ≈ 0.035
+  // dx/λ_De ≈ 5.21  (Debye queda sub-resuelta; se controla con alto ppc)
   // dx/d_e  ≈ 0.184 → resuelve la escala electrónica ✓
   // RAM esperada: ~150 GB base (2 especies × 1536² × 1000 ppc × 28 B)
   // Cabe holgado en nodo-00 (514 GB RAM) — Clúster cecc

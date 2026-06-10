@@ -87,7 +87,12 @@ using OutputParticles = PscConfig::OutputParticles;
 
 void setupParameters()
 {
-  psc_params.nmax = 1200000;  // dt ajustado para nueva malla y B0=0.1
+  // Primer caso Maxwellian recomendado para la tesis:
+  // 1024x1024 y 1000 ppc mantienen una base fisica comparable con Kappa,
+  // pero el consumo de RAM sigue siendo manejable en feynman-00 si se piden
+  // 110-120 GB. Firehose crece mas rapido que Mirror, por eso sirve para
+  // validar energia, campos y diagnosticos antes de lanzar casos mayores.
+  psc_params.nmax = 1200000;
   psc_params.cfl = 0.95;
   psc_params.write_checkpoint_every_step = 5000;
   psc_params.stats_every = 50;
@@ -98,7 +103,7 @@ void setupParameters()
   g.lambda0 = 20.;
 
   // Firehose Instability Parameters
-  g.vA_over_c = 0.18;
+  g.vA_over_c = 0.05;
   g.beta_e_par = 1.0;
   g.beta_i_par = 10.0;
   g.Ti_perp_over_Ti_par = 0.1;
@@ -123,7 +128,8 @@ Grid_t* setupGrid()
   g.d_i = std::sqrt(g.mass_ratio / g.n);
 
   // Dominio: 20 d_i × 1024 celdas
-  // Resuelve d_e (skin depth electrónica) y mantiene λ_De seguro (Δx/λ_De ≈ 1.53)
+  // Resuelve d_e; Debye queda sub-resuelta con vA/c=0.05
+  // (dx/lambda_De ≈ 5.52), por eso se usa alto ppc.
   // RAM esperada: ~67 GB base. Evita OOM Killer durante el paso de Sorting.
   // d_i = sqrt(mi/me) * d_e = sqrt(100) d_e = 10 d_e
   double domain_size = 20.0 * g.d_i;

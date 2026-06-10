@@ -1,3 +1,12 @@
+// ======================================================================
+// psc_M_M_bM — Mirror Moderate Bi-Maxwellian
+//
+// Label:  M-M-bM
+// Inst:   Mirror  |  Regime: Moderate  |  Dist: Bi-Maxwellian
+// βi∥=5.0  Ai=Ti⊥/Ti∥=2.0  βe∥=1.0  Ae=Te⊥/Te∥=1.0
+// mass_ratio=200, 2000 ppc, 1408×1408 (dx ≈ 0.2 d_e)
+// ======================================================================
+
 #include <psc.hxx>
 #include <setup_fields.hxx>
 #include <setup_particles.hxx>
@@ -65,12 +74,14 @@ using Checks = PscConfig::Checks;
 using Marder = PscConfig::Marder;
 using OutputParticles = PscConfig::OutputParticles;
 
+// ======================================================================
+// setupParameters
+
 void setupParameters()
 {
-  // Malla 1408×1408, dominio 20 d_i, 2000 ppc — máx resolución con 2000 ppc en pauli (64 CPUs)
-  // RAM estimada: 2 × 1408² × 2000 ppc × 28 B ≈ 207 GB + ~15 GB overhead ≈ 222 GB
-  // dt ∝ dx → nmax = 2400000 × (1408/2048) ≈ 1650000 para mismo tiempo físico
-  // Tiempo físico total: ~657 Ω_i^{-1}
+  // M-M-bM: Mirror Moderate Bi-Maxwellian
+  // 1408×1408, 2000 ppc, mass_ratio=200
+  // RAM ≈ 222 GB
   psc_params.nmax = 1650000;
   psc_params.cfl = 0.95;
   psc_params.write_checkpoint_every_step = 0;
@@ -81,10 +92,11 @@ void setupParameters()
   g.mass_ratio = 200.;
   g.lambda0 = 20.;
 
-  g.vA_over_c = 0.18;
+  // Mirror Moderate: βi∥=5.0, Ai=2.0
+  g.vA_over_c = 0.05;
   g.beta_e_par = 1.0;
   g.beta_i_par = 5.0;
-  g.Ti_perp_over_Ti_par = 3.0;
+  g.Ti_perp_over_Ti_par = 2.0;
   g.Te_perp_over_Te_par = 1.0;
   g.n = 1.0;
 
@@ -98,19 +110,18 @@ void setupParameters()
   g.Ti_perp = g.Ti_perp_over_Ti_par * g.Ti_par;
 }
 
+// ======================================================================
+// setupGrid
+
 Grid_t* setupGrid()
 {
   g.d_i = std::sqrt(g.mass_ratio / g.n);
 
-  // 1408×1408, 2000 ppc, mass_ratio=200
-  // Dominio: 20 d_i → 282.8, dx ≈ 0.201, λ_De ≈ 0.127, dx/λ_De ≈ 1.58
-  // 64 parches {8,8} → 1 parche/rank en 64 ranks, balance perfecto
-  // RAM total: ~222 GB → cabe en pauli (247 GB) con margen de ~25 GB
   double domain_size = 20.0 * g.d_i;
 
   Grid_t::Real3 LL = {1.0, domain_size, domain_size};
   Int3         gdims = {1, 1408, 1408};
-  Int3         np    = {1, 8, 8}; // 64 parches → 1:1 con 64 MPI ranks en pauli
+  Int3         np    = {1, 8, 8};
 
   Grid_t::Domain domain{gdims, LL, -.5 * LL, np};
 
@@ -125,10 +136,10 @@ Grid_t* setupGrid()
 
   mpi_printf(MPI_COMM_WORLD, "d_e = %g, d_i = %g\n", 1., g.d_i);
   mpi_printf(MPI_COMM_WORLD, "lambda_De (background) = %g\n",
-             sqrt(g.Te_perp));
+             sqrt(g.Te_par));
 
   auto norm_params = Grid_t::NormalizationParams::dimensionless();
-  norm_params.nicell = 2000; // ppc — 2× la densidad estándar
+  norm_params.nicell = 2000;
 
   double dt = psc_params.cfl * courant_length(domain);
   Grid_t::Normalization norm{norm_params};
@@ -146,6 +157,9 @@ Grid_t* setupGrid()
 
   return new Grid_t{domain, bc, kinds, norm, dt, -1, ibn};
 }
+
+// ======================================================================
+// initializeParticles
 
 void initializeParticles(SetupParticles<Mparticles>& setup_particles,
                          Balance& balance, Grid_t*& grid_ptr, Mparticles& mprts)
@@ -170,6 +184,9 @@ void initializeParticles(SetupParticles<Mparticles>& setup_particles,
                              });
 }
 
+// ======================================================================
+// initializeFields
+
 void initializeFields(MfieldsState& mflds)
 {
   setupFields(mflds, [&](int m, double crd[3]) {
@@ -180,9 +197,12 @@ void initializeFields(MfieldsState& mflds)
   });
 }
 
+// ======================================================================
+// run
+
 void run()
 {
-  mpi_printf(MPI_COMM_WORLD, "*** Setting up Maxwellian Mirror (pauli) ...\n");
+  mpi_printf(MPI_COMM_WORLD, "*** Setting up M-M-bM (Mirror Moderate Bi-Maxwellian) ...\n");
 
   setupParameters();
 
@@ -232,9 +252,9 @@ void run()
   OutputFields<MfieldsState, Mparticles, Dim, Writer> outf{grid, outf_params};
 
   OutputParticlesParams outp_params{};
-  outp_params.every_step = 690;
+  outp_params.every_step = 400;
   outp_params.data_dir = ".";
-  outp_params.basename = "prt_mirror_maxwellian_pauli";
+  outp_params.basename = "prt_M_M_bM";
   outp_params.lo = {0, int(0.3 * 1408), int(0.3 * 1408)};
   outp_params.hi = {1, int(0.7 * 1408), int(0.7 * 1408)};
   OutputParticles outp{grid, outp_params};
@@ -259,6 +279,9 @@ void run()
 
   psc.integrate();
 }
+
+// ======================================================================
+// main
 
 int main(int argc, char** argv)
 {
