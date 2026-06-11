@@ -245,18 +245,16 @@ void run()
   OutputFieldsItemParams outf_item_params{};
   OutputFieldsParams outf_params{};
   outf_item_params.pfield.out_interval = 690;
-  outf_item_params.tfield.out_interval = 690;
-  outf_item_params.tfield.average_every = 138;
   outf_params.fields = outf_item_params;
   outf_params.moments = outf_item_params;
   OutputFields<MfieldsState, Mparticles, Dim, Writer> outf{grid, outf_params};
 
   OutputParticlesParams outp_params{};
-  outp_params.every_step = 400;
+  outp_params.every_step = 1000;
   outp_params.data_dir = ".";
   outp_params.basename = "prt_M_M_bM";
-  outp_params.lo = {0, int(0.3 * 1408), int(0.3 * 1408)};
-  outp_params.hi = {1, int(0.7 * 1408), int(0.7 * 1408)};
+  outp_params.lo = {0, int(0.4 * 1408), int(0.4 * 1408)};
+  outp_params.hi = {1, int(0.6 * 1408), int(0.6 * 1408)};
   OutputParticles outp{grid, outp_params};
 
   int oute_interval = -100;

@@ -260,20 +260,17 @@ void run()
   OutputFieldsItemParams outf_item_params{};
   OutputFieldsParams outf_params{};
   outf_item_params.pfield.out_interval = 500;
-  outf_item_params.tfield.out_interval = 500;
-  outf_item_params.tfield.average_every = 100;
   outf_params.fields = outf_item_params;
   outf_params.moments = outf_item_params;
   OutputFields<MfieldsState, Mparticles, Dim, Writer> outf{grid, outf_params};
 
   OutputParticlesParams outp_params{};
-  outp_params.every_step = 500;
+  outp_params.every_step = 1000;
   outp_params.data_dir = ".";
   outp_params.basename = "prt_firehose_maxwellian";
-  // Save only particles from the central 8×8 d_i region
-  // 8 d_i = 8/32 * 768 = 192 cells → center±96 → [288, 480]
-  outp_params.lo = {0, 288, 288};
-  outp_params.hi = {1, 480, 480};
+  // Central 20% per resolved direction: approximately 4% of the yz area.
+  outp_params.lo = {0, int(0.4 * 1024), int(0.4 * 1024)};
+  outp_params.hi = {1, int(0.6 * 1024), int(0.6 * 1024)};
   OutputParticles outp{grid, outp_params};
 
   int oute_interval = -100;

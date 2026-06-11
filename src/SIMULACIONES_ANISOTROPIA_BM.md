@@ -49,19 +49,20 @@ partículas — no se impone perturbación externa.
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │  Campos (pfield)       cada 690 pasos                            │
-│  Momentos (tfield)     cada 690 pasos (promedio cada 138)        │
-│  Partículas            cada 400 pasos                            │
+│  Momentos (pfield)     cada 690 pasos                            │
+│  tfield                desactivado                               │
+│  Partículas            cada 1000 pasos                           │
 │  Energías              cada 100 pasos                            │
 │                                                                  │
-│  Región de partículas: central 40% del dominio                   │
-│  [0.3×1408, 0.7×1408] = [422, 985] en cada eje                  │
-│  → Solo guarda ~16% del total de partículas por snapshot         │
+│  Región de partículas: central 20% del dominio por eje           │
+│  [0.4×1408, 0.6×1408] = [563, 844] en cada eje                  │
+│  → Solo guarda ~4% del total de partículas por snapshot          │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
 > Las partículas se guardan **solo de la región central** para no saturar
-> el disco. Los campos y momentos sí cubren todo el dominio pero son mucho
-> más ligeros que los datos de partículas.
+> el disco. Los campos y momentos instantáneos cubren todo el dominio mediante
+> `pfield`; la salida promediada `tfield` está desactivada.
 
 ---
 

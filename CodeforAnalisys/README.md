@@ -538,7 +538,8 @@ registrarse en cualquier reporte científico.
 El `Makefile` usa por defecto:
 
 ```text
-DATA_DIR = ../build2/all_h5_feynman
+DATA_DIR = ../build/src
+PARTICLE_BASENAME = prt_M_S_bM
 B0_REF = 0.05
 ```
 
@@ -558,8 +559,20 @@ make heatflux      # proxy de flujo de calor
 make all           # todo excepto spectral y report
 ```
 
-Para analizar otra corrida, cambie `DATA_DIR`, seleccione `PSC_PROFILE` y
-verifique `B0_REF`, tamaño de grilla, dominio y frecuencia de salida.
+Para analizar otra corrida, puede sobrescribir la ruta sin editar el archivo:
+
+```bash
+make all DATA_DIR=/ruta/a/los/h5
+```
+
+Para otra simulacion, indique tambien el prefijo de sus particulas:
+
+```bash
+make all PARTICLE_BASENAME=prt_mirror_maxwellian
+```
+
+Seleccione también `PSC_PROFILE` y verifique `B0_REF`, tamaño de grilla,
+dominio y frecuencia de salida.
 
 ## 7. Criterios mínimos para interpretar resultados
 

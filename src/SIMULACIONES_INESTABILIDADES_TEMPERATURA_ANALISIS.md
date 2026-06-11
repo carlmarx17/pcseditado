@@ -260,17 +260,16 @@ espacial dominante.
 
 ## Variables en los outputs
 
-Los codigos del barrido escriben tres tipos principales de salida: campos,
-momentos y energias. Las salidas de campos y momentos se escriben cada 690 pasos;
-los momentos temporales se acumulan para promedio cada 138 pasos; las particulas
-se guardan cada 400 pasos en la region central del dominio; y las energias se
+Los codigos del barrido escriben campos y momentos instantaneos cada 690 pasos.
+La salida temporal promediada `tfd` esta desactivada. Las particulas se guardan
+cada 1000 pasos en el 4% central del area del dominio y las energias se
 registran cada 100 pasos.
 
 | Salida | Frecuencia | Uso en el analisis |
 |---|---:|---|
-| `pfd*` | cada 690 pasos | Campos instantaneos para mapas 2D y amplitudes de modo |
-| `tfd*` | cada 690 pasos, promedio cada 138 | Momentos promediados para densidad, corriente y tensor de presion |
-| `prt_*` | cada 400 pasos | Particulas de la region central para distribuciones de velocidad |
+| `pfd*` | cada 690 pasos | Campos y momentos instantaneos para mapas 2D, amplitudes y tensor de presion |
+| `tfd*` | desactivado | No se genera para reducir el volumen de datos |
+| `prt_*` | cada 1000 pasos | Particulas del 4% central para distribuciones de velocidad |
 | energias | cada 100 pasos | Evolucion global de energia de campos y particulas |
 
 ### Campos electromagneticos
@@ -389,23 +388,23 @@ diagnosticos.
 | RAM recomendada en SLURM | 235-240 GB |
 | MPI ranks | 64 |
 | Particulas totales | ~7.93e9 |
-| Particulas guardadas por snapshot | ~16% del total |
+| Particulas guardadas por snapshot | ~4% del total |
 
 La salida de particulas se limita a la region central:
 
 ```text
-[0.3 * 1408, 0.7 * 1408] en y
-[0.3 * 1408, 0.7 * 1408] en z
+[0.4 * 1408, 0.6 * 1408] en y
+[0.4 * 1408, 0.6 * 1408] en z
 ```
 
-Esto guarda aproximadamente el 40% del dominio en cada direccion resuelta, es
-decir cerca del 16% de las particulas por snapshot. Esta decision reduce de
+Esto guarda aproximadamente el 20% del dominio en cada direccion resuelta, es
+decir cerca del 4% de las particulas por snapshot. Esta decision reduce de
 forma importante el gasto de disco sin eliminar la informacion necesaria para
 analizar distribuciones de velocidad en la zona central.
 
-Los campos y momentos si se escriben sobre todo el dominio. Por eso el volumen
-de datos crecera principalmente con el numero de snapshots `pfd*` y `tfd*`, pero
-el costo dominante en RAM durante la ejecucion seguira siendo el arreglo de
+Los campos y momentos instantaneos se escriben sobre todo el dominio en `pfd*`.
+Al desactivar `tfd*` se evita duplicar esas magnitudes con promedios temporales.
+El costo dominante en RAM durante la ejecucion sigue siendo el arreglo de
 particulas.
 
 ## Criterios de interpretacion

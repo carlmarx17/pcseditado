@@ -4,9 +4,12 @@
 # Variables
 PYTHON   = python3
 B0_REF   = 0.05     # Matches vA_over_c = 0.05 in psc_mirror_maxwellian.cxx
-DATA_DIR = ../build2/all_h5_feynman
+DATA_DIR ?= ../build/src
+PARTICLE_BASENAME ?= prt_M_S_bM
+PARTICLE_PATTERN = $(DATA_DIR)/$(PARTICLE_BASENAME).*.h5
+FIRST_PARTICLE = $(firstword $(sort $(wildcard $(PARTICLE_PATTERN))))
 
-.PHONY: all brazil mirror diamagnetic fields spectral validate particles heatflux report clean help
+.PHONY: all brazil mirror diamagnetic fields spectral validate particles heatflux report clean help check-particles
 
 # spectral_analysis is excluded from 'all' — still in development
 all: brazil mirror diamagnetic fields validate particles heatflux
@@ -41,18 +44,25 @@ spectral:
 	@echo "==========================================================="
 	$(PYTHON) spectral_analysis.py --fields "$(DATA_DIR)/pfd.*.h5"
 
-validate:
+check-particles:
+	@test -n "$(FIRST_PARTICLE)" || { \
+		echo "ERROR: No particle files found: $(PARTICLE_PATTERN)"; \
+		exit 1; \
+	}
+
+validate: check-particles
 	@echo "==========================================================="
 	@echo "Validating Moments"
 	@echo "==========================================================="
-	$(PYTHON) validate_moments.py $(DATA_DIR)/prt_mirror_maxwellian.000001000.h5
-particles:
+	$(PYTHON) validate_moments.py "$(FIRST_PARTICLE)"
+
+particles: check-particles
 	@echo "==========================================================="
 	@echo "Generating Particle VDF and Phase-Space Plots"
 	@echo "==========================================================="
-	$(PYTHON) plot_prt.py "$(DATA_DIR)/prt_mirror_maxwellian.*.h5"
-	$(PYTHON) plot_vdf_3d.py $(DATA_DIR)/prt_mirror_maxwellian.000001000.h5
-	$(PYTHON) plot_moments_scatter_3d.py $(DATA_DIR)/prt_mirror_maxwellian.000001000.h5
+	$(PYTHON) plot_prt.py "$(PARTICLE_PATTERN)"
+	$(PYTHON) plot_vdf_3d.py "$(FIRST_PARTICLE)"
+	$(PYTHON) plot_moments_scatter_3d.py "$(FIRST_PARTICLE)"
 heatflux:
 	@echo "==========================================================="
 	@echo "Generating Heat Flux and Anisotropy Analysis"
@@ -83,5 +93,7 @@ help:
 	@echo "  make report       - Generate PDF validation report       (generar_pdf_reporte.py)"
 	@echo "  make all          - Run all targets (except spectral and report)"
 	@echo "  make clean        - Remove all generated plot directories"
+	@echo "  DATA_DIR=path     - Override input directory (default: ../build/src)"
+	@echo "  PARTICLE_BASENAME=name - Particle prefix (default: prt_M_S_bM)"
 	@echo ""
 	@echo "  NOTE: spectral_analysis.py is excluded from 'all' (still in development)"

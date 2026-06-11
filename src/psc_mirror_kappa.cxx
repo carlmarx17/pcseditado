@@ -8,6 +8,14 @@
 
 #include "../libpsc/psc_heating/psc_heating_impl.hxx"
 
+#ifndef PSC_KAPPA
+#define PSC_KAPPA 3.0
+#endif
+
+#ifndef PSC_KAPPA_SUFFIX
+#define PSC_KAPPA_SUFFIX "kappa3"
+#endif
+
 // ======================================================================
 // Particle kinds
 
@@ -87,14 +95,15 @@ using OutputParticles = PscConfig::OutputParticles;
 
 void setupParameters()
 {
-  psc_params.nmax = 1200000;
+  // Keep numerical and physical parameters equal to psc_mirror_maxwellian.
+  psc_params.nmax = 1800000;
   psc_params.cfl = 0.95;
-  psc_params.write_checkpoint_every_step = 5000;
+  psc_params.write_checkpoint_every_step = 7500;
   psc_params.stats_every = 50;
 
   g.BB = 1.0;
   g.Zi = 1.;
-  g.mass_ratio = 100.;
+  g.mass_ratio = 200.;
   g.lambda0 = 20.;
 
   // Mirror Instability Parameters
@@ -122,15 +131,11 @@ Grid_t* setupGrid()
 {
   g.d_i = std::sqrt(g.mass_ratio / g.n);
 
-  // Dominio: 20 d_i × 1024 celdas
-  // Resuelve d_e; Debye queda sub-resuelta con vA/c=0.05
-  // (dx/lambda_De ≈ 5.52), por eso se usa alto ppc.
-  // RAM esperada: ~67 GB base. Evita OOM Killer durante el paso de Sorting.
-  // d_i = sqrt(mi/me) * d_e = sqrt(100) d_e = 10 d_e
+  // Same 20 d_i domain and resolution as the Maxwellian comparison case.
   double domain_size = 20.0 * g.d_i;
 
   Grid_t::Real3 LL = {1.0, domain_size, domain_size};
-  Int3         gdims = {1, 1024, 1024};
+  Int3         gdims = {1, 1536, 1536};
   Int3         np    = {1, 64, 16}; // 1024 patches: 1 patch por MPI rank
 
   Grid_t::Domain domain{gdims, LL, -.5 * LL, np};
@@ -214,7 +219,8 @@ void initializeFields(MfieldsState& mflds)
 
 void run()
 {
-  mpi_printf(MPI_COMM_WORLD, "*** Setting up Kappa Mirror...\n");
+  mpi_printf(MPI_COMM_WORLD, "*** Setting up Mirror Kappa=%g...\n",
+             double(PSC_KAPPA));
 
   setupParameters();
 
@@ -227,7 +233,7 @@ void run()
     read_checkpoint(read_checkpoint_filename, grid, mprts, mflds);
   }
 
-  psc_params.balance_interval = 500;
+  psc_params.balance_interval = 750;
   Balance balance{3};
 
   psc_params.sort_interval = 10;
@@ -256,21 +262,18 @@ void run()
 
   OutputFieldsItemParams outf_item_params{};
   OutputFieldsParams outf_params{};
-  outf_item_params.pfield.out_interval = 500;
-  outf_item_params.tfield.out_interval = 500;
-  outf_item_params.tfield.average_every = 100;
+  outf_item_params.pfield.out_interval = 750;
   outf_params.fields = outf_item_params;
   outf_params.moments = outf_item_params;
   OutputFields<MfieldsState, Mparticles, Dim, Writer> outf{grid, outf_params};
 
   OutputParticlesParams outp_params{};
-  outp_params.every_step = 500;
+  outp_params.every_step = 1000;
   outp_params.data_dir = ".";
-  outp_params.basename = "prt_mirror_kappa";
-  // Save only particles from the central 8×8 d_i region
-  // 8 d_i = 8/32 * 768 = 192 cells → center±96 → [288, 480]
-  outp_params.lo = {0, 288, 288};
-  outp_params.hi = {1, 480, 480};
+  outp_params.basename = "prt_mirror_" PSC_KAPPA_SUFFIX;
+  // Central 20% per resolved direction: approximately 4% of the yz area.
+  outp_params.lo = {0, int(0.4 * 1536), int(0.4 * 1536)};
+  outp_params.hi = {1, int(0.6 * 1536), int(0.6 * 1536)};
   OutputParticles outp{grid, outp_params};
 
   int oute_interval = -100;
@@ -279,7 +282,7 @@ void run()
   auto diagnostics = makeDiagnosticsDefault(outf, outp, oute);
 
   SetupParticles<Mparticles> setup_particles(grid);
-  setup_particles.kappa = 3.0; // explicit kappa parameter for Kappa distributions
+  setup_particles.kappa = PSC_KAPPA;
   setup_particles.fractional_n_particles_per_cell = true;
   setup_particles.neutralizing_population = MY_ION;
 

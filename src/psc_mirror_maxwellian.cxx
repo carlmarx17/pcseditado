@@ -261,21 +261,17 @@ void run()
   OutputFieldsItemParams outf_item_params{};
   OutputFieldsParams outf_params{};
   outf_item_params.pfield.out_interval = 750;   // ~0.27 Ω_i^{-1} por snapshot (escala con dt)
-  outf_item_params.tfield.out_interval = 750;
-  outf_item_params.tfield.average_every = 150;
   outf_params.fields = outf_item_params;
   outf_params.moments = outf_item_params;
   OutputFields<MfieldsState, Mparticles, Dim, Writer> outf{grid, outf_params};
 
   OutputParticlesParams outp_params{};
-  outp_params.every_step = 750;   // escala con dt
+  outp_params.every_step = 1000;
   outp_params.data_dir = ".";
   outp_params.basename = "prt_mirror_maxwellian";
-  // Partículas de la región central 8×8 d_i
-  // 8 d_i / (20 d_i) × 1536 = 614 celdas → centro 768 ± 307
-  // [461, 1075] — captura la región de inestabilidad mirror
-  outp_params.lo = {0, 461, 461};
-  outp_params.hi = {1, 1075, 1075};
+  // Central 20% per resolved direction: approximately 4% of the yz area.
+  outp_params.lo = {0, int(0.4 * 1536), int(0.4 * 1536)};
+  outp_params.hi = {1, int(0.6 * 1536), int(0.6 * 1536)};
   OutputParticles outp{grid, outp_params};
 
   int oute_interval = -100;

@@ -12,12 +12,14 @@ en plasmas magnetizados. Todas usan `PscConfig1vbecSingle` (Villasenor-Buneman E
 
 | Archivo | Inestabilidad | Distribución | mr | Grilla | ppc | vA/c | βᵢ‖ | Tᵢ⊥/Tᵢ‖ | RAM |
 |---|---|---|---|---|---|---|---|---|---|
-| `psc_mirror_kappa` | Mirror | Kappa (κ=3) | 100 | 1024² | 1000 | 0.05 | 5.0 | 3.0 | ~67 GB |
 | `psc_mirror_maxwellian` | Mirror | Maxwellian | 200 | 1536² | 1000 | 0.05 | 5.0 | 3.0 | ~150 GB |
+| `psc_mirror_kappa3` | Mirror | Kappa (κ=3) | 200 | 1536² | 1000 | 0.05 | 5.0 | 3.0 | ~150 GB |
+| `psc_mirror_kappa5` | Mirror | Kappa (κ=5) | 200 | 1536² | 1000 | 0.05 | 5.0 | 3.0 | ~150 GB |
 | `psc_mirror_maxwellian_2k` | Mirror | Maxwellian | 200 | 2048² | 1000 | 0.05 | 5.0 | 3.0 | ~250 GB |
 | `psc_mirror_maxwellian_pauli` | Mirror | Maxwellian | 200 | 1408² | **2000** | 0.05 | 5.0 | 3.0 | ~222 GB |
-| `psc_firehose_kappa` | Firehose | Kappa (κ=3) | 100 | 1024² | 1000 | 0.05 | 10.0 | 0.1 | ~67 GB |
 | `psc_firehose_maxwellian` | Firehose | Maxwellian | 100 | 1024² | 1000 | 0.05 | 10.0 | 0.1 | ~67 GB |
+| `psc_firehose_kappa3` | Firehose | Kappa (κ=3) | 100 | 1024² | 1000 | 0.05 | 10.0 | 0.1 | ~67 GB |
+| `psc_firehose_kappa5` | Firehose | Kappa (κ=5) | 100 | 1024² | 1000 | 0.05 | 10.0 | 0.1 | ~67 GB |
 
 > Todos con βₑ‖ = 1.0, Tₑ⊥/Tₑ‖ = 1.0 (electrones isotrópicos), λ₀ = 20, n = 1.
 
@@ -67,12 +69,14 @@ objetivo principal es la dinámica cinética de Mirror/Firehose a escala de
 
 | Código | mr | dᵢ | Dominio | dx | dx/dₑ | dx/λ_De | ¿Resuelve Debye? |
 |---|---|---|---|---|---|---|---|
-| `mirror_kappa` | 100 | 10.0 | 200 | 0.195 | 0.20 ✅ | **5.52** | No |
 | `mirror_maxwellian` | 200 | 14.14 | 282.8 | 0.184 | 0.184 ✅ | **5.21** | No |
+| `mirror_kappa3` | 200 | 14.14 | 282.8 | 0.184 | 0.184 ✅ | **5.21** | No |
+| `mirror_kappa5` | 200 | 14.14 | 282.8 | 0.184 | 0.184 ✅ | **5.21** | No |
 | `mirror_maxwellian_2k` | 200 | 14.14 | 282.8 | 0.138 | 0.14 ✅ | **3.90** | No |
 | `mirror_maxwellian_pauli` | 200 | 14.14 | 282.8 | 0.201 | 0.20 ✅ | **5.68** | No |
-| `firehose_kappa` | 100 | 10.0 | 200 | 0.195 | 0.20 ✅ | **5.52** | No |
 | `firehose_maxwellian` | 100 | 10.0 | 200 | 0.195 | 0.20 ✅ | **5.52** | No |
+| `firehose_kappa3` | 100 | 10.0 | 200 | 0.195 | 0.20 ✅ | **5.52** | No |
+| `firehose_kappa5` | 100 | 10.0 | 200 | 0.195 | 0.20 ✅ | **5.52** | No |
 
 > Nota: con `vA/c = 0.05`, la longitud de Debye queda más sub-resuelta
 > (`dx/λ_De ~ 4-6`). Por eso estas corridas deben interpretarse como
@@ -149,7 +153,7 @@ el mejor equilibrio entre ciencia, tiempo y seguridad de memoria es:
 2. **`psc_mirror_maxwellian`** → segundo objetivo Maxwellian. Usar `pauli` o `planck`, 64 ranks, 180-220 GB. Es más pesado y más lento, pero más cercano al caso Mirror principal.
 3. **`psc_mirror_maxwellian_pauli`** → solo si `pauli` o `planck` están completamente libres. Pide ~222 GB; dejar margen con `--mem=235G` o más.
 4. **`psc_mirror_maxwellian_2k`** → no lo usaría primero. Necesita nodos grandes (`nodo-00`/`nodo-01`) y puede tardar demasiado para una primera validación.
-5. **Kappa (`psc_firehose_kappa`, `psc_mirror_kappa`)** → importante como comparación posterior, pero no debe reemplazar la línea base Maxwellian del primer objetivo.
+5. **Kappa (`psc_firehose_kappa3/5`, `psc_mirror_kappa3/5`)** → comparación controlada con la línea base Maxwellian; solo cambia la forma de la distribución inicial.
 
 ### Script recomendado para empezar ahora
 
