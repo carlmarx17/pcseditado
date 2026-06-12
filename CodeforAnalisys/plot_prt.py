@@ -52,8 +52,17 @@ MAX_EVOLUTION_FILES = 12
 MAX_VDF_SNAPSHOTS = 5
 NBINS_VDF = 250    # reducido de 400; suficiente para resolución publicable
 MAX_PARTICLES = 500_000  # submuestreo global si hay más partículas
+RNG_SEED = 20260612
 
 STEP_RE = re.compile(r"\.(\d+)(?:_p\d+)?\.h5$")
+
+
+def _sample_indices(n_total: int, max_particles: int):
+    """Return a deterministic uniform subsample for reproducible figures."""
+    if n_total <= max_particles:
+        return slice(None)
+    rng = np.random.default_rng(RNG_SEED)
+    return np.sort(rng.choice(n_total, max_particles, replace=False))
 
 # ── Simulation parameters (from psc_units — single source of truth) ──────────
 Zi: float = ZI
@@ -82,7 +91,7 @@ def load_particles(filepath: str, verbose: bool = True,
         dset = f["particles"]["p0"]["1d"]
         n_total = dset["q"].shape[0]
         if n_total > max_particles:
-            idx = np.sort(np.random.choice(n_total, max_particles, replace=False))
+            idx = _sample_indices(n_total, max_particles)
             if verbose:
                 print(f"  Subsampling {max_particles:,} / {n_total:,} particles")
         else:
@@ -111,10 +120,7 @@ def load_particle_phase_space(filepath: str,
     with h5py.File(filepath, "r") as f:
         dset = f["particles"]["p0"]["1d"]
         n_total = dset["q"].shape[0]
-        idx = (
-            np.sort(np.random.choice(n_total, max_particles, replace=False))
-            if n_total > max_particles else slice(None)
-        )
+        idx = _sample_indices(n_total, max_particles)
         q  = dset["q"][idx].astype(np.float32)
         px = dset["px"][idx].astype(np.float32)
         py = dset["py"][idx].astype(np.float32)
@@ -123,8 +129,12 @@ def load_particle_phase_space(filepath: str,
     ion_mask  = q > 0
     elec_mask = q < 0
     result = {
+        "ions_px":        px[ion_mask],
+        "ions_py":        py[ion_mask],
         "ions_pz":        pz[ion_mask],
         "ions_perp":      np.sqrt(px[ion_mask]**2 + py[ion_mask]**2),
+        "electrons_px":   px[elec_mask],
+        "electrons_py":   py[elec_mask],
         "electrons_pz":   pz[elec_mask],
         "electrons_perp": np.sqrt(px[elec_mask]**2 + py[elec_mask]**2),
     }
@@ -220,13 +230,13 @@ def separate_species(data: np.ndarray, verbose: bool = True):
 
 
 def compute_species_temperatures(species: np.ndarray) -> tuple[float, float]:
-    """Compute T_perp and T_par from velocity variance (removing bulk drift)."""
+    """Compute temperatures from PSC normalized momentum u = gamma*v."""
     mass = abs(float(species["m"][0]))
     px = np.asarray(species["px"], dtype=float)
     py = np.asarray(species["py"], dtype=float)
     pz = np.asarray(species["pz"], dtype=float)
-    t_perp = 0.5 * (np.var(px) + np.var(py)) / mass
-    t_par = np.var(pz) / mass
+    t_perp = 0.5 * mass * (np.var(px) + np.var(py))
+    t_par = mass * np.var(pz)
     return t_perp, t_par
 
 
@@ -401,9 +411,9 @@ def plot_kappa_comparison(ions, outdir: str):
 
     mom_fields = ["px", "py", "pz"]
     comp_labels = [
-        r"$p_x\ /\ (m_i v_A)$  [perp.]",
-        r"$p_y\ /\ (m_i v_A)$  [perp.]",
-        r"$p_z\ /\ (m_i v_A)$  [par.]",
+        r"$u_x / v_A$  [perp.]",
+        r"$u_y / v_A$  [perp.]",
+        r"$u_z / v_A$  [par.]",
     ]
     comp_short = [r"$p_x$", r"$p_y$", r"$p_z$"]
     comp_dir = ["perpendicular", "perpendicular", "parallel"]
@@ -716,8 +726,8 @@ def print_summary(ions, electrons):
 
     for name, sp in [("IONS", ions), ("ELECTRONS", electrons)]:
         m = np.abs(sp["m"][0])
-        T_perp = 0.5 * (np.mean(sp["px"] ** 2) + np.mean(sp["py"] ** 2)) / m
-        T_par = np.mean(sp["pz"] ** 2) / m
+        T_perp = 0.5 * m * (np.var(sp["px"]) + np.var(sp["py"]))
+        T_par = m * np.var(sp["pz"])
         print(f"\n  {name}:")
         print(f"    Count: {len(sp):,}")
         print(f"    Mass (m): {sp['m'][0]:.4f}")
@@ -1007,9 +1017,12 @@ def plot_brazil(filepaths: list[str], outdir: str):
 
     for path in sampled_paths:
         ps = load_particle_phase_space(path)
-        # T_par ~ <p_z^2> / m_i;  T_perp ~ <v_perp^2>/2 * m_i (from mean, not var)
-        tpar  = float(np.mean(ps["ions_pz"]  ** 2)) / M_ION
-        tperp = 0.5 * float(np.mean(ps["ions_perp"] ** 2)) / M_ION
+        # PSC stores normalized momentum u=gamma*v. In this non-relativistic
+        # setup, T = m*Var(u); subtract drift before computing beta.
+        tpar = M_ION * float(np.var(ps["ions_pz"]))
+        tperp = 0.5 * M_ION * float(
+            np.var(ps["ions_px"]) + np.var(ps["ions_py"])
+        )
         beta_par = 2.0 * tpar / (B0 ** 2)      # beta_i_par = 2 n T_par / B0^2 (n=1)
         aniso    = tperp / max(tpar, 1e-30)
         aniso_vals.append(aniso)
@@ -1227,35 +1240,31 @@ def plot_1d_vdf_evolution(
 def _compute_particle_energies(filepath: str) -> dict:
     """Return kinetic and thermal energies from a particle snapshot.
 
-    Kinetic energy: E_kin = sum_s 0.5 * m_s * <p^2 / m_s^2> * N_s
-                          = sum_s 0.5 * <p^2> / m_s  (per particle, normalised)
-    Thermal energy: E_th  = 1.5 * N * T  where T = (2 T_perp + T_par) / 3
-    Bulk kinetic:   E_bulk= 0.5 * m * <v>^2  (drift contribution)
+    PSC stores u = gamma*v. For this non-relativistic run:
+      E_bulk = 0.5*m*|<u>|^2
+      E_th   = 0.5*m*<|u-<u>|^2>
+    Values are per macroparticle, so species with the same macro-weight can be
+    compared and summed without introducing sample-size-dependent factors.
     """
     with h5py.File(filepath, "r") as f:
         dset  = f["particles"]["p0"]["1d"]
         n_tot = dset["q"].shape[0]
-        idx   = (
-            np.sort(np.random.choice(n_tot, min(n_tot, MAX_PARTICLES), replace=False))
-            if n_tot > MAX_PARTICLES else slice(None)
-        )
+        idx = _sample_indices(n_tot, MAX_PARTICLES)
         q  = dset["q"][idx].astype(np.float64)
         m  = dset["m"][idx].astype(np.float64)
         px = dset["px"][idx].astype(np.float64)
         py = dset["py"][idx].astype(np.float64)
         pz = dset["pz"][idx].astype(np.float64)
 
-    p2 = px**2 + py**2 + pz**2
     ion_mask  = q > 0
     elec_mask = q < 0
 
     result = {}
     for name, mask in [("ion", ion_mask), ("elec", elec_mask)]:
         mi     = float(np.abs(m[mask][0])) if mask.any() else 1.0
-        N      = mask.sum()
-        vx     = px[mask] / mi
-        vy     = py[mask] / mi
-        vz     = pz[mask] / mi
+        vx     = px[mask]
+        vy     = py[mask]
+        vz     = pz[mask]
         bulk_v2 = np.mean(vx)**2 + np.mean(vy)**2 + np.mean(vz)**2
         rand_v2 = np.mean((vx - np.mean(vx))**2 +
                            (vy - np.mean(vy))**2 +
@@ -1263,8 +1272,7 @@ def _compute_particle_energies(filepath: str) -> dict:
         t_perp = 0.5 * mi * (np.var(vx) + np.var(vy))
         t_par  = mi * np.var(vz)
         result[f"{name}_kinetic_bulk"]    = 0.5 * mi * bulk_v2
-        result[f"{name}_kinetic_thermal"] = 0.5 * mi * rand_v2
-        result[f"{name}_thermal_energy"]  = (2.0 * t_perp + t_par) * N / 2.0
+        result[f"{name}_thermal_energy"]  = 0.5 * mi * rand_v2
         result[f"{name}_t_perp"] = t_perp
         result[f"{name}_t_par"]  = t_par
 
@@ -1289,16 +1297,16 @@ def plot_energy_partition(
     times  = steps  # steps already in code units; convert if needed
 
     ion_kin_bulk    = []
-    ion_kin_thermal = []
     ion_thermal     = []
+    elec_kin_bulk   = []
     elec_thermal    = []
     mag_energy      = []
 
     for path, step in zip(paths, steps.astype(int)):
         e = _compute_particle_energies(path)
         ion_kin_bulk.append(e["ion_kinetic_bulk"])
-        ion_kin_thermal.append(e["ion_kinetic_thermal"])
         ion_thermal.append(e["ion_thermal_energy"])
+        elec_kin_bulk.append(e["elec_kinetic_bulk"])
         elec_thermal.append(e["elec_thermal_energy"])
 
         # Magnetic energy from field file if available
@@ -1314,13 +1322,13 @@ def plot_energy_partition(
         gc.collect()
 
     ion_kin_bulk    = np.array(ion_kin_bulk)
-    ion_kin_thermal = np.array(ion_kin_thermal)
     ion_thermal     = np.array(ion_thermal)
+    elec_kin_bulk   = np.array(elec_kin_bulk)
     elec_thermal    = np.array(elec_thermal)
     mag_energy      = np.array(mag_energy)
 
     # Normalise to initial total particle energy
-    E0 = ion_kin_bulk[0] + ion_kin_thermal[0] + ion_thermal[0] + elec_thermal[0]
+    E0 = ion_kin_bulk[0] + elec_kin_bulk[0] + ion_thermal[0] + elec_thermal[0]
     if E0 < 1e-30:
         E0 = 1.0
 
@@ -1332,14 +1340,14 @@ def plot_energy_partition(
     )
 
     ax = axes[0]
-    ax.plot(times, ion_kin_thermal / E0, "o-", color="#e74c3c", linewidth=2,
-            label=r"Ion thermal-kinetic  ($\frac{1}{2}m_i\langle\delta v^2\rangle$)")
     ax.plot(times, ion_thermal / E0,     "s-", color="#e67e22", linewidth=2,
-            label=r"Ion internal energy  ($\frac{3}{2}N_i T_i$)")
+            label=r"Ion thermal energy  ($\frac{1}{2}m_i\langle\delta u^2\rangle$)")
     ax.plot(times, elec_thermal / E0,    "^-", color="#3498db", linewidth=2,
-            label=r"Electron internal energy  ($\frac{3}{2}N_e T_e$)")
+            label=r"Electron thermal energy")
     ax.plot(times, ion_kin_bulk / E0,    "d-", color="#2ecc71", linewidth=1.5,
-            label=r"Ion bulk kinetic  ($\frac{1}{2}m_i\langle v\rangle^2$)")
+            label=r"Ion bulk kinetic")
+    ax.plot(times, elec_kin_bulk / E0,   "x-", color="#16a085", linewidth=1.5,
+            label=r"Electron bulk kinetic")
     ax.set_ylabel(r"Energy  [$E_0$]", fontsize=12)
     ax.set_xlabel("Simulation step", fontsize=11)
     ax.set_title("Particle energy components (normalised to $E_0$)",
@@ -1377,7 +1385,7 @@ def plot_energy_partition(
 
 def _compute_heat_flux(filepath: str,
                        n_regions: int = 4) -> dict:
-    """Compute heat flux tensor components in localised domain regions.
+    """Experimental velocity-quantile heat-flux diagnostic.
 
     The heat flux vector is defined as:
         q_i = (m/2) * <(v - <v>)^2 * (v_i - <v_i>)>
@@ -1385,17 +1393,14 @@ def _compute_heat_flux(filepath: str,
     Parallel component:   q_par  = (m/2) * <delta_v^2 * delta_vz>
     Perpendicular:        q_perp = (m/2) * <delta_v^2 * delta_vperp>
 
-    Particles are binned into n_regions spatial strips along z (parallel
-    direction) using their momentum sign as a proxy for streaming direction
-    when position data is unavailable.
+    Particles are grouped by u_z quantile. These groups are velocity
+    populations, not spatial regions, so this diagnostic is not part of the
+    standard analysis pipeline.
     """
     with h5py.File(filepath, "r") as f:
         dset  = f["particles"]["p0"]["1d"]
         n_tot = dset["q"].shape[0]
-        idx   = (
-            np.sort(np.random.choice(n_tot, min(n_tot, MAX_PARTICLES), replace=False))
-            if n_tot > MAX_PARTICLES else slice(None)
-        )
+        idx = _sample_indices(n_tot, MAX_PARTICLES)
         q  = dset["q"][idx].astype(np.float64)
         m  = dset["m"][idx].astype(np.float64)
         px = dset["px"][idx].astype(np.float64)
@@ -1423,9 +1428,9 @@ def _compute_heat_flux(filepath: str,
             region_centers.append(0.5 * (pz_bins[k] + pz_bins[k + 1]))
             continue
 
-        vz   = pz_i[mask] / mi
-        vx   = px_i[mask] / mi
-        vy   = py_i[mask] / mi
+        vz   = pz_i[mask]
+        vx   = px_i[mask]
+        vy   = py_i[mask]
         dvz  = vz - np.mean(vz)
         dvx  = vx - np.mean(vx)
         dvy  = vy - np.mean(vy)
@@ -1451,7 +1456,7 @@ def plot_heat_flux(
     n_times: int = 8,
     n_regions: int = 4,
 ):
-    """Plot heat flux tensor components in localised domain regions over time.
+    """Plot experimental heat flux by parallel-velocity population.
 
     Characterises non-thermal energy transport associated with instability
     dynamics for both Maxwellian and kappa initial distributions.
@@ -1478,7 +1483,7 @@ def plot_heat_flux(
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
     fig.patch.set_facecolor("white")
     fig.suptitle(
-        r"Heat Flux Tensor: $q_\parallel$ and $q_\perp$ in Localised Domain Regions",
+        r"Experimental Heat Flux by Parallel-Velocity Population",
         fontsize=15, fontweight="bold",
     )
 
@@ -1502,7 +1507,7 @@ def plot_heat_flux(
         ax.axhline(0, color="black", linewidth=0.8, linestyle=":")
         ax.set_xticks(x)
         ax.set_xticklabels(region_labels)
-        ax.set_xlabel("Domain region (binned by $v_z$ quantile)", fontsize=11)
+        ax.set_xlabel(r"Population (binned by $u_z$ quantile)", fontsize=11)
         ax.set_ylabel(ylabel, fontsize=11)
         ax.set_title(title, fontsize=13, fontweight="bold")
         ax.legend(fontsize=8, ncol=2)
@@ -1574,10 +1579,9 @@ def main():
         plot_macro_evolution(filepaths, outdir, field_files=field_files); gc.collect()
         plot_brazil(filepaths, outdir);                                   gc.collect()
         # ── New diagnostics ────────────────────────────────────────────
-        print("\nRunning new diagnostics (distribution tails, energy, heat flux)...")
+        print("\nRunning distribution-tail and energy diagnostics...")
         plot_1d_vdf_evolution(filepaths, outdir);                         gc.collect()
         plot_energy_partition(filepaths, outdir, field_files=field_files); gc.collect()
-        plot_heat_flux(filepaths, outdir);                                gc.collect()
 
     data = load_particles(filepath)
     ions, electrons = separate_species(data)
@@ -1587,10 +1591,12 @@ def main():
 
     print("\nGenerating plots...")
     plot_vdf(ions, electrons, outdir);      gc.collect()
-    plot_kappa_comparison(ions, outdir);    gc.collect()
-
-    print("\nRunning goodness-of-fit tests (Anderson-Darling & Kolmogorov-Smirnov)...")
-    plot_goodness_of_fit(ions, outdir);     gc.collect()
+    if KAPPA is not None:
+        plot_kappa_comparison(ions, outdir); gc.collect()
+        print("\nRunning goodness-of-fit tests (Anderson-Darling & Kolmogorov-Smirnov)...")
+        plot_goodness_of_fit(ions, outdir);  gc.collect()
+    else:
+        print("  Skipping Kappa-only comparison and goodness-of-fit plots for a Bi-Maxwellian profile.")
 
     print(f"\nAll plots saved to: {outdir}")
 

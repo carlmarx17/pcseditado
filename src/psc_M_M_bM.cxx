@@ -4,7 +4,7 @@
 // Label:  M-M-bM
 // Inst:   Mirror  |  Regime: Moderate  |  Dist: Bi-Maxwellian
 // βi∥=5.0  Ai=Ti⊥/Ti∥=2.0  βe∥=1.0  Ae=Te⊥/Te∥=1.0
-// mass_ratio=200, 2000 ppc, 1408×1408 (dx ≈ 0.2 d_e)
+// mass_ratio=200, 1000 ppc, 1408×1408 (dx ≈ 0.30 d_e)
 // ======================================================================
 
 #include <psc.hxx>
@@ -80,8 +80,8 @@ using OutputParticles = PscConfig::OutputParticles;
 void setupParameters()
 {
   // M-M-bM: Mirror Moderate Bi-Maxwellian
-  // 1408×1408, 2000 ppc, mass_ratio=200
-  // RAM ≈ 222 GB
+  // 1408×1408, 1000 ppc, mass_ratio=200
+  // RAM ≈ 111 GB
   psc_params.nmax = 1650000;
   psc_params.cfl = 0.95;
   psc_params.write_checkpoint_every_step = 0;
@@ -117,7 +117,7 @@ Grid_t* setupGrid()
 {
   g.d_i = std::sqrt(g.mass_ratio / g.n);
 
-  double domain_size = 20.0 * g.d_i;
+  double domain_size = 30.0 * g.d_i;
 
   Grid_t::Real3 LL = {1.0, domain_size, domain_size};
   Int3         gdims = {1, 1408, 1408};
@@ -139,7 +139,7 @@ Grid_t* setupGrid()
              sqrt(g.Te_par));
 
   auto norm_params = Grid_t::NormalizationParams::dimensionless();
-  norm_params.nicell = 2000;
+  norm_params.nicell = 1000;
 
   double dt = psc_params.cfl * courant_length(domain);
   Grid_t::Normalization norm{norm_params};
@@ -244,13 +244,13 @@ void run()
 
   OutputFieldsItemParams outf_item_params{};
   OutputFieldsParams outf_params{};
-  outf_item_params.pfield.out_interval = 690;
+  outf_item_params.pfield.out_interval = 1000;
   outf_params.fields = outf_item_params;
   outf_params.moments = outf_item_params;
   OutputFields<MfieldsState, Mparticles, Dim, Writer> outf{grid, outf_params};
 
   OutputParticlesParams outp_params{};
-  outp_params.every_step = 1000;
+  outp_params.every_step = 10000;
   outp_params.data_dir = ".";
   outp_params.basename = "prt_M_M_bM";
   outp_params.lo = {0, int(0.4 * 1408), int(0.4 * 1408)};

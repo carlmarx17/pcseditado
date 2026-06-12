@@ -1,19 +1,13 @@
 #!/usr/bin/env python3
 """
-anisotropy_analysis.py  —  Brazil Plot Generator (build2 / mirror_maxwellian)
-==============================================================================
+anisotropy_analysis.py — Brazil Plot Generator
+===============================================
 Genera:
-  1. Brazil plot acumulado (todos los snapshots, coloreado por tiempo)
+  1. Brazil plot acumulado con trayectoria temporal de la mediana
   2. Panel temporal: anisotropia media + beta_par medio vs Omega_ci t
   3. Brazil plots individuales para ~10 snapshots clave
 
-Datos: build2/all_h5_feynman  (grilla 128x128, paso 500, hasta step 75000)
-
-Rangos calibrados con datos reales:
-  t=0:      aniso=3.0,   beta_par=5.0   (condicion inicial)
-  t=75000:  aniso~0.77,  beta_par~150   (estado saturado)
-
-Fisica: mirror_maxwellian  (A_i = T_perp/T_par = 3.0,  beta_par,i = 5.0)
+Los parámetros físicos, la malla y las conversiones se toman de psc_units.py.
 """
 
 import warnings
@@ -28,11 +22,12 @@ from pathlib import Path
 
 from data_reader import PICDataReader
 from psc_units import (
-    B0, FIELD_FILE_PATTERN, KAPPA, MASS_RATIO, MOMENT_FILE_PATTERN,
-    BETA_I_PAR, BETA_I_PERP_OVER_PAR, TI_PAR, TI_PERP, step_to_omegaci,
+    B0, FIELD_FILE_PATTERN, MASS_RATIO, MOMENT_FILE_PATTERN, M_ION,
+    PROFILE_LABEL, TI_PAR, TI_PERP, step_to_omegaci,
 )
 
 warnings.filterwarnings("ignore")
+RNG = np.random.default_rng(20260612)
 
 # ── Parametros fisicos iniciales ──────────────────────────────────────────────
 T_PERP_I = TI_PERP
@@ -60,7 +55,11 @@ def process_snapshot(mom_file: str, bz_file: str):
     try:
         moments = PICDataReader.read_multiple_fields_3d(
             mom_file, "all_1st",
-            ["txx_i/p0/3d", "tyy_i/p0/3d", "tzz_i/p0/3d", "rho_i/p0/3d"],
+            [
+                "txx_i/p0/3d", "tyy_i/p0/3d", "tzz_i/p0/3d",
+                "px_i/p0/3d", "py_i/p0/3d", "pz_i/p0/3d",
+                "rho_i/p0/3d",
+            ],
         )
         b_fields = PICDataReader.read_multiple_fields_3d(
             bz_file, "jeh",
@@ -70,16 +69,24 @@ def process_snapshot(mom_file: str, bz_file: str):
         print(f"  [WARN] {exc}")
         return None
 
-    Pxx = moments["txx_i/p0/3d"].ravel()
-    Pyy = moments["tyy_i/p0/3d"].ravel()
-    Pzz = moments["tzz_i/p0/3d"].ravel()
+    Mxx = moments["txx_i/p0/3d"].ravel()
+    Myy = moments["tyy_i/p0/3d"].ravel()
+    Mzz = moments["tzz_i/p0/3d"].ravel()
+    px  = moments["px_i/p0/3d"].ravel()
+    py  = moments["py_i/p0/3d"].ravel()
+    pz  = moments["pz_i/p0/3d"].ravel()
     n   = moments["rho_i/p0/3d"].ravel()
     Bx  = b_fields["hx_fc/p0/3d"].ravel()
     By  = b_fields["hy_fc/p0/3d"].ravel()
     Bz  = b_fields["hz_fc/p0/3d"].ravel()
     B2  = Bx**2 + By**2 + Bz**2
 
-    safe_n = np.where(n > 0.05, n, np.nan)  # filtra celdas vacias
+    safe_n = np.where(n > 0.05, n, np.nan)
+    # Thermal pressure is the central second moment. Using Mii directly
+    # contaminates temperature and beta when a bulk drift develops.
+    Pxx = Mxx - px**2 / (safe_n * M_ION)
+    Pyy = Myy - py**2 / (safe_n * M_ION)
+    Pzz = Mzz - pz**2 / (safe_n * M_ION)
     T_par  = Pzz / safe_n
     T_perp = 0.5 * (Pxx + Pyy) / safe_n
     aniso  = T_perp / (T_par + 1e-30)
@@ -87,7 +94,7 @@ def process_snapshot(mom_file: str, bz_file: str):
     beta   = Pzz / (P_mag + 1e-30)
 
     mask = (
-        (Pzz > 0) & (Pyy > 0) & (n > 0.05) & (B2 > 1e-10)
+        (Pxx > 0) & (Pyy > 0) & (Pzz > 0) & (n > 0.05) & (B2 > 1e-10)
         & np.isfinite(beta) & np.isfinite(aniso)
         & (aniso > 0.05) & (aniso < 20.0)
         & (beta  > 0.1)  & (beta  < 2000.0)   # recorta artefactos numericos
@@ -135,15 +142,35 @@ def _style_ax(ax, title=""):
         ax.set_title(title, fontsize=12, fontweight="bold", color=TEXT_CLR, pad=8)
 
 
+def _robust_plot_ranges(beta, aniso):
+    """Choose shared log-scale limits without hard-coding one old run."""
+    beta = np.asarray(beta)
+    aniso = np.asarray(aniso)
+    valid = (
+        np.isfinite(beta) & np.isfinite(aniso)
+        & (beta > 0) & (aniso > 0)
+    )
+    if valid.sum() < 10:
+        return 0.5, 50.0, 0.3, 5.0
+
+    b_lo, b_hi = np.percentile(beta[valid], [0.5, 99.5])
+    a_lo, a_hi = np.percentile(aniso[valid], [0.5, 99.5])
+    xmin = max(0.05, b_lo / 1.25)
+    xmax = max(xmin * 10.0, b_hi * 1.25)
+    ymin = max(0.05, min(1.0, a_lo) / 1.2)
+    ymax = max(1.5, max(1.0, a_hi) * 1.2)
+    return xmin, xmax, ymin, ymax
+
+
 # ── Plot 1: Brazil acumulado coloreado por tiempo ─────────────────────────────
-def plot_brazil_accumulated(all_beta, all_aniso, all_toci, steps, outdir: Path):
+def plot_brazil_accumulated(
+    all_beta, all_aniso, snap_stats, steps, outdir: Path, b0_ref: float
+):
     """Scatter coloreado por Omega_ci*t con histograma de densidad superpuesto."""
     if len(all_beta) == 0:
         print("[WARN] Sin datos para Brazil acumulado"); return
 
-    # Rangos calibrados con datos reales del build2
-    xmin, xmax = 1.0,  600.0
-    ymin, ymax = 0.4,  4.5
+    xmin, xmax, ymin, ymax = _robust_plot_ranges(all_beta, all_aniso)
 
     fig, ax = plt.subplots(figsize=(12, 9))
     fig.patch.set_facecolor(DARK_BG)
@@ -153,7 +180,8 @@ def plot_brazil_accumulated(all_beta, all_aniso, all_toci, steps, outdir: Path):
         (all_beta  >= xmin) & (all_beta  <= xmax)
         & (all_aniso >= ymin) & (all_aniso <= ymax)
     )
-    bv = all_beta[in_range]; av = all_aniso[in_range]; tv = all_toci[in_range]
+    bv = all_beta[in_range]
+    av = all_aniso[in_range]
 
     # Fondo: densidad 2D con bins logaritmicos
     xbins = np.logspace(np.log10(xmin), np.log10(xmax), 120)
@@ -172,7 +200,7 @@ def plot_brazil_accumulated(all_beta, all_aniso, all_toci, steps, outdir: Path):
     _draw_thresholds(ax, xmin, xmax, ymin, ymax)
 
     # Condicion inicial
-    beta_init  = (N0 * T_PAR_I) / (B0**2 / 2.0)
+    beta_init  = (N0 * T_PAR_I) / (b0_ref**2 / 2.0)
     aniso_init = T_PERP_I / T_PAR_I
     ax.plot(beta_init, aniso_init, "*", color="#ffd700",
             markeredgecolor="white", markeredgewidth=0.7,
@@ -185,8 +213,18 @@ def plot_brazil_accumulated(all_beta, all_aniso, all_toci, steps, outdir: Path):
                   fontsize=12, color=TEXT_CLR, labelpad=8)
     ax.set_ylabel(r"$T_\perp / T_\parallel$", fontsize=13, color=TEXT_CLR, labelpad=8)
 
-    profile_str = "Mirror Maxwellian (build2)"
-    _style_ax(ax, rf"Brazil Plot — {profile_str}  ($m_i/m_e={int(MASS_RATIO)}$)")
+    if snap_stats:
+        beta_med = np.array([s["beta_med"] for s in snap_stats])
+        aniso_med = np.array([s["aniso_med"] for s in snap_stats])
+        time_med = np.array([s["toci"] for s in snap_stats])
+        ax.plot(beta_med, aniso_med, color="white", lw=1.2, alpha=0.75, zorder=10)
+        ax.scatter(
+            beta_med, aniso_med, c=time_med, cmap="cool", s=28,
+            edgecolors="white", linewidths=0.25, zorder=11,
+            label="Mediana espacial por snapshot",
+        )
+
+    _style_ax(ax, rf"Brazil Plot — {PROFILE_LABEL}  ($m_i/m_e={int(MASS_RATIO)}$)")
 
     t_max_oci = step_to_omegaci(steps[-1]) if steps else 0
     ax.text(0.98, 0.02,
@@ -227,16 +265,17 @@ def plot_temporal_evolution(snap_data: list, outdir: Path):
     ax1.set_facecolor(PANEL_BG)
     ax1.fill_between(toci, a_p25, a_p75, alpha=0.25, color="#ff6b6b")
     ax1.plot(toci, a_med, color="#ff6b6b", lw=2.0, label=r"mediana $T_\perp/T_\parallel$")
-    ax1.axhline(1.0, color=TEXT_CLR, alpha=0.3, lw=0.9, ls="--", label="Isotropy A=1")
+    ax1.axhline(1.0, color=TEXT_CLR, alpha=0.3, lw=0.9, ls="--", label="Isotropía A=1")
 
-    # Umbral mirror en beta_par=5: 1+1/5=1.2
-    beta_ref = 5.0
-    ax1.axhline(mirror_threshold(beta_ref), color="#ff4444", alpha=0.5, lw=1.2,
-                ls=":", label=rf"Mirror thr. ($\beta_\parallel={beta_ref}$)")
+    mirror_dynamic = mirror_threshold(np.maximum(b_med, 1e-12))
+    ax1.plot(toci, mirror_dynamic, color="#ff9999", alpha=0.8, lw=1.2,
+             ls=":", label=r"Umbral Mirror $1+1/\beta_\parallel(t)$")
 
     ax1.set_ylabel(r"$T_\perp / T_\parallel$", fontsize=12, color=TEXT_CLR)
-    ax1.set_ylim(0.3, 3.8)
-    _style_ax(ax1, "Evolución Temporal — Mirror Maxwellian (build2)")
+    finite_a = np.concatenate([a_p25, a_p75, mirror_dynamic])
+    ax1.set_ylim(max(0.05, np.nanpercentile(finite_a, 1) * 0.8),
+                 np.nanpercentile(finite_a, 99) * 1.2)
+    _style_ax(ax1, f"Evolución Temporal — {PROFILE_LABEL}")
     ax1.legend(fontsize=9.5, framealpha=0.5,
                facecolor="#1c2128", edgecolor="#30363d", labelcolor=TEXT_CLR)
 
@@ -265,7 +304,7 @@ def plot_temporal_evolution(snap_data: list, outdir: Path):
 
 
 # ── Plot 3: Grid de Brazil plots por snapshot ─────────────────────────────────
-def plot_brazil_grid(snap_list: list, outdir: Path, n_cols=4):
+def plot_brazil_grid(snap_list: list, outdir: Path, b0_ref: float, n_cols=4):
     """
     snap_list: lista de dicts {step, toci, aniso, beta_par}
     Genera un grid de N_SNAPS Brazil plots individuales.
@@ -281,14 +320,15 @@ def plot_brazil_grid(snap_list: list, outdir: Path, n_cols=4):
     fig.patch.set_facecolor(DARK_BG)
     axes_flat = np.array(axes).ravel()
 
-    xmin, xmax = 1.0, 600.0
-    ymin, ymax = 0.4, 4.5
+    all_beta = np.concatenate([s["beta_par"] for s in snap_list])
+    all_aniso = np.concatenate([s["anisotropy"] for s in snap_list])
+    xmin, xmax, ymin, ymax = _robust_plot_ranges(all_beta, all_aniso)
 
     cmap_time = cm.plasma
     t_all = np.array([s["toci"] for s in snap_list])
     t_norm = mcolors.Normalize(vmin=t_all.min(), vmax=t_all.max())
 
-    beta_init  = (N0 * T_PAR_I) / (B0**2 / 2.0)
+    beta_init  = (N0 * T_PAR_I) / (b0_ref**2 / 2.0)
     aniso_init = T_PERP_I / T_PAR_I
 
     for i, snap in enumerate(snap_list):
@@ -339,7 +379,7 @@ def plot_brazil_grid(snap_list: list, outdir: Path, n_cols=4):
         axes_flat[j].set_visible(False)
 
     fig.suptitle(
-        rf"Brazil Plots por Snapshot — Mirror Maxwellian  ($m_i/m_e={int(MASS_RATIO)}$)",
+        rf"Brazil Plots por Snapshot — {PROFILE_LABEL}  ($m_i/m_e={int(MASS_RATIO)}$)",
         fontsize=14, fontweight="bold", color=TEXT_CLR, y=1.01
     )
 
@@ -366,7 +406,7 @@ def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
     print(f"Snapshots encontrados: {len(common)}  (steps {common[0]}–{common[-1]})")
 
     # ── Acumular datos ────────────────────────────────────────────────────────
-    all_beta, all_aniso, all_toci = [], [], []
+    all_beta, all_aniso = [], []
     snap_stats  = []   # para plot temporal
     grid_snaps  = []   # para grid de Brazils
 
@@ -388,10 +428,9 @@ def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
         # Acumular acumulado (sub-muestreo)
         if n_pts > 0:
             sub = min(n_pts, 4000)
-            idx = np.random.choice(n_pts, sub, replace=False)
+            idx = RNG.choice(n_pts, sub, replace=False)
             all_beta.extend(bv[idx])
             all_aniso.extend(av[idx])
-            all_toci.extend([toci] * sub)
 
         # Estadisticas por paso
         if n_pts > 5:
@@ -418,19 +457,17 @@ def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
 
     all_beta  = np.asarray(all_beta)
     all_aniso = np.asarray(all_aniso)
-    all_toci  = np.asarray(all_toci)
-
     print("Generando graficas...")
-    plot_brazil_accumulated(all_beta, all_aniso, all_toci, common, out)
+    plot_brazil_accumulated(all_beta, all_aniso, snap_stats, common, out, B0_ref)
     plot_temporal_evolution(snap_stats, out)
-    plot_brazil_grid(grid_snaps, out, n_cols=4)
+    plot_brazil_grid(grid_snaps, out, B0_ref, n_cols=4)
     print("Listo.")
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Brazil plots para simulacion mirror_maxwellian (build2)."
+        description="Brazil plots para simulaciones de anisotropia PSC."
     )
     parser.add_argument("--moments", default=MOMENT_FILE_PATTERN,
                         help="Glob de archivos de momentos.")

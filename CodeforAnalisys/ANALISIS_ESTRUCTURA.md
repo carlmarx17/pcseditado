@@ -58,8 +58,8 @@ with h5py.File("prt.000001200.h5", "r") as f:
 ions  = np.where(q > 0)
 elecs = np.where(q < 0)
 
-# Temperatura paralela iónica (T = m * Var(v) = Var(p) / m)
-T_par_ions = np.var(pz[ions]) / 200.0
+# PSC guarda u = gamma*v; en estas corridas no relativistas u ~= v.
+T_par_ions = 200.0 * np.var(pz[ions])
 ```
 
 ### 2.2 Archivos de Campos — `pfd.*.h5`
@@ -387,7 +387,7 @@ Todas las constantes físicas derivadas del archivo `.cxx` están aquí:
 | `VA`           | 0.05          | 0.05             | Velocidad de Alfvén [c=1]            |
 | `OMEGA_CI`     | 0.000250      | 0.000250         | Frecuencia ciclotrón iónica          |
 | `DI`           | ≈14.142       | ≈14.142          | Longitud inercial iónica [celdas]    |
-| `NICELL`       | 2000          | 2000             | Partículas por celda                 |
+| `NICELL`       | Según perfil  | Según perfil     | Partículas por celda y especie       |
 | `BETA_I_PAR`   | 5.0           | 10.0             | Beta paralelo iónico                 |
 | `TI_PAR`       | 0.00625       | 0.0125           | Temperatura iónica paralela          |
 | `TI_PERP`      | 0.01875       | 0.00125          | Temperatura iónica perpendicular     |
@@ -396,16 +396,18 @@ Todas las constantes físicas derivadas del archivo `.cxx` están aquí:
 
 > **Resolución de grilla y escalas físicas:**
 >
-> Los parámetros de grilla están unificados para los 4 perfiles de simulación:
+> Los parámetros de grilla dependen del ejecutable:
 >
-> | Perfil | Dominio | Grid | Δx [d_i] | Δx [d_e] | nmax | RAM |
+> | Perfil | Dominio | Grid | Δx [d_i] | Δx [d_e] | ppc | nmax |
 > |---|---|---|---|---|---|---|
-> | Todos (Mirror / Firehose) | 32 × 32 d_i | 768² | 0.042 | **0.59** | 600,000 | ~75 GB |
+> | `M_S_bM` | 30 × 30 d_i | 1408² | 0.0213 | **0.301** | 1000 | 1,650,000 |
+> | Mirror heredado | 32 × 32 d_i | 1536² | 0.0208 | **0.295** | 1000 | 1,800,000 |
+> | Firehose heredado | 32 × 32 d_i | 1024² | 0.0312 | **0.442** | 1000 | 1,200,000 |
 >
 > - `d_e = c/ω_pe = 1` celda de código (PSC: c=1, n₀=1, mₑ=1)
 > - `d_i = √(mᵢ/mₑ) × d_e = √200 ≈ 14.14 d_e`
-> - La configuración resuelve la skin depth electrónica (Δx < 1 d_e) manteniendo el dominio completo de 32 d_i.
-> - Todas alcanzan el mismo tiempo físico: **t_max ≈ 59 Ω_ci⁻¹**.
+> - Las configuraciones listadas resuelven la skin depth electrónica (`Δx < 1 d_e`).
+> - El tiempo físico final debe calcularse con el `dt` y `nmax` del perfil activo.
 >
 > `PscConfig1vbecSingle` = **full PIC** (1st order Villasenor-Buneman Edge-Centered).
 > Ambas especies (iones y electrones) son **partículas cinéticas**.
@@ -438,7 +440,7 @@ t_physical = step * dt_code * OMEGA_CI   # en unidades Ωci⁻¹
 x_di = x_cells / DI
 
 # Momento → velocidad en unidades de vA
-v_va = (p / m) / VA
+v_va = p / VA
 ```
 
 ---

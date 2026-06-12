@@ -8,13 +8,12 @@ En PSC (en unidades internas del código):
 
 Masa artificial: mi/me = 200  =>  me = 1.0,  mi = 200.0
 
-Parámetros comunes a las 4 simulaciones:
+Parámetros comunes:
   - mass_ratio = 200,  vA/c = 0.05
-  - nicell = 2000 ppc
 
-Configuraciones de grilla (perfil-dependiente):
-  Mirror:   32 d_i × 32 d_i,  grilla 448×448  (Δ ≈ 1 d_e,  resuelve d_e)
-  Firehose: 32 d_i × 32 d_i,  grilla 128×128  (Δ = 3.54 d_e, escala iónica)
+El perfil mantenido M_S_bM usa 30 d_i × 30 d_i, grilla 1408×1408
+y 1000 partículas por celda y especie. Los perfiles heredados usan sus
+valores específicos definidos en _PROFILES.
 
 
 CONFIGURACIONES DE INESTABILIDAD:
@@ -23,8 +22,8 @@ CONFIGURACIONES DE INESTABILIDAD:
 
   Cada una tiene variante Maxwellian (kappa=None) y Kappa (kappa=3).
 
-Selección del perfil activo:  configurar SIM_PROFILE al inicio del análisis
-  o pasar --profile mirror_kappa | mirror_maxwellian | firehose_kappa | firehose_maxwellian
+Selección del perfil activo: configurar PSC_PROFILE antes del análisis.
+El flujo mantenido usa por defecto M_S_bM, correspondiente a psc_M_S_bM.cxx.
 
 Todas las fórmulas siguen la notación estándar de plasma PIC de campo magnético
 orientado según z (dirección paralela = z).
@@ -42,7 +41,23 @@ import numpy as np
 # ══════════════════════════════════════════════════════════════════════════
 
 _PROFILES = {
+    "M_S_bM": {
+        "label": "Mirror Strong Bi-Maxwellian",
+        "mass_ratio": 200.0,
+        "vA_over_c": 0.05,
+        "beta_i_par": 5.0,
+        "Ti_perp_over_Ti_par": 3.0,
+        "beta_e_par": 1.0,
+        "Te_perp_over_Te_par": 1.0,
+        "kappa": None,
+        "domain_di": 30.0,
+        "ngrid": 1408,
+        "nmax": 1_650_000,
+        "nicell": 1000,
+        "particle_basename": "prt_M_S_bM",
+    },
     "mirror_kappa": {
+        "label": "Mirror Kappa",
         "mass_ratio": 200.0,
         "vA_over_c": 0.05,
         "beta_i_par": 5.0,
@@ -50,8 +65,14 @@ _PROFILES = {
         "beta_e_par": 1.0,
         "Te_perp_over_Te_par": 1.0,
         "kappa": 3.0,
+        "domain_di": 32.0,
+        "ngrid": 1536,
+        "nmax": 1_800_000,
+        "nicell": 1000,
+        "particle_basename": "prt_mirror_kappa3",
     },
     "mirror_maxwellian": {
+        "label": "Mirror Maxwellian",
         "mass_ratio": 200.0,
         "vA_over_c": 0.05,
         "beta_i_par": 5.0,
@@ -59,8 +80,14 @@ _PROFILES = {
         "beta_e_par": 1.0,
         "Te_perp_over_Te_par": 1.0,
         "kappa": None,
+        "domain_di": 32.0,
+        "ngrid": 1536,
+        "nmax": 1_800_000,
+        "nicell": 1000,
+        "particle_basename": "prt_mirror_maxwellian",
     },
     "firehose_kappa": {
+        "label": "Firehose Kappa",
         "mass_ratio": 200.0,
         "vA_over_c": 0.05,
         "beta_i_par": 10.0,
@@ -68,8 +95,14 @@ _PROFILES = {
         "beta_e_par": 1.0,
         "Te_perp_over_Te_par": 1.0,
         "kappa": 3.0,
+        "domain_di": 32.0,
+        "ngrid": 1024,
+        "nmax": 1_200_000,
+        "nicell": 1000,
+        "particle_basename": "prt_firehose_kappa3",
     },
     "firehose_maxwellian": {
+        "label": "Firehose Maxwellian",
         "mass_ratio": 200.0,
         "vA_over_c": 0.05,
         "beta_i_par": 10.0,
@@ -77,12 +110,17 @@ _PROFILES = {
         "beta_e_par": 1.0,
         "Te_perp_over_Te_par": 1.0,
         "kappa": None,
+        "domain_di": 32.0,
+        "ngrid": 1024,
+        "nmax": 1_200_000,
+        "nicell": 1000,
+        "particle_basename": "prt_firehose_maxwellian",
     },
 }
 
 # ── Seleccionar perfil activo ────────────────────────────────────────────
 # Puede ser sobreescrito con la variable de entorno PSC_PROFILE
-SIM_PROFILE = os.environ.get("PSC_PROFILE", "mirror_kappa")
+SIM_PROFILE = os.environ.get("PSC_PROFILE", "M_S_bM")
 
 if SIM_PROFILE not in _PROFILES:
     raise ValueError(
@@ -91,6 +129,7 @@ if SIM_PROFILE not in _PROFILES:
     )
 
 _active = _PROFILES[SIM_PROFILE]
+PROFILE_LABEL = _active["label"]
 
 # ── Parámetros de la simulación (desde los .cxx) ────────────────────────
 MASS_RATIO      = _active["mass_ratio"]       # mi/me = 200
@@ -159,27 +198,15 @@ BETA_E_PAR_COMPUTED  = 2.0 * N0 * TE_PAR  / B0**2
 # PSC 1vbec = full PIC (1st order Villasenor-Buneman Edge-Centered).
 # Ambas especies (iones y electrones) son partículas cinéticas.
 #
-# Todos los perfiles: 32 d_i × 768²  →  Δ = 0.589 d_e = 0.042 d_i
-# Resuelve d_e (Δ < 1 d_e). RAM ~75 GB, 24 GB libres para SO/MPI en servidor 100 GB.
-# Jerarquía de escalas: d_i = 14.14 d_e,  λ_De = 0.0354 d_e,  Δ/λ_De ≈ 16.6
-
-_GRID_CONFIGS = {
-    "mirror_kappa":        {"domain_di": 32.0, "ngrid": 768, "nmax": 600000},
-    "mirror_maxwellian":   {"domain_di": 32.0, "ngrid": 768, "nmax": 600000},
-    "firehose_kappa":      {"domain_di": 32.0, "ngrid": 768, "nmax": 600000},
-    "firehose_maxwellian": {"domain_di": 32.0, "ngrid": 768, "nmax": 600000},
-}
-
-_grid = _GRID_CONFIGS[SIM_PROFILE]
-
-N_GRID_Y  = _grid["ngrid"]              # celdas en Y
-N_GRID_Z  = _grid["ngrid"]              # celdas en Z
-DOMAIN_DI = _grid["domain_di"]          # extensión del dominio en d_i
-NMAX      = _grid["nmax"]               # número máximo de pasos
+# Estos valores deben coincidir con setupGrid() y setupParameters() del .cxx.
+N_GRID_Y  = _active["ngrid"]             # celdas en Y
+N_GRID_Z  = _active["ngrid"]             # celdas en Z
+DOMAIN_DI = _active["domain_di"]         # extensión del dominio en d_i
+NMAX      = _active["nmax"]              # número máximo de pasos
 DOMAIN_DE = DOMAIN_DI * DI              # extensión en d_e
 DX_DI     = DOMAIN_DI / N_GRID_Y       # resolución [d_i / celda]
 DX_DE     = DOMAIN_DE / N_GRID_Y       # resolución [d_e / celda]
-NICELL    = 2000                        # partículas por celda (ver setupGrid)
+NICELL    = _active["nicell"]           # partículas por celda (setupGrid)
 CORI      = 1.0 / NICELL
 
 # Tamaño del dominio en d_i
@@ -187,12 +214,12 @@ DOMAIN_DI_Y = DOMAIN_DI
 DOMAIN_DI_Z = DOMAIN_DI
 
 # ── Región de salida de partículas ───────────────────────────────────────
-# Central 8×8 d_i region (ajustada al tamaño de grilla)
-_prt_half = int(round(8.0 / DOMAIN_DI * N_GRID_Y / 2))  # celdas del centro
+# Central 20% per resolved direction, matching the maintained C++ executables.
+_prt_half = int(round(0.1 * N_GRID_Y))
 _prt_center = N_GRID_Y // 2
 PRT_OUTPUT_LO = (0, _prt_center - _prt_half, _prt_center - _prt_half)
 PRT_OUTPUT_HI = (1, _prt_center + _prt_half, _prt_center + _prt_half)
-PRT_OUTPUT_EVERY = 500
+PRT_OUTPUT_EVERY = 10000
 
 # ── Constantes auxiliares para análisis ─────────────────────────────────
 MU0 = 1.0
@@ -202,7 +229,8 @@ _dx_code = DOMAIN_DE / N_GRID_Y
 DT_CODE = 0.95 * _dx_code / np.sqrt(2.0)
 FIELD_FILE_PATTERN = "pfd.*.h5"
 MOMENT_FILE_PATTERN = "pfd_moments.*.h5"
-PARTICLE_FILE_PATTERN = "prt_mirror_maxwellian.*.h5"
+PARTICLE_BASENAME = _active["particle_basename"]
+PARTICLE_FILE_PATTERN = f"{PARTICLE_BASENAME}.*.h5"
 
 
 # ── Funciones de conversión ───────────────────────────────────────────────
