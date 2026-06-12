@@ -1,4 +1,4 @@
-TEX  = reconexion_magnetica
+TEX  = KAPPA_PARTICLE_SETUP
 DOCS = .
 
 .PHONY: all clean

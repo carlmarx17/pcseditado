@@ -1,5 +1,5 @@
 // psc_W_M_bM — Whistler Moderate Bi-Maxwellian
-// βi∥=1.0  Ai=1.0  βe∥=0.5  Ae=Te⊥/Te∥=2.0 | mr=200, 2000 ppc, 1408²
+// βi∥=1.0  Ai=1.0  βe∥=0.5  Ae=Te⊥/Te∥=2.0 | mr=200, 1000 ppc, 1408²
 
 #include <psc.hxx>
 #include <setup_fields.hxx>
@@ -45,7 +45,7 @@ void setupParameters() {
 
 Grid_t* setupGrid() {
   g.d_i = std::sqrt(g.mass_ratio / g.n);
-  double domain_size = 20.0 * g.d_i;
+  double domain_size = 30.0 * g.d_i;
   Grid_t::Real3 LL = {1.0, domain_size, domain_size};
   Int3 gdims = {1, 1408, 1408}; Int3 np = {1, 64, 16}; // 1024 MPI patches
   Grid_t::Domain domain{gdims, LL, -.5 * LL, np};
@@ -59,7 +59,7 @@ Grid_t* setupGrid() {
   mpi_printf(MPI_COMM_WORLD, "d_e = %g, d_i = %g\n", 1., g.d_i);
   mpi_printf(MPI_COMM_WORLD, "lambda_De = %g\n", sqrt(g.Te_par));
   auto norm_params = Grid_t::NormalizationParams::dimensionless();
-  norm_params.nicell = 2000;
+  norm_params.nicell = 1000;
   double dt = psc_params.cfl * courant_length(domain);
   Grid_t::Normalization norm{norm_params};
   Int3 ibn = {2, 2, 2};
@@ -108,10 +108,10 @@ void run() {
   psc_params.marder_interval = 100;
   Marder marder(grid, marder_diffusion, marder_loop, marder_dump);
   OutputFieldsItemParams outf_item_params{}; OutputFieldsParams outf_params{};
-  outf_item_params.pfield.out_interval = 690;
+  outf_item_params.pfield.out_interval = 1000;
   outf_params.fields = outf_item_params; outf_params.moments = outf_item_params;
   OutputFields<MfieldsState, Mparticles, Dim, Writer> outf{grid, outf_params};
-  OutputParticlesParams outp_params{}; outp_params.every_step = 1000;
+  OutputParticlesParams outp_params{}; outp_params.every_step = 10000;
   outp_params.data_dir = "."; outp_params.basename = "prt_W_M_bM";
   outp_params.lo = {0, int(0.4*1408), int(0.4*1408)};
   outp_params.hi = {1, int(0.6*1408), int(0.6*1408)};

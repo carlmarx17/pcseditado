@@ -81,9 +81,9 @@ scripts emparejan campos y momentos por el mismo `step`.
 Para una especie `s`:
 
 ```text
-v_i = p_i / m_s
-u_i = <v_i>
-delta v_i = v_i - u_i
+u_i = p_i = gamma v_i
+v_i ~= u_i                    # régimen no relativista de estas corridas
+delta u_i = u_i - <u_i>
 ```
 
 Cuando se dispone de densidad y primer momento, la presión térmica central se
@@ -104,8 +104,8 @@ temperatura si aparece una deriva macroscópica.
 Desde partículas, el cálculo usado por `plot_prt.py` es:
 
 ```text
-T_parallel = Var(p_z) / m_s
-T_perp = [Var(p_x) + Var(p_y)] / (2 m_s)
+T_parallel = m_s Var(p_z)
+T_perp = m_s [Var(p_x) + Var(p_y)] / 2
 A_s = T_perp / T_parallel
 ```
 
@@ -364,7 +364,7 @@ Se validan:
 
 ```text
 n = N_particulas * cori / N_celdas
-<v_i> = <p_i> / m
+<v_i> ~= <p_i>
 T_i = m Var(p_i) / beta_norm^2
 A = [(Tx + Ty)/2] / Tz
 kurtosis = <delta p^4> / <delta p^2>^2
@@ -394,8 +394,8 @@ esa evolución.
 Variables:
 
 ```text
-v_parallel = pz / m
-v_perp = sqrt(px^2 + py^2) / m
+v_parallel ~= pz
+v_perp ~= sqrt(px^2 + py^2)
 ```
 
 Las VDF se construyen con histogramas 1D o 2D normalizados. La escala logarítmica
@@ -462,7 +462,7 @@ cinéticas [R6, R7].
 
 Existen dos diagnósticos diferentes.
 
-#### A. Tercer momento desde partículas
+#### A. Tercer momento desde partículas (experimental)
 
 **Código:** sección de flujo de calor en `plot_prt.py`
 
@@ -472,8 +472,9 @@ q_perp = (m/2) <delta v^2 delta vperp>
 ```
 
 Los grupos `R1...R4` se forman con cuantiles de `pz`, no con coordenadas
-espaciales. Por eso representan poblaciones con diferente velocidad paralela y
-no regiones físicas reales.
+espaciales. Por eso no son regiones físicas reales. Este gráfico quedó fuera
+del flujo estándar `make particles`; no debe usarse para afirmar transporte
+espacial.
 
 #### B. Proxy desde presión y velocidad de flujo
 
@@ -554,7 +555,8 @@ make diamagnetic   # corriente diamagnética
 make fields        # fluctuaciones magnéticas
 make spectral      # espectros y modos dominantes
 make validate      # condición inicial
-make particles     # VDF, energía y diagnósticos de partículas
+make particles     # VDF y diagnósticos cuantitativos de partículas
+make particles-3d  # visualizaciones 3D cualitativas (opcionales)
 make heatflux      # proxy de flujo de calor
 make all           # todo excepto spectral y report
 ```
@@ -572,7 +574,10 @@ make all PARTICLE_BASENAME=prt_mirror_maxwellian
 ```
 
 Seleccione también `PSC_PROFILE` y verifique `B0_REF`, tamaño de grilla,
-dominio y frecuencia de salida.
+dominio y frecuencia de salida. El perfil por defecto es `M_S_bM`, que
+corresponde a `psc_M_S_bM.cxx`: malla `1408x1408`, dominio `30 d_i`,
+`1000` partículas por celda y especie, campos/momentos cada `1000` pasos
+y partículas cada `10000` pasos.
 
 ## 7. Criterios mínimos para interpretar resultados
 

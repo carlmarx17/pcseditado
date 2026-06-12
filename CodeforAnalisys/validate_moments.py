@@ -95,12 +95,9 @@ def compute_moments(species, species_name, expected_T_perp, expected_T_par, expe
     Compute the 0th, 1st, and 2nd moments of the distribution and compare
     with the expected values.
 
-    PSC stores momenta as p_i (not velocities), so:
-      - Velocity: v_i = p_i / m   (non-relativistic)
-      - Temperature: T_i = m * Var(p_i/m) = Var(p_i) / m
-        But in the sampling code: Var(p_i) = beta^2 * T_i / m
-        So: T_measured = m * <(p_i - <p_i>)^2> / beta^2
-        With beta=1 (dimensionless): T_measured = m * <p_i^2> (assuming <p_i>=0)
+    PSC stores normalized momentum u_i = gamma*v_i. In this non-relativistic
+    setup u_i ~= v_i, and the sampler gives Var(u_i) = beta^2*T_i/m.
+    Therefore T_measured = m*Var(u_i)/beta^2.
 
     Actually, the weight w matters! In PSC with fractional_n_particles_per_cell=true,
     all weights are 1.0. The density is the total weight per cell * cori.
@@ -142,19 +139,19 @@ def compute_moments(species, species_name, expected_T_perp, expected_T_par, expe
     py_mean = np.average(species['py'], weights=w)
     pz_mean = np.average(species['pz'], weights=w)
 
-    # Velocity = p / m
-    vx_mean = px_mean / m
-    vy_mean = py_mean / m
-    vz_mean = pz_mean / m
+    # Normalized momentum u = gamma*v ~= v for this non-relativistic setup.
+    vx_mean = px_mean
+    vy_mean = py_mean
+    vz_mean = pz_mean
 
     print(f"\n  ── 1st Moment: MACROSCOPIC VELOCITY (bulk drift) ──")
     print(f"    Expected: <v_x> = <v_y> = <v_z> = 0.0")
     print(f"    Measured <p_x>: {px_mean:+.6e}")
     print(f"    Measured <p_y>: {py_mean:+.6e}")
     print(f"    Measured <p_z>: {pz_mean:+.6e}")
-    print(f"    Measured <v_x> = <p_x>/m: {vx_mean:+.6e}")
-    print(f"    Measured <v_y> = <p_y>/m: {vy_mean:+.6e}")
-    print(f"    Measured <v_z> = <p_z>/m: {vz_mean:+.6e}")
+    print(f"    Measured <v_x> ≈ <u_x>: {vx_mean:+.6e}")
+    print(f"    Measured <v_y> ≈ <u_y>: {vy_mean:+.6e}")
+    print(f"    Measured <v_z> ≈ <u_z>: {vz_mean:+.6e}")
     
     # Compare to thermal speed to see if drift is negligible
     # v_th ~ sqrt(T/m)
@@ -226,18 +223,26 @@ def compute_moments(species, species_name, expected_T_perp, expected_T_par, expe
     # For kappa=3: Kurt_excess = 6 / (6-5) = 6.0
     # For Maxwellian: Kurt_excess = 0
     print(f"\n  ── HIGHER MOMENT: KURTOSIS (kappa signature) ──")
-    kappa_kurt_expected = 6.0 / (2.0 * KAPPA - 5.0) if KAPPA > 2.5 else float('inf')
-    print(f"    Expected excess kurtosis for kappa={KAPPA}: {kappa_kurt_expected:.4f}")
-    print(f"    (Maxwellian would give: 0.0)")
+    kappa_kurt_expected = (
+        6.0 / (2.0 * KAPPA - 5.0)
+        if KAPPA is not None and KAPPA > 2.5
+        else 0.0 if KAPPA is None else float("inf")
+    )
+    model_name = "Maxwellian" if KAPPA is None else f"kappa={KAPPA}"
+    print(f"    Expected excess kurtosis for {model_name}: {kappa_kurt_expected:.4f}")
 
     for field, label in [('px', 'p_x (perp)'), ('py', 'p_y (perp)'), ('pz', 'p_z (par)')]:
         vals = species[field]
         mean = np.average(vals, weights=w)
         var = np.average((vals - mean)**2, weights=w)
         kurt = np.average((vals - mean)**4, weights=w) / var**2 - 3.0
-        kurt_err = abs(kurt - kappa_kurt_expected) / kappa_kurt_expected * 100 if kappa_kurt_expected != float('inf') else float('inf')
-        status_k = "✓" if kurt_err < 10.0 else "~"
-        print(f"    {label:<15} excess kurtosis = {kurt:+.4f}  (err: {kurt_err:.1f}%)  {status_k}")
+        if KAPPA is None:
+            status_k = "✓" if abs(kurt) < 0.1 else "~"
+            print(f"    {label:<15} excess kurtosis = {kurt:+.4f}  {status_k}")
+        else:
+            kurt_err = abs(kurt - kappa_kurt_expected) / kappa_kurt_expected * 100
+            status_k = "✓" if kurt_err < 10.0 else "~"
+            print(f"    {label:<15} excess kurtosis = {kurt:+.4f}  (err: {kurt_err:.1f}%)  {status_k}")
 
     print()
     return {
@@ -504,4 +509,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
