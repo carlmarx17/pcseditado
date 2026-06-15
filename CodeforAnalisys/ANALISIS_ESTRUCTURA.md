@@ -1,7 +1,41 @@
 # Estructura del Ecosistema de Análisis PSC
 
-> Documentación técnica de la pipeline de post-procesamiento para las simulaciones
-> `psc_mirror_kappa`, `psc_mirror_maxwellian`, `psc_firehose_kappa`, `psc_firehose_maxwellian`.
+> Documentación técnica de la pipeline de post-procesamiento para las corridas
+> normales bi-Maxwellianas `F_*_bM`, `M_*_bM`, `W_*_bM` y los casos
+> Maxwellian/Kappa heredados.
+
+## 0. Contrato de una corrida
+
+Cada directorio de datos debe contener una sola simulación. Para
+`CASE=F_M_bM`, los nombres esperados son:
+
+```text
+pfd.<step>_p000000.h5
+pfd_moments.<step>_p000000.h5
+prt_F_M_bM.<step>.h5
+```
+
+El comando de producción es:
+
+```bash
+cd CodeforAnalisys
+make analysis DATA_DIR=../ruta/F_M_bM CASE=F_M_bM
+```
+
+`CASE` selecciona parámetros físicos, especie impulsora, normalización temporal,
+nombre de partículas y carpeta de salida. El manifiesto
+`analysis_results/F_M_bM/F_M_bM_analysis_manifest.json` registra estas
+decisiones y los pasos detectados.
+
+Para Firehose se reportan ambas convenciones:
+
+```text
+A_i = T_i_perp / T_i_parallel       # aumenta hacia 1
+R_i = T_i_parallel / T_i_perp=1/A_i # disminuye hacia 1
+```
+
+Decir solamente que "la anisotropía debe bajar" es ambiguo sin indicar cuál
+de estas dos razones se está usando.
 
 ---
 
@@ -11,7 +45,7 @@ PSC genera dos tipos de archivos HDF5 (`.h5`) durante la simulación:
 
 | Patrón de archivo        | Contenido                                      | Leído por                            |
 |--------------------------|------------------------------------------------|--------------------------------------|
-| `prt.NNNNNNNN.h5`        | Datos de partículas (q, m, px, py, pz, w)      | `plot_prt.py`, `validate_moments.py` |
+| `prt_<CASE>.NNNNNNNNN.h5` | Datos de partículas (q, m, px, py, pz, w)     | `plot_prt.py`, `validate_moments.py` |
 | `pfd.NNNNNN_pN.h5`       | Campos EM en grilla (Bx, By, Bz, Ex, Ey, Ez)  | `anisotropy_analysis.py`, `mirror_physics.py` |
 | `pfd_moments.NNNNNN_pN.h5` | Momentos de partículas (P_ij, rho, J)        | `anisotropy_analysis.py`, `diamagnetic_current.py` |
 

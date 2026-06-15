@@ -45,6 +45,84 @@ normalización, filtrado y selección de rango
 gráficas PNG, animaciones GIF y tablas CSV
 ```
 
+### Ejecución reproducible con Make
+
+Los comandos se ejecutan desde `CodeforAnalisys`. `DATA_DIR` puede ser una ruta
+relativa o absoluta y debe apuntar a una sola corrida PSC.
+
+```bash
+cd CodeforAnalisys
+make show-inputs DATA_DIR=../corridas/F_M_bM CASE=F_M_bM
+make analysis DATA_DIR=../corridas/F_M_bM CASE=F_M_bM
+```
+
+También existe un objetivo corto por caso:
+
+```bash
+make F_M_bM DATA_DIR=../corridas/F_M_bM
+```
+
+| `CASE` | Inestabilidad | Especie | `beta_parallel(0)` | `T_perp/T_parallel(0)` |
+|---|---|---|---:|---:|
+| `F_S_bM` | Firehose fuerte | ion | 10 | 0.1 |
+| `F_M_bM` | Firehose media | ion | 6 | 0.3 |
+| `F_W_bM` | Firehose débil | ion | 3 | 0.6 |
+| `M_S_bM` | Mirror fuerte | ion | 5 | 3.0 |
+| `M_M_bM` | Mirror media | ion | 5 | 2.0 |
+| `M_W_bM` | Mirror débil | ion | 6 | 1.5 |
+| `W_S_bM` | Whistler fuerte | electrón | 0.5 | 3.0 |
+| `W_M_bM` | Whistler media | electrón | 0.5 | 2.0 |
+| `W_W_bM` | Whistler débil | electrón | 0.5 | 1.5 |
+
+No use `PSC_PROFILE=firehose_maxwellian` para analizar `F_M_bM`: ese perfil
+corresponde a `beta_i_parallel=10`, `A_i=0.1`, no al caso medio. El `Makefile`
+ahora deriva `PSC_PROFILE`, `RUN_NAME` y `PARTICLE_BASENAME` desde `CASE`.
+
+La detección usa los nombres escritos por PSC:
+
+```text
+pfd.<step>_p<rank>.h5
+pfd_moments.<step>_p<rank>.h5
+prt_<caso>.<step>.h5
+```
+
+Campos y momentos se emparejan por `step`; las partículas se ordenan por el
+paso contenido en el nombre. Si hay más de una serie `prt_<caso>` en la misma
+carpeta, el análisis se detiene para evitar mezclar simulaciones.
+
+La salida de `F_M_bM` queda organizada como:
+
+```text
+analysis_results/F_M_bM/
+├── F_M_bM_analysis_manifest.json
+├── 01_anisotropy/
+│   ├── F_M_bM_anisotropy_evolution.csv
+│   ├── F_M_bM_evolucion_anisotropia.png
+│   ├── F_M_bM_brazil_trayectoria.png
+│   └── F_M_bM_brazil_snapshots.png
+├── 02_fields/
+├── 03_particles/
+│   ├── F_M_bM_particle_anisotropy_evolution.csv
+│   ├── F_M_bM_anisotropy_and_field_evolution.png
+│   └── F_M_bM_brazil_plot.png
+├── 04_spectra/
+├── 05_diamagnetic/
+└── 06_heat_flux/
+```
+
+La trayectoria Brazil contiene un estado global por snapshot:
+
+```text
+A_i(t) = <P_perp>/<P_parallel>
+beta_i_parallel(t) = 2 <P_parallel>/<B^2>
+```
+
+No representa trayectorias de partículas individuales. Para Firehose,
+`A_i=T_i_perp/T_i_parallel < 1` y la relajación hace que `A_i` aumente hacia
+uno. La razón inversa `T_i_parallel/T_i_perp` es la que disminuye. Ambas se
+grafican y se escriben en CSV. Para Mirror, `A_i > 1` normalmente disminuye
+hacia uno. Para Whistler se analiza la anisotropía electrónica, no la iónica.
+
 No se debe interpretar una sola gráfica como prueba concluyente. Una
 identificación robusta combina evolución temporal, firma espacial, espectro,
 anisotropía y conservación o transferencia de energía.

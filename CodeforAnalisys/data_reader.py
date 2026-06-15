@@ -2,6 +2,7 @@ import h5py
 import glob
 import re
 import numpy as np
+from pathlib import Path
 from typing import Dict, List, Optional
 
 class PICDataReader:
@@ -9,8 +10,8 @@ class PICDataReader:
     
     @staticmethod
     def get_step_from_filename(filename: str) -> Optional[int]:
-        """Extracts the step number from a padded string like pfd_moments.001000_..."""
-        match = re.search(r"\.(\d+)_", filename)
+        """Extract the step from PSC field or particle output names."""
+        match = re.search(r"\.(\d+)(?:_p\d+)?\.h5$", Path(filename).name)
         if match:
             return int(match.group(1))
         return None
@@ -23,8 +24,39 @@ class PICDataReader:
         for f in files:
             step = PICDataReader.get_step_from_filename(f)
             if step is not None:
+                if step in file_map and file_map[step] != f:
+                    raise ValueError(
+                        f"Multiple HDF5 files found for step {step}: "
+                        f"{file_map[step]} and {f}. This reader expects one "
+                        "assembled p000000 file per snapshot."
+                    )
                 file_map[step] = f
         return file_map
+
+    @staticmethod
+    def discover_outputs(data_dir: str) -> Dict[str, object]:
+        """Discover PSC outputs and reject ambiguous particle series."""
+        root = Path(data_dir).expanduser().resolve()
+        if not root.is_dir():
+            raise FileNotFoundError(f"Data directory does not exist: {root}")
+
+        fields = PICDataReader.find_files(str(root / "pfd.*_p*.h5"))
+        moments = PICDataReader.find_files(str(root / "pfd_moments.*_p*.h5"))
+
+        particle_series: Dict[str, Dict[int, str]] = {}
+        for path in sorted(root.glob("prt*.h5")):
+            step = PICDataReader.get_step_from_filename(str(path))
+            match = re.match(r"(.+)\.\d+(?:_p\d+)?\.h5$", path.name)
+            if step is None or match is None:
+                continue
+            particle_series.setdefault(match.group(1), {})[step] = str(path)
+
+        return {
+            "data_dir": root,
+            "fields": fields,
+            "moments": moments,
+            "particles": particle_series,
+        }
 
     @staticmethod
     def get_uid_group(f: h5py.File, base_prefix: str) -> str:

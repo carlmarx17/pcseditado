@@ -6,9 +6,9 @@ Valida que los momentos de la distribución (densidad, velocidad macroscópica,
 temperatura) calculados de los datos de partículas coincidan con los parámetros
 usados en los archivos .cxx de simulación.
 
-Unidades físicas usando mi/me = 100 (masa artificial):
-  Espacial  →  dᵢ = c/ωₚᵢ = √(mᵢ/n₀) = 10  [celdas/dᵢ]
-  Temporal  →  Ωcᵢ = qᵢB₀/mᵢ = 0.05/100    [rad/t_código]
+Unidades físicas usando mi/me = 200 (masa artificial):
+  Espacial  →  dᵢ = c/ωₚᵢ = √(mᵢ/n₀) = √200
+  Temporal  →  Ωcᵢ = qᵢB₀/mᵢ = 0.05/200    [rad/t_código]
   Velocidad →  vA = B₀ = 0.05              [en código con c=1]
 
 Usage:
@@ -19,9 +19,10 @@ If no path is given, defaults to ../build/src/prt.000000000.h5 (t=0).
 
 import sys
 import os
+import re
+import argparse
 import h5py
 import numpy as np
-from scipy.special import gamma as gamma_func
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -45,7 +46,7 @@ from psc_units import (
 Zi = ZI
 
 # Definición de especies PSC:
-#   iones:      q = +Zi = +1.0,  m = MASS_RATIO * Zi = 100.0
+#   iones:      q = +Zi = +1.0,  m = MASS_RATIO * Zi = 200.0
 #   electrones: q = -1.0,        m = 1.0  (masa artificial, mi/me = 100)
 Q_ION      = Zi     # = +1.0
 Q_ELECTRON = -1.0
@@ -342,7 +343,7 @@ def print_final_summary(ion_results, electron_results):
 # 5. GRÁFICO RESUMEN VISUAL
 # ═══════════════════════════════════════════════════════════════════════
 
-def plot_validation_summary(ion_res, elec_res, outdir):
+def plot_validation_summary(ion_res, elec_res, outdir, run_name=""):
     """
     Gráfico resumen visual tipo tabla con colores PASS/FAIL.
     Temperaturas en mᵢvA² (iones) y mₑvA² (electrones).
@@ -460,7 +461,9 @@ def plot_validation_summary(ion_res, elec_res, outdir):
         fig.text(xl, 0.025, lbl, transform=fig.transFigure,
                  fontsize=9.5, color=col, fontweight='bold', va='bottom')
 
-    out_path = os.path.join(outdir, "validation_summary.png")
+    clean_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", run_name).strip("_")
+    prefix = f"{clean_name}_" if clean_name else ""
+    out_path = os.path.join(outdir, f"{prefix}validation_summary.png")
     plt.savefig(out_path, dpi=180, bbox_inches='tight', facecolor='white')
     plt.close()
     print(f"\n  [Visual report] Saved: {out_path}")
@@ -471,11 +474,17 @@ def plot_validation_summary(ion_res, elec_res, outdir):
 # ═══════════════════════════════════════════════════════════════════════
 
 def main():
-    if len(sys.argv) > 1:
-        filepath = sys.argv[1]
-    else:
-        filepath = os.path.join(os.path.dirname(__file__),
-                                "..", "build", "src", "prt.000000000.h5")
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "filepath", nargs="?",
+        default=os.path.join(
+            os.path.dirname(__file__), "..", "build", "src", "prt.000000000.h5"
+        ),
+    )
+    parser.add_argument("--outdir")
+    parser.add_argument("--run-name", default="")
+    args = parser.parse_args()
+    filepath = args.filepath
 
     if not os.path.exists(filepath):
         print(f"ERROR: File not found: {filepath}")
@@ -502,9 +511,11 @@ def main():
 
     print_final_summary(ion_results, electron_results)
 
-    outdir = os.path.join(os.path.dirname(os.path.abspath(filepath)), "validation_plots")
+    outdir = args.outdir or os.path.join(
+        os.path.dirname(os.path.abspath(filepath)), "validation_plots"
+    )
     os.makedirs(outdir, exist_ok=True)
-    plot_validation_summary(ion_results, electron_results, outdir)
+    plot_validation_summary(ion_results, electron_results, outdir, args.run_name)
 
 
 if __name__ == "__main__":

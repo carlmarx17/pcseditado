@@ -1,105 +1,170 @@
-# Makefile — Analysis Pipeline for Kappa-Anisotropy PIC Simulation
-# Targets mirror the Python scripts in this directory.
+# Analysis pipeline for PSC outputs.
+#
+# Paths supplied on the command line are interpreted relative to this
+# directory. Results are grouped by RUN_NAME so different simulations never
+# overwrite each other.
 
-# Variables
-PYTHON   = python3
-B0_REF   = 0.05     # Matches vA_over_c = 0.05 in psc_mirror_maxwellian.cxx
+PYTHON ?= $(abspath ../.venv/bin/python)
 DATA_DIR ?= ../build/src
-PARTICLE_BASENAME ?= prt_M_S_bM
-PSC_PROFILE ?= M_S_bM
-PARTICLE_PATTERN = $(DATA_DIR)/$(PARTICLE_BASENAME).*.h5
+DETECTED_CASE = $(shell detected=$$(find "$(DATA_DIR)" -maxdepth 1 -type f \
+	-name 'prt_*.h5' -printf '%f\n' 2>/dev/null | sed -E \
+	's/^(prt_)?([^.]+)\.[0-9]+(_p[0-9]+)?\.h5$$/\2/' | sort -u | head -1); \
+	if test -n "$$detected"; then echo "$$detected"; \
+	else basename "$(abspath $(DATA_DIR))" | grep -E '^[FMW]_[SMW]_bM$$' || true; fi)
+CASE ?= $(DETECTED_CASE)
+RUN_NAME ?= $(if $(CASE),$(CASE),$(notdir $(abspath $(DATA_DIR))))
+RESULTS_ROOT ?= ../analysis_results
+OUTPUT_DIR ?= $(RESULTS_ROOT)/$(RUN_NAME)
+
+B0_REF ?= 0.05
+PSC_PROFILE ?= $(CASE)
+PARTICLE_BASENAME ?= $(if $(CASE),prt_$(CASE),)
+
+FIELD_PATTERN = $(DATA_DIR)/pfd.*_p*.h5
+MOMENT_PATTERN = $(DATA_DIR)/pfd_moments.*_p*.h5
+PARTICLE_PATTERN = $(if $(PARTICLE_BASENAME),$(DATA_DIR)/$(PARTICLE_BASENAME).*.h5,$(DATA_DIR)/prt*.h5)
 FIRST_PARTICLE = $(firstword $(sort $(wildcard $(PARTICLE_PATTERN))))
 
-.PHONY: all brazil mirror diamagnetic fields spectral validate particles particles-3d heatflux report clean help check-particles
+ANISOTROPY_OUT = $(OUTPUT_DIR)/01_anisotropy
+FIELDS_OUT = $(OUTPUT_DIR)/02_fields
+PARTICLES_OUT = $(OUTPUT_DIR)/03_particles
+SPECTRAL_OUT = $(OUTPUT_DIR)/04_spectra
+DIAMAGNETIC_OUT = $(OUTPUT_DIR)/05_diamagnetic
+HEATFLUX_OUT = $(OUTPUT_DIR)/06_heat_flux
+MIRROR_OUT = $(OUTPUT_DIR)/07_mirror_structures
+VALIDATION_OUT = $(OUTPUT_DIR)/08_validation
 
-# spectral_analysis is excluded from 'all' — still in development
-all: brazil mirror diamagnetic fields validate particles heatflux
+export MPLCONFIGDIR ?= /tmp/psc-matplotlib
 
-brazil:
-	@echo "==========================================================="
-	@echo "Generating Brazil Plot (Anisotropy vs Beta)"
-	@echo "==========================================================="
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) anisotropy_analysis.py --B0 $(B0_REF) --moments "$(DATA_DIR)/pfd_moments.*.h5" --fields "$(DATA_DIR)/pfd.*.h5"
+.PHONY: all analysis common manifest F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM \
+	W_S_bM W_M_bM W_W_bM brazil mirror diamagnetic fields spectral validate \
+	particles particles-3d heatflux report clean help check-fields \
+	check-moments check-particles check-case show-inputs
 
-mirror:
-	@echo "==========================================================="
-	@echo "Generating Mirror Instability Plots"
-	@echo "==========================================================="
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) mirror_physics.py --B0 $(B0_REF) --fields "$(DATA_DIR)/pfd.*.h5"
+all: analysis
 
-diamagnetic:
-	@echo "==========================================================="
-	@echo "Generating Diamagnetic Current plots"
-	@echo "==========================================================="
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) diamagnetic_current.py --moments "$(DATA_DIR)/pfd_moments.*.h5" --fields "$(DATA_DIR)/pfd.*.h5"
+common: brazil fields particles spectral diamagnetic heatflux validate
 
-fields:
-	@echo "==========================================================="
-	@echo "Visualising Magnetic Field Fluctuations"
-	@echo "==========================================================="
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) fluctuationofmagneticfiel.py --B0 $(B0_REF) --plane yz --smooth 1.5 --pattern "$(DATA_DIR)/pfd.*.h5"
+analysis: manifest common
+	@if printf '%s' "$(CASE)" | grep -q '^M_'; then \
+		$(MAKE) mirror DATA_DIR="$(DATA_DIR)" CASE="$(CASE)" \
+			RESULTS_ROOT="$(RESULTS_ROOT)"; \
+	fi
 
-spectral:
-	@echo "==========================================================="
-	@echo "Generating Spectral Analysis Plots (PSD)"
-	@echo "==========================================================="
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) spectral_analysis.py --fields "$(DATA_DIR)/pfd.*.h5"
+F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM W_S_bM W_M_bM W_W_bM:
+	$(MAKE) analysis DATA_DIR="$(DATA_DIR)" CASE="$@" RESULTS_ROOT="$(RESULTS_ROOT)"
+
+manifest: check-case
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) write_analysis_manifest.py \
+		--data-dir "$(DATA_DIR)" --output-dir "$(OUTPUT_DIR)" --case "$(CASE)"
+
+show-inputs:
+	@echo "Run name:       $(RUN_NAME)"
+	@echo "Case:           $(CASE)"
+	@echo "Data directory: $(abspath $(DATA_DIR))"
+	@echo "Profile:        $(PSC_PROFILE)"
+	@echo "Results:        $(abspath $(OUTPUT_DIR))"
+	@echo "Fields:         $$(find "$(DATA_DIR)" -maxdepth 1 -name 'pfd.*_p*.h5' | wc -l)"
+	@echo "Moments:        $$(find "$(DATA_DIR)" -maxdepth 1 -name 'pfd_moments.*_p*.h5' | wc -l)"
+	@echo "Particles:      $$(find "$(DATA_DIR)" -maxdepth 1 -name 'prt*.h5' | wc -l)"
+	@echo "Particle base:  $(PARTICLE_BASENAME)"
+
+check-case:
+	@test -n "$(CASE)" || { \
+		echo "ERROR: CASE is empty and could not be detected from prt_<CASE>.<step>.h5"; \
+		echo "Use: make analysis DATA_DIR=../run CASE=F_M_bM"; exit 1; \
+	}
+	@count=$$(find "$(DATA_DIR)" -maxdepth 1 -type f -name 'prt_*.h5' \
+		-printf '%f\n' 2>/dev/null | sed -E \
+		's/^(prt_)?([^.]+)\.[0-9]+(_p[0-9]+)?\.h5$$/\2/' | sort -u | wc -l); \
+	if test "$$count" -gt 1; then \
+		echo "ERROR: multiple particle series found in $(DATA_DIR)."; \
+		echo "Put each PSC case in its own directory."; exit 1; \
+	fi
+	@if test -n "$(DETECTED_CASE)" && test "$(DETECTED_CASE)" != "$(CASE)"; then \
+		echo "ERROR: CASE=$(CASE), but particle files identify $(DETECTED_CASE)."; \
+		exit 1; \
+	fi
+
+check-fields:
+	@test -n "$(wildcard $(FIELD_PATTERN))" || { \
+		echo "ERROR: no field files matched $(FIELD_PATTERN)"; exit 1; \
+	}
+
+check-moments:
+	@test -n "$(wildcard $(MOMENT_PATTERN))" || { \
+		echo "ERROR: no moment files matched $(MOMENT_PATTERN)"; exit 1; \
+	}
 
 check-particles:
 	@test -n "$(FIRST_PARTICLE)" || { \
-		echo "ERROR: No particle files found: $(PARTICLE_PATTERN)"; \
-		exit 1; \
+		echo "ERROR: no particle files matched $(PARTICLE_PATTERN)"; exit 1; \
 	}
 
-validate: check-particles
-	@echo "==========================================================="
-	@echo "Validating Moments"
-	@echo "==========================================================="
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) validate_moments.py "$(FIRST_PARTICLE)"
+brazil: check-case check-fields check-moments
+	@echo "Generating anisotropy evolution and Brazil trajectory"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) anisotropy_analysis.py \
+		--data-dir "$(DATA_DIR)" --B0 $(B0_REF) \
+		--run-name "$(RUN_NAME)" --outdir "$(ANISOTROPY_OUT)"
 
-particles: check-particles
-	@echo "==========================================================="
-	@echo "Generating Particle VDF and Phase-Space Plots"
-	@echo "==========================================================="
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) plot_prt.py "$(PARTICLE_PATTERN)"
+mirror: check-case check-fields
+	@echo "Generating mirror-structure plots"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) mirror_physics.py \
+		--B0 $(B0_REF) --fields "$(FIELD_PATTERN)" --outdir "$(MIRROR_OUT)"
 
-particles-3d: check-particles
+diamagnetic: check-case check-fields check-moments
+	@echo "Generating diamagnetic-current plots"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) diamagnetic_current.py \
+		--moments "$(MOMENT_PATTERN)" --fields "$(FIELD_PATTERN)" \
+		--outdir "$(DIAMAGNETIC_OUT)"
+
+fields: check-case check-fields
+	@echo "Generating magnetic-field fluctuation plots"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) fluctuationofmagneticfiel.py \
+		--B0 $(B0_REF) --plane yz --smooth 1.5 \
+		--pattern "$(FIELD_PATTERN)" --outdir "$(FIELDS_OUT)"
+
+spectral: check-case check-fields
+	@echo "Generating spectral plots"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) spectral_analysis.py \
+		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)"
+
+validate: check-case check-particles
+	@echo "Validating moments against $(FIRST_PARTICLE)"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) validate_moments.py "$(FIRST_PARTICLE)" \
+		--run-name "$(RUN_NAME)" --outdir "$(VALIDATION_OUT)"
+
+particles: check-case check-particles
+	@echo "Generating particle VDF, anisotropy, and Brazil trajectory"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) plot_prt.py \
+		"$(PARTICLE_PATTERN)" --run-name "$(RUN_NAME)" \
+		--outdir "$(PARTICLES_OUT)"
+
+particles-3d: check-case check-particles
 	@echo "Generating optional qualitative 3D particle plots"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) plot_vdf_3d.py "$$(find "$(DATA_DIR)" -maxdepth 1 -name '$(PARTICLE_BASENAME).*.h5' -print -quit)"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) plot_moments_scatter_3d.py "$$(find "$(DATA_DIR)" -maxdepth 1 -name '$(PARTICLE_BASENAME).*.h5' -print -quit)"
-heatflux:
-	@echo "==========================================================="
-	@echo "Generating Heat Flux and Anisotropy Analysis"
-	@echo "==========================================================="
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) heat_flux_analysis.py --moments "$(DATA_DIR)/pfd_moments.*.h5" --fields "$(DATA_DIR)/pfd.*.h5"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) plot_vdf_3d.py "$(FIRST_PARTICLE)"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) plot_moments_scatter_3d.py "$(FIRST_PARTICLE)"
+
+heatflux: check-case check-fields check-moments
+	@echo "Generating heat-flux plots"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) heat_flux_analysis.py \
+		--moments "$(MOMENT_PATTERN)" --fields "$(FIELD_PATTERN)" \
+		--outdir "$(HEATFLUX_OUT)"
+
 report:
-	@echo "==========================================================="
-	@echo "Generating Validation PDF Report"
-	@echo "==========================================================="
 	$(PYTHON) generar_pdf_reporte.py
 
 clean:
-	@echo "==========================================================="
-	@echo "Cleaning generated plots"
-	@echo "==========================================================="
-	rm -rf anisotropy_plots/ mirror_plots/ field_images/ spectral_plots/ prt_plots/ fancy_vdf_plots/ phase_space_plots/ diamagnetic_plots/ heatflux_plots/
+	@test -n "$(RUN_NAME)" && test "$(OUTPUT_DIR)" != "/" && rm -rf "$(OUTPUT_DIR)"
 
 help:
-	@echo "Available targets:"
-	@echo "  make brazil       - Brazil plot: anisotropy vs beta_par  (anisotropy_analysis.py)"
-	@echo "  make mirror       - Mirror instability plots             (mirror_physics.py)"
-	@echo "  make diamagnetic  - Diamagnetic current analysis + GIF   (diamagnetic_current.py)"
-	@echo "  make fields       - Magnetic field fluctuations          (fluctuationofmagneticfiel.py)"
-	@echo "  make spectral     - Spectral analysis (PSD)              (spectral_analysis.py)"
-	@echo "  make validate     - Moment validation                    (validate_moments.py)"
-	@echo "  make particles    - Quantitative VDF and particle diagnostics"
-	@echo "  make particles-3d - Optional qualitative 3D VDF plots"
-	@echo "  make heatflux     - Heat flux + anisotropy analysis      (heat_flux_analysis.py)"
-	@echo "  make report       - Generate PDF validation report       (generar_pdf_reporte.py)"
-	@echo "  make all          - Run all targets (except spectral and report)"
-	@echo "  make clean        - Remove all generated plot directories"
-	@echo "  DATA_DIR=path     - Override input directory (default: ../build/src)"
-	@echo "  PARTICLE_BASENAME=name - Particle prefix (default: prt_M_S_bM)"
-	@echo "  PSC_PROFILE=name  - Physics/grid profile (default: M_S_bM)"
+	@echo "Usage:"
+	@echo "  make analysis DATA_DIR=../path/to/F_M_bM CASE=F_M_bM"
+	@echo "  make F_M_bM DATA_DIR=../path/to/F_M_bM"
+	@echo "  make brazil DATA_DIR=../path/to/F_M_bM CASE=F_M_bM"
+	@echo "  make particles DATA_DIR=../path/to/F_M_bM CASE=F_M_bM"
 	@echo ""
-	@echo "  NOTE: spectral_analysis.py is excluded from 'all' (still in development)"
+	@echo "Cases: F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM W_S_bM W_M_bM W_W_bM"
+	@echo "Main targets: analysis brazil particles fields spectral diamagnetic heatflux validate"
+	@echo "Utility target: show-inputs"
+	@echo "Results default to ../analysis_results/<RUN_NAME>/"

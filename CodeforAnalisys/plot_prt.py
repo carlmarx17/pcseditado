@@ -21,6 +21,8 @@ import os
 import glob
 import re
 import gc
+import csv
+import argparse
 import h5py
 import numpy as np
 import matplotlib
@@ -30,9 +32,14 @@ from matplotlib.colors import LogNorm
 import matplotlib.colors as mcolors
 from matplotlib.lines import Line2D
 from matplotlib.patches import FancyBboxPatch
-from scipy.ndimage import gaussian_filter
-from scipy.special import gamma as gamma_func
-from scipy import stats as scipy_stats
+try:
+    from scipy.ndimage import gaussian_filter
+    from scipy.special import gamma as gamma_func
+    from scipy import stats as scipy_stats
+except ImportError:
+    gaussian_filter = lambda values, sigma=1.0: values
+    gamma_func = None
+    scipy_stats = None
 
 try:
     from data_reader import PICDataReader
@@ -42,7 +49,8 @@ from psc_units import (
     B0, KAPPA, MASS_RATIO, TI_PAR, TI_PERP, VA_OVER_C, ZI,
     BETA_I_PAR as _BETA_I_PAR_SIM,
     BETA_I_PERP_OVER_PAR as _TI_RATIO_SIM,
-    M_ION, M_ELEC,
+    DRIVEN_SPECIES, INSTABILITY, M_ION, M_ELEC, PROFILE_LABEL,
+    step_to_omegaci,
 )
 
 # ── Configuration ────────────────────────────────────────────────────────────
@@ -53,8 +61,13 @@ MAX_VDF_SNAPSHOTS = 5
 NBINS_VDF = 250    # reducido de 400; suficiente para resolución publicable
 MAX_PARTICLES = 500_000  # submuestreo global si hay más partículas
 RNG_SEED = 20260612
+OUTPUT_PREFIX = ""
 
 STEP_RE = re.compile(r"\.(\d+)(?:_p\d+)?\.h5$")
+
+
+def output_file(outdir: str, filename: str) -> str:
+    return os.path.join(outdir, f"{OUTPUT_PREFIX}{filename}")
 
 
 def _sample_indices(n_total: int, max_particles: int):
@@ -154,9 +167,11 @@ def load_field_fluctuation_metrics(filepath: str, b0: float = B0) -> dict:
         ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"],
     )
 
-    bx = np.asarray(fields["hx_fc/p0/3d"], dtype=float).ravel() * b0
-    by = np.asarray(fields["hy_fc/p0/3d"], dtype=float).ravel() * b0
-    bz = np.asarray(fields["hz_fc/p0/3d"], dtype=float).ravel() * b0
+    # PSC pfd files already store B in code units. Multiplying by B0 here
+    # would suppress delta-B/B0 by an extra factor B0.
+    bx = np.asarray(fields["hx_fc/p0/3d"], dtype=float).ravel()
+    by = np.asarray(fields["hy_fc/p0/3d"], dtype=float).ravel()
+    bz = np.asarray(fields["hz_fc/p0/3d"], dtype=float).ravel()
 
     dbx = bx - np.mean(bx)
     dby = by - np.mean(by)
@@ -181,7 +196,7 @@ def extract_step(filepath: str) -> int:
 def resolve_particle_files(input_path: str) -> list[str]:
     """Resolve a file, directory, or glob pattern into an ordered file list."""
     if os.path.isdir(input_path):
-        candidates = sorted(glob.glob(os.path.join(input_path, "prt.*.h5")))
+        candidates = sorted(glob.glob(os.path.join(input_path, "prt*.h5")))
     elif any(ch in input_path for ch in "*?[]"):
         candidates = sorted(glob.glob(input_path))
     else:
@@ -384,7 +399,7 @@ def plot_vdf(ions, electrons, outdir: str):
         )
 
     plt.tight_layout(rect=[0, 0, 1, 0.98])
-    path = os.path.join(outdir, "vdf_2d.png")
+    path = output_file(outdir, "vdf_2d.png")
     plt.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"  Saved: {path}")
@@ -402,6 +417,11 @@ def plot_kappa_comparison(ions, outdir: str):
       Row 1 — f(p) vs p^2        (Maxwellian linearisation)
       Row 2 — f(p) vs |p|        (log-log, power-law check)
     """
+    if gamma_func is None:
+        raise RuntimeError(
+            "SciPy is required for Kappa diagnostics. "
+            "Install CodeforAnalisys/requirements.txt."
+        )
     fig, axes = plt.subplots(3, 3, figsize=(18, 15))
     fig.patch.set_facecolor("white")
     fig.suptitle(
@@ -516,7 +536,7 @@ def plot_kappa_comparison(ions, outdir: str):
         ax2.set_ylim(bottom=y_min)
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
-    path = os.path.join(outdir, "kappa_vs_maxwellian.png")
+    path = output_file(outdir, "kappa_vs_maxwellian.png")
     plt.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"  Saved: {path}")
@@ -550,6 +570,11 @@ def plot_goodness_of_fit(ions, outdir: str):
 
     Output: CDF comparison + results table.
     """
+    if scipy_stats is None:
+        raise RuntimeError(
+            "SciPy is required for Kappa goodness-of-fit diagnostics. "
+            "Install CodeforAnalisys/requirements.txt."
+        )
     mom_fields = ["px", "py", "pz"]
     comp_labels = [
         r"$p_x$  (perpendicular)",
@@ -708,7 +733,7 @@ def plot_goodness_of_fit(ions, outdir: str):
         )
 
     plt.tight_layout(rect=[0, 0, 1, 0.97])
-    path = os.path.join(outdir, "goodness_of_fit.png")
+    path = output_file(outdir, "goodness_of_fit.png")
     plt.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"  Saved: {path}")
@@ -718,10 +743,10 @@ def plot_goodness_of_fit(ions, outdir: str):
 #  Plot 4: Summary statistics
 # ══════════════════════════════════════════════════════════════════════════════
 
-def print_summary(ions, electrons):
+def print_summary(ions, electrons, step: int):
     """Print summary statistics of the particle data."""
     print("\n" + "=" * 60)
-    print("PARTICLE DATA SUMMARY (t=0)")
+    print(f"PARTICLE DATA SUMMARY (step {step}, t*Omega_ci={step_to_omegaci(step):.3f})")
     print("=" * 60)
 
     for name, sp in [("IONS", ions), ("ELECTRONS", electrons)]:
@@ -809,7 +834,7 @@ def plot_vdf_snapshots(
                 cbar = fig.colorbar(im, ax=ax, pad=0.01)
                 cbar.set_label(r"$\log_{10}(f / f_{max})$")
 
-    path = os.path.join(outdir, "vdf_time_snapshots.png")
+    path = output_file(outdir, "vdf_time_snapshots.png")
     plt.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"  Saved: {path}")
@@ -909,7 +934,7 @@ def plot_distribution_evolution(
         cbar = fig.colorbar(im, ax=ax, pad=0.01)
         cbar.set_label("PDF")
 
-    path = os.path.join(outdir, "distribution_evolution.png")
+    path = output_file(outdir, "distribution_evolution.png")
     plt.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"  Saved: {path}")
@@ -931,6 +956,7 @@ def plot_macro_evolution(
     particle_rows = [summarize_particle_snapshot(p) for p in sampled_paths]
 
     steps = np.asarray([r["step"] for r in particle_rows], dtype=float)
+    times = np.asarray([step_to_omegaci(int(step)) for step in steps])
     ion_anis = np.asarray([r["ion_anisotropy"] for r in particle_rows], dtype=float)
     elec_anis = np.asarray([r["electron_anisotropy"] for r in particle_rows], dtype=float)
 
@@ -940,17 +966,20 @@ def plot_macro_evolution(
     delta_b_perp = []
 
     if field_files:
-        for step in steps.astype(int):
-            filepath = field_files.get(step)
-            if filepath is None:
-                continue
+        field_items = sorted(field_files.items())
+        if len(field_items) > MAX_EVOLUTION_FILES:
+            keep = np.unique(
+                np.linspace(0, len(field_items) - 1, MAX_EVOLUTION_FILES, dtype=int)
+            )
+            field_items = [field_items[index] for index in keep]
+        for step, filepath in field_items:
             metrics = load_field_fluctuation_metrics(filepath)
-            field_steps.append(step)
+            field_steps.append(step_to_omegaci(step))
             delta_b_total.append(metrics["delta_b_total"])
             delta_b_parallel.append(metrics["delta_b_parallel"])
             delta_b_perp.append(metrics["delta_b_perp"])
 
-    fig, axes = plt.subplots(2, 1, figsize=(12, 9), constrained_layout=True)
+    fig, axes = plt.subplots(3, 1, figsize=(12, 12), constrained_layout=True)
     fig.patch.set_facecolor("white")
     fig.suptitle(
         "Temporal Evolution of Anisotropy and Magnetic Fluctuations",
@@ -958,16 +987,30 @@ def plot_macro_evolution(
     )
 
     ax = axes[0]
-    ax.plot(steps, ion_anis, marker="o", linewidth=2.0, color="#c0392b", label="Ions")
-    ax.plot(steps, elec_anis, marker="s", linewidth=2.0, color="#2980b9", label="Electrons")
+    ax.plot(times, ion_anis, marker="o", linewidth=2.0, color="#c0392b", label="Ions")
+    ax.plot(times, elec_anis, marker="s", linewidth=2.0, color="#2980b9", label="Electrons")
     ax.axhline(1.0, color="black", linestyle=":", linewidth=1.0, alpha=0.8)
     ax.set_ylabel(r"$T_\perp / T_\parallel$")
-    ax.set_xlabel("Simulation step")
+    ax.set_xlabel(r"$t\Omega_{ci}$")
     ax.set_title("Particle anisotropy")
     ax.grid(True, alpha=0.3)
     ax.legend()
 
     ax = axes[1]
+    driven_anis = ion_anis if DRIVEN_SPECIES == "ion" else elec_anis
+    ax.plot(
+        times, 1.0 / np.maximum(driven_anis, 1e-30),
+        marker="o", linewidth=2.0, color="#d4a017",
+        label=rf"{DRIVEN_SPECIES}: $T_\parallel/T_\perp$",
+    )
+    ax.axhline(1.0, color="black", linestyle=":", linewidth=1.0, alpha=0.8)
+    ax.set_ylabel(r"$T_\parallel/T_\perp$")
+    ax.set_xlabel(r"$t\Omega_{ci}$")
+    ax.set_title("Inverse anisotropy of the driven species")
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+
+    ax = axes[2]
     if field_steps:
         field_steps = np.asarray(field_steps, dtype=float)
         ax.plot(field_steps, delta_b_total, marker="o", linewidth=2.0,
@@ -984,11 +1027,11 @@ def plot_macro_evolution(
             ha="center", va="center", transform=ax.transAxes,
         )
     ax.set_ylabel("Normalised fluctuation amplitude")
-    ax.set_xlabel("Simulation step")
+    ax.set_xlabel(r"$t\Omega_{ci}$")
     ax.set_title("Magnetic-field fluctuations")
     ax.grid(True, alpha=0.3)
 
-    path = os.path.join(outdir, "anisotropy_and_field_evolution.png")
+    path = output_file(outdir, "anisotropy_and_field_evolution.png")
     plt.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"  Saved: {path}")
@@ -1011,6 +1054,7 @@ def plot_brazil(filepaths: list[str], outdir: str):
 
     sampled_paths = sample_filepaths(filepaths, max_files=MAX_EVOLUTION_FILES)
     steps_arr = np.array([extract_step(p) for p in sampled_paths], dtype=float)
+    times_arr = np.array([step_to_omegaci(int(step)) for step in steps_arr])
 
     aniso_vals    = []
     beta_par_vals = []
@@ -1019,9 +1063,11 @@ def plot_brazil(filepaths: list[str], outdir: str):
         ps = load_particle_phase_space(path)
         # PSC stores normalized momentum u=gamma*v. In this non-relativistic
         # setup, T = m*Var(u); subtract drift before computing beta.
-        tpar = M_ION * float(np.var(ps["ions_pz"]))
-        tperp = 0.5 * M_ION * float(
-            np.var(ps["ions_px"]) + np.var(ps["ions_py"])
+        prefix = "ions" if DRIVEN_SPECIES == "ion" else "electrons"
+        mass = M_ION if DRIVEN_SPECIES == "ion" else M_ELEC
+        tpar = mass * float(np.var(ps[f"{prefix}_pz"]))
+        tperp = 0.5 * mass * float(
+            np.var(ps[f"{prefix}_px"]) + np.var(ps[f"{prefix}_py"])
         )
         beta_par = 2.0 * tpar / (B0 ** 2)      # beta_i_par = 2 n T_par / B0^2 (n=1)
         aniso    = tperp / max(tpar, 1e-30)
@@ -1037,6 +1083,7 @@ def plot_brazil(filepaths: list[str], outdir: str):
     beta_range = np.logspace(-2, 2, 500)
     mirror_thresh   = 1.0 + 0.77 / beta_range
     firehose_thresh = 1.0 - 2.0  / beta_range
+    whistler_thresh = 1.0 + 0.21 / beta_range**0.6
     with np.errstate(invalid="ignore", divide="ignore"):
         valid_bf = beta_range > 0.11
         oblique_fh = np.where(valid_bf,
@@ -1049,28 +1096,32 @@ def plot_brazil(filepaths: list[str], outdir: str):
     ax.set_facecolor("#111827")
 
     # Instability regions (shaded)
-    ax.fill_between(beta_range, mirror_thresh, 10.0, alpha=0.12,
-                    color="#e74c3c", label="_nolegend_")
-    ax.fill_between(beta_range, -10.0, np.clip(firehose_thresh, -10, 10), alpha=0.12,
-                    color="#3498db", label="_nolegend_")
-
-    # Threshold lines
-    ax.plot(beta_range, mirror_thresh, "--", color="#e74c3c", linewidth=2.0,
-            label=r"Mirror  $A_i = 1 + 0.77/\beta_{\parallel}$")
-    ax.plot(beta_range, firehose_thresh, "--", color="#3498db", linewidth=2.0,
-            label=r"Firehose  $A_i = 1 - 2/\beta_{\parallel}$")
-    ax.plot(beta_range[valid_bf], oblique_fh[valid_bf], ":",
-            color="#9b59b6", linewidth=1.8,
-            label=r"Oblique firehose (Hellinger 2006)")
+    if INSTABILITY == "whistler":
+        ax.fill_between(beta_range, whistler_thresh, 10.0, alpha=0.12,
+                        color="#9b59b6", label="_nolegend_")
+        ax.plot(beta_range, whistler_thresh, "--", color="#9b59b6", linewidth=2.0,
+                label=r"Whistler  $A_e = 1 + 0.21/\beta_{e\parallel}^{0.6}$")
+    else:
+        ax.fill_between(beta_range, mirror_thresh, 10.0, alpha=0.12,
+                        color="#e74c3c", label="_nolegend_")
+        ax.fill_between(beta_range, -10.0, np.clip(firehose_thresh, -10, 10),
+                        alpha=0.12, color="#3498db", label="_nolegend_")
+        ax.plot(beta_range, mirror_thresh, "--", color="#e74c3c", linewidth=2.0,
+                label=r"Mirror  $A_i = 1 + 0.77/\beta_{\parallel}$")
+        ax.plot(beta_range, firehose_thresh, "--", color="#3498db", linewidth=2.0,
+                label=r"Firehose  $A_i = 1 - 2/\beta_{\parallel}$")
+        ax.plot(beta_range[valid_bf], oblique_fh[valid_bf], ":",
+                color="#9b59b6", linewidth=1.8,
+                label=r"Oblique firehose (Hellinger 2006)")
 
     # Isotropic line
     ax.axhline(1.0, color="#aaaaaa", linestyle=":", linewidth=1.0, alpha=0.6)
 
     # Data scatter
-    sc = ax.scatter(beta_par_vals, aniso_vals, c=steps_arr,
+    sc = ax.scatter(beta_par_vals, aniso_vals, c=times_arr,
                     cmap="plasma", s=90, zorder=5,
                     edgecolors="white", linewidths=0.6,
-                    norm=plt.Normalize(steps_arr.min(), steps_arr.max()))
+                    norm=plt.Normalize(times_arr.min(), times_arr.max()))
     ax.plot(beta_par_vals, aniso_vals, "-", color="white",
             linewidth=0.8, alpha=0.4, zorder=4)
     ax.scatter(beta_par_vals[0],  aniso_vals[0],  marker="D", s=130,
@@ -1079,28 +1130,39 @@ def plot_brazil(filepaths: list[str], outdir: str):
                color="#f1c40f", zorder=6, label=f"Final (step {int(steps_arr[-1])})")
 
     # Region labels
-    ax.text(0.015, 6.0, "MIRROR\nUNSTABLE", color="#e74c3c",
-            fontsize=9, alpha=0.9, va="top")
-    ax.text(0.015, 0.42, "FIREHOSE\nUNSTABLE", color="#3498db",
-            fontsize=9, alpha=0.9, va="bottom")
-    ax.text(3.0, 1.05, "STABLE", color="#aaaaaa",
-            fontsize=9, alpha=0.6, va="bottom")
+    if INSTABILITY == "whistler":
+        ax.text(0.03, 0.94, "WHISTLER\nUNSTABLE", transform=ax.transAxes,
+                color="#9b59b6", fontsize=9, alpha=0.9, va="top")
+    else:
+        ax.text(0.03, 0.94, "MIRROR\nUNSTABLE", transform=ax.transAxes,
+                color="#e74c3c", fontsize=9, alpha=0.9, va="top")
+        ax.text(0.03, 0.08, "FIREHOSE\nUNSTABLE", transform=ax.transAxes,
+                color="#3498db", fontsize=9, alpha=0.9, va="bottom")
+    ax.text(0.72, 0.72, "STABLE", transform=ax.transAxes,
+            color="#aaaaaa", fontsize=9, alpha=0.6, va="bottom")
 
     # Colourbar for time
     cbar = fig.colorbar(sc, ax=ax, pad=0.02)
-    cbar.set_label("Simulation step", color="white", fontsize=11)
+    cbar.set_label(r"$t\Omega_{ci}$", color="white", fontsize=11)
     cbar.ax.yaxis.set_tick_params(color="white", labelcolor="white")
     plt.setp(plt.getp(cbar.ax, "yticklabels"), color="white")
 
     ax.set_xscale("log")
-    ax.set_xlim(0.01, 30)
-    ax.set_ylim(0.3, 8.0)
-    ax.set_xlabel(r"$\beta_{\parallel,i} = 2\,n\,T_{\parallel,i}\,/\,B_0^2$",
+    xmin = max(0.01, float(np.nanmin(beta_par_vals)) / 1.5)
+    xmax = max(xmin * 2.0, float(np.nanmax(beta_par_vals)) * 1.5)
+    ymin = max(0.03, float(np.nanmin(aniso_vals)) / 1.5)
+    ymax = max(1.25, float(np.nanmax(aniso_vals)) * 1.5)
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+    species_symbol = "i" if DRIVEN_SPECIES == "ion" else "e"
+    ax.set_xlabel(rf"$\beta_{{\parallel,{species_symbol}}}"
+                  rf" = 2\,n\,T_{{\parallel,{species_symbol}}}\,/\,B_0^2$",
                   fontsize=13, color="white")
-    ax.set_ylabel(r"$A_i = T_{\perp,i}\,/\,T_{\parallel,i}$",
+    ax.set_ylabel(rf"$A_{species_symbol} = T_{{\perp,{species_symbol}}}"
+                  rf"\,/\,T_{{\parallel,{species_symbol}}}$",
                   fontsize=13, color="white")
     ax.set_title(
-        r"Brazil Plot — Ion Temperature Anisotropy vs. $\beta_{\parallel}$",
+        rf"Brazil Plot — {PROFILE_LABEL}",
         fontsize=14, fontweight="bold", color="white", pad=12,
     )
     ax.tick_params(colors="white", which="both")
@@ -1112,10 +1174,26 @@ def plot_brazil(filepaths: list[str], outdir: str):
               labelcolor="white", framealpha=0.85)
 
     plt.tight_layout()
-    path = os.path.join(outdir, "brazil_plot.png")
+    path = output_file(outdir, "brazil_plot.png")
     plt.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="#0d1117")
     plt.close()
     print(f"  Saved: {path}")
+
+    csv_path = output_file(outdir, "particle_anisotropy_evolution.csv")
+    with open(csv_path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow([
+            "case", "species", "step", "omega_ci_t", "anisotropy",
+            "parallel_over_perpendicular", "beta_parallel",
+        ])
+        for step, time, aniso, beta in zip(
+            steps_arr.astype(int), times_arr, aniso_vals, beta_par_vals
+        ):
+            writer.writerow([
+                PROFILE_LABEL, DRIVEN_SPECIES, step, time, aniso,
+                1.0 / max(aniso, 1e-30), beta,
+            ])
+    print(f"  Saved: {csv_path}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1221,7 +1299,7 @@ def plot_1d_vdf_evolution(
         ax.tick_params(which="both", direction="in", top=True, right=True)
 
     plt.tight_layout()
-    path = os.path.join(outdir, "vdf_1d_evolution.png")
+    path = output_file(outdir, "vdf_1d_evolution.png")
     plt.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"  Saved: {path}")
@@ -1373,7 +1451,7 @@ def plot_energy_partition(
     ax2.grid(True, alpha=0.3)
     ax2.tick_params(which="both", direction="in", top=True, right=True)
 
-    path = os.path.join(outdir, "energy_partition.png")
+    path = output_file(outdir, "energy_partition.png")
     plt.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"  Saved: {path}")
@@ -1534,8 +1612,8 @@ def plot_heat_flux(
     ax3.tick_params(which="both", direction="in", top=True, right=True)
     fig2.tight_layout()
 
-    path1 = os.path.join(outdir, "heat_flux_regions.png")
-    path2 = os.path.join(outdir, "heat_flux_timeseries.png")
+    path1 = output_file(outdir, "heat_flux_regions.png")
+    path2 = output_file(outdir, "heat_flux_timeseries.png")
     fig.tight_layout()
     fig.savefig(path1, dpi=DPI, bbox_inches="tight", facecolor="white")
     fig2.savefig(path2, dpi=DPI, bbox_inches="tight", facecolor="white")
@@ -1549,12 +1627,27 @@ def plot_heat_flux(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    if len(sys.argv) > 1:
-        input_path = sys.argv[1]
-    else:
-        input_path = os.path.join(
-            os.path.dirname(__file__), "..", "build", "src", "prt.000000000.h5"
-        )
+    global OUTPUT_PREFIX
+    parser = argparse.ArgumentParser(
+        description=f"Particle diagnostics for {PROFILE_LABEL}."
+    )
+    parser.add_argument(
+        "input", nargs="?",
+        default=os.path.join(os.path.dirname(__file__), "..", "build", "src"),
+        help="Particle file, data directory, or glob pattern.",
+    )
+    parser.add_argument(
+        "--outdir",
+        help="Output directory (default: <data-dir>/prt_plots).",
+    )
+    parser.add_argument(
+        "--run-name", default="",
+        help="Name prefixed to every generated file.",
+    )
+    args = parser.parse_args()
+    input_path = args.input
+    clean_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", args.run_name).strip("_")
+    OUTPUT_PREFIX = f"{clean_name}_" if clean_name else ""
 
     try:
         filepaths = resolve_particle_files(input_path)
@@ -1564,7 +1657,11 @@ def main():
         sys.exit(1)
 
     filepath = filepaths[-1]
-    outdir = os.path.join(os.path.dirname(os.path.abspath(filepath)), OUTPUT_DIR)
+    outdir = (
+        os.path.abspath(args.outdir)
+        if args.outdir
+        else os.path.join(os.path.dirname(os.path.abspath(filepath)), OUTPUT_DIR)
+    )
     os.makedirs(outdir, exist_ok=True)
     print(f"Output directory: {outdir}\n")
 
@@ -1587,7 +1684,7 @@ def main():
     ions, electrons = separate_species(data)
     del data; gc.collect()
 
-    print_summary(ions, electrons)
+    print_summary(ions, electrons, extract_step(filepath))
 
     print("\nGenerating plots...")
     plot_vdf(ions, electrons, outdir);      gc.collect()

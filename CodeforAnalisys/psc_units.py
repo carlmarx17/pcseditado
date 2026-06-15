@@ -11,19 +11,19 @@ Masa artificial: mi/me = 200  =>  me = 1.0,  mi = 200.0
 Parámetros comunes:
   - mass_ratio = 200,  vA/c = 0.05
 
-El perfil mantenido M_S_bM usa 30 d_i × 30 d_i, grilla 1408×1408
-y 1000 partículas por celda y especie. Los perfiles heredados usan sus
-valores específicos definidos en _PROFILES.
+Las nueve corridas normales `F_*_bM`, `M_*_bM` y `W_*_bM` usan
+30 d_i × 30 d_i, grilla 1408×1408 y 1000 partículas por celda y especie.
+Los perfiles heredados y locales conservan sus valores específicos.
 
 
-CONFIGURACIONES DE INESTABILIDAD:
-  Mirror   :  beta_i_par = 5,   Ti_perp/Ti_par = 3.0   (T_perp > T_par)
-  Firehose :  beta_i_par = 10,  Ti_perp/Ti_par = 0.1   (T_par > T_perp)
-
-  Cada una tiene variante Maxwellian (kappa=None) y Kappa (kappa=3).
+CONFIGURACIONES:
+  F_*_bM: Firehose iónico fuerte, medio y débil.
+  M_*_bM: Mirror iónico fuerte, medio y débil.
+  W_*_bM: Whistler electrónico fuerte, medio y débil.
 
 Selección del perfil activo: configurar PSC_PROFILE antes del análisis.
-El flujo mantenido usa por defecto M_S_bM, correspondiente a psc_M_S_bM.cxx.
+El flujo usa por defecto M_S_bM; en producción el Makefile siempre debe pasar
+el perfil correspondiente al valor de CASE.
 
 Todas las fórmulas siguen la notación estándar de plasma PIC de campo magnético
 orientado según z (dirección paralela = z).
@@ -37,7 +37,7 @@ import os
 import numpy as np
 
 # ══════════════════════════════════════════════════════════════════════════
-#  Simulation profiles — all 4 simulation configurations
+#  Simulation profiles
 # ══════════════════════════════════════════════════════════════════════════
 
 _PROFILES = {
@@ -55,6 +55,88 @@ _PROFILES = {
         "nmax": 1_650_000,
         "nicell": 1000,
         "particle_basename": "prt_M_S_bM",
+        "instability": "mirror",
+        "driven_species": "ion",
+    },
+    "M_M_bM": {
+        "label": "Mirror Moderate Bi-Maxwellian",
+        "mass_ratio": 200.0, "vA_over_c": 0.05,
+        "beta_i_par": 5.0, "Ti_perp_over_Ti_par": 2.0,
+        "beta_e_par": 1.0, "Te_perp_over_Te_par": 1.0,
+        "kappa": None, "domain_di": 30.0, "ngrid": 1408,
+        "nmax": 1_650_000, "nicell": 1000,
+        "particle_basename": "prt_M_M_bM",
+        "instability": "mirror", "driven_species": "ion",
+    },
+    "M_W_bM": {
+        "label": "Mirror Weak Bi-Maxwellian",
+        "mass_ratio": 200.0, "vA_over_c": 0.05,
+        "beta_i_par": 6.0, "Ti_perp_over_Ti_par": 1.5,
+        "beta_e_par": 1.0, "Te_perp_over_Te_par": 1.0,
+        "kappa": None, "domain_di": 30.0, "ngrid": 1408,
+        "nmax": 1_650_000, "nicell": 1000,
+        "particle_basename": "prt_M_W_bM",
+        "instability": "mirror", "driven_species": "ion",
+    },
+    "F_S_bM": {
+        "label": "Firehose Strong Bi-Maxwellian",
+        "mass_ratio": 200.0, "vA_over_c": 0.05,
+        "beta_i_par": 10.0, "Ti_perp_over_Ti_par": 0.1,
+        "beta_e_par": 1.0, "Te_perp_over_Te_par": 1.0,
+        "kappa": None, "domain_di": 30.0, "ngrid": 1408,
+        "nmax": 1_650_000, "nicell": 1000,
+        "particle_basename": "prt_F_S_bM",
+        "instability": "firehose", "driven_species": "ion",
+    },
+    "F_M_bM": {
+        "label": "Firehose Moderate Bi-Maxwellian",
+        "mass_ratio": 200.0, "vA_over_c": 0.05,
+        "beta_i_par": 6.0, "Ti_perp_over_Ti_par": 0.3,
+        "beta_e_par": 1.0, "Te_perp_over_Te_par": 1.0,
+        "kappa": None, "domain_di": 30.0, "ngrid": 1408,
+        "nmax": 1_650_000, "nicell": 1000,
+        "particle_basename": "prt_F_M_bM",
+        "instability": "firehose", "driven_species": "ion",
+    },
+    "F_W_bM": {
+        "label": "Firehose Weak Bi-Maxwellian",
+        "mass_ratio": 200.0, "vA_over_c": 0.05,
+        "beta_i_par": 3.0, "Ti_perp_over_Ti_par": 0.6,
+        "beta_e_par": 1.0, "Te_perp_over_Te_par": 1.0,
+        "kappa": None, "domain_di": 30.0, "ngrid": 1408,
+        "nmax": 1_650_000, "nicell": 1000,
+        "particle_basename": "prt_F_W_bM",
+        "instability": "firehose", "driven_species": "ion",
+    },
+    "W_S_bM": {
+        "label": "Whistler Strong Bi-Maxwellian",
+        "mass_ratio": 200.0, "vA_over_c": 0.05,
+        "beta_i_par": 1.0, "Ti_perp_over_Ti_par": 1.0,
+        "beta_e_par": 0.5, "Te_perp_over_Te_par": 3.0,
+        "kappa": None, "domain_di": 30.0, "ngrid": 1408,
+        "nmax": 1_650_000, "nicell": 1000,
+        "particle_basename": "prt_W_S_bM",
+        "instability": "whistler", "driven_species": "electron",
+    },
+    "W_M_bM": {
+        "label": "Whistler Moderate Bi-Maxwellian",
+        "mass_ratio": 200.0, "vA_over_c": 0.05,
+        "beta_i_par": 1.0, "Ti_perp_over_Ti_par": 1.0,
+        "beta_e_par": 0.5, "Te_perp_over_Te_par": 2.0,
+        "kappa": None, "domain_di": 30.0, "ngrid": 1408,
+        "nmax": 1_650_000, "nicell": 1000,
+        "particle_basename": "prt_W_M_bM",
+        "instability": "whistler", "driven_species": "electron",
+    },
+    "W_W_bM": {
+        "label": "Whistler Weak Bi-Maxwellian",
+        "mass_ratio": 200.0, "vA_over_c": 0.05,
+        "beta_i_par": 1.0, "Ti_perp_over_Ti_par": 1.0,
+        "beta_e_par": 0.5, "Te_perp_over_Te_par": 1.5,
+        "kappa": None, "domain_di": 30.0, "ngrid": 1408,
+        "nmax": 1_650_000, "nicell": 1000,
+        "particle_basename": "prt_W_W_bM",
+        "instability": "whistler", "driven_species": "electron",
     },
     "mirror_kappa": {
         "label": "Mirror Kappa",
@@ -65,11 +147,13 @@ _PROFILES = {
         "beta_e_par": 1.0,
         "Te_perp_over_Te_par": 1.0,
         "kappa": 3.0,
-        "domain_di": 32.0,
+        "domain_di": 20.0,
         "ngrid": 1536,
         "nmax": 1_800_000,
         "nicell": 1000,
         "particle_basename": "prt_mirror_kappa3",
+        "instability": "mirror",
+        "driven_species": "ion",
     },
     "mirror_maxwellian": {
         "label": "Mirror Maxwellian",
@@ -80,11 +164,13 @@ _PROFILES = {
         "beta_e_par": 1.0,
         "Te_perp_over_Te_par": 1.0,
         "kappa": None,
-        "domain_di": 32.0,
+        "domain_di": 20.0,
         "ngrid": 1536,
         "nmax": 1_800_000,
         "nicell": 1000,
         "particle_basename": "prt_mirror_maxwellian",
+        "instability": "mirror",
+        "driven_species": "ion",
     },
     "firehose_kappa": {
         "label": "Firehose Kappa",
@@ -95,11 +181,13 @@ _PROFILES = {
         "beta_e_par": 1.0,
         "Te_perp_over_Te_par": 1.0,
         "kappa": 3.0,
-        "domain_di": 32.0,
+        "domain_di": 20.0,
         "ngrid": 1024,
         "nmax": 1_200_000,
         "nicell": 1000,
         "particle_basename": "prt_firehose_kappa3",
+        "instability": "firehose",
+        "driven_species": "ion",
     },
     "firehose_maxwellian": {
         "label": "Firehose Maxwellian",
@@ -110,11 +198,30 @@ _PROFILES = {
         "beta_e_par": 1.0,
         "Te_perp_over_Te_par": 1.0,
         "kappa": None,
-        "domain_di": 32.0,
+        "domain_di": 20.0,
         "ngrid": 1024,
         "nmax": 1_200_000,
         "nicell": 1000,
         "particle_basename": "prt_firehose_maxwellian",
+        "instability": "firehose",
+        "driven_species": "ion",
+    },
+    "F_S_bM_local": {
+        "label": "Firehose Strong Bi-Maxwellian (local)",
+        "mass_ratio": 200.0,
+        "vA_over_c": 0.05,
+        "beta_i_par": 10.0,
+        "Ti_perp_over_Ti_par": 0.1,
+        "beta_e_par": 1.0,
+        "Te_perp_over_Te_par": 1.0,
+        "kappa": None,
+        "domain_di": 20.0,
+        "ngrid": 512,
+        "nmax": 72_000,
+        "nicell": 1000,
+        "particle_basename": "prt_F_S_bM_local",
+        "instability": "firehose",
+        "driven_species": "ion",
     },
 }
 
@@ -130,6 +237,8 @@ if SIM_PROFILE not in _PROFILES:
 
 _active = _PROFILES[SIM_PROFILE]
 PROFILE_LABEL = _active["label"]
+INSTABILITY = _active["instability"]
+DRIVEN_SPECIES = _active["driven_species"]
 
 # ── Parámetros de la simulación (desde los .cxx) ────────────────────────
 MASS_RATIO      = _active["mass_ratio"]       # mi/me = 200
