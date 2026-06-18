@@ -426,13 +426,14 @@ if __name__ == "__main__":
     parser.add_argument("--parallel-axis", type=str, default="z", choices=["x", "y", "z"], help="Direction of the guide field / parallel axis.")
     parser.add_argument("--top-modes", type=int, default=8, help="Number of strongest spectral modes to store per snapshot.")
     parser.add_argument("--steps", nargs="*", type=int, default=None, help="Specific steps to process.")
+    parser.add_argument("--outdir", type=str, default="spectral_plots", help="Directory for spectral plots and CSV outputs.")
     args = parser.parse_args()
 
     analyzer = SpectralAnalyzer(
         dx=args.dx,
         dy=args.dy,
         B0_ref=args.B0,
-        outdir="spectral_plots",
+        outdir=args.outdir,
         parallel_axis=args.parallel_axis,
         top_modes=args.top_modes,
     )

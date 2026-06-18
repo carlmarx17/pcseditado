@@ -33,7 +33,15 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import numpy as np
-from scipy.ndimage import gaussian_filter
+try:
+    from scipy.ndimage import gaussian_filter
+except ImportError:
+    def gaussian_filter(values, sigma=0):
+        if sigma:
+            raise RuntimeError(
+                "SciPy is required when --sigma is greater than zero."
+            )
+        return values
 
 from data_reader import PICDataReader
 from psc_units import (
@@ -43,6 +51,7 @@ from psc_units import (
     DOMAIN_DI_Z,
     DT_CODE,
     FIELD_FILE_PATTERN,
+    INSTABILITY,
     KAPPA,
     MASS_RATIO,
     M_ION,
@@ -50,6 +59,7 @@ from psc_units import (
     N_GRID_Y,
     N_GRID_Z,
     OMEGA_CI,
+    PROFILE_LABEL,
     TI_PAR,
     TI_PERP,
     VA,
@@ -110,12 +120,12 @@ class HeatFluxAnalyzer:
         flat_f = lambda key: PICDataReader.flatten_2d_slice(fields[key])
 
         n_i = flat("rho_i/p0/3d").astype(float)
-        Pxx = flat("txx_i/p0/3d").astype(float)
-        Pyy = flat("tyy_i/p0/3d").astype(float)
-        Pzz = flat("tzz_i/p0/3d").astype(float)
-        Pxy = flat("txy_i/p0/3d").astype(float)
-        Pyz = flat("tyz_i/p0/3d").astype(float)
-        Pzx = flat("tzx_i/p0/3d").astype(float)
+        Mxx = flat("txx_i/p0/3d").astype(float)
+        Myy = flat("tyy_i/p0/3d").astype(float)
+        Mzz = flat("tzz_i/p0/3d").astype(float)
+        Mxy = flat("txy_i/p0/3d").astype(float)
+        Myz = flat("tyz_i/p0/3d").astype(float)
+        Mzx = flat("tzx_i/p0/3d").astype(float)
 
         px = flat("px_i/p0/3d").astype(float)
         py = flat("py_i/p0/3d").astype(float)
@@ -128,8 +138,8 @@ class HeatFluxAnalyzer:
         # Apply smoothing
         sm = lambda arr: gaussian_filter(arr, sigma=self.sigma)
         n_i = sm(n_i)
-        Pxx, Pyy, Pzz = sm(Pxx), sm(Pyy), sm(Pzz)
-        Pxy, Pyz, Pzx = sm(Pxy), sm(Pyz), sm(Pzx)
+        Mxx, Myy, Mzz = sm(Mxx), sm(Myy), sm(Mzz)
+        Mxy, Myz, Mzx = sm(Mxy), sm(Myz), sm(Mzx)
         px, py, pz = sm(px), sm(py), sm(pz)
         Bx, By, Bz = sm(Bx), sm(By), sm(Bz)
 
@@ -139,6 +149,15 @@ class HeatFluxAnalyzer:
         vx = px / (safe_n * M_ION)
         vy = py / (safe_n * M_ION)
         vz = pz / (safe_n * M_ION)
+
+        # PSC writes raw second moments. Remove the bulk-flow contribution
+        # before interpreting the tensor as thermal pressure.
+        Pxx = Mxx - px * px / (safe_n * M_ION)
+        Pyy = Myy - py * py / (safe_n * M_ION)
+        Pzz = Mzz - pz * pz / (safe_n * M_ION)
+        Pxy = Mxy - px * py / (safe_n * M_ION)
+        Pyz = Myz - py * pz / (safe_n * M_ION)
+        Pzx = Mzx - pz * px / (safe_n * M_ION)
 
         # B-field unit vector
         B_mag = np.sqrt(Bx**2 + By**2 + Bz**2 + 1e-40)
@@ -224,8 +243,12 @@ class HeatFluxAnalyzer:
             times.append(t)
             avg_q_par.append(np.nanmean(np.abs(data["q_par"])))
             avg_q_perp.append(np.nanmean(np.abs(data["q_perp"])))
-            avg_aniso.append(np.nanmean(data["anisotropy"]))
-            avg_beta_par.append(np.nanmean(data["beta_par"]))
+            mean_p_par = np.nanmean(data["P_par"])
+            mean_p_perp = np.nanmean(data["P_perp"])
+            avg_aniso.append(mean_p_perp / mean_p_par)
+            avg_beta_par.append(
+                2.0 * mean_p_par / np.nanmean(data["B_mag"] ** 2)
+            )
             avg_T_par.append(np.nanmean(data["T_par"]))
             avg_T_perp.append(np.nanmean(data["T_perp"]))
 
@@ -260,23 +283,38 @@ class HeatFluxAnalyzer:
 
         # ── Panel 1: Anisotropy ──────────────────────────────────────────
         A0 = TI_PERP / TI_PAR  # initial anisotropy
-        # Compute instantaneous mirror threshold: A_mirror = 1 + 1/beta
-        A_mirror_thresh = 1.0 + 1.0 / np.asarray(beta_par)
-        axes[0].fill_between(t_arr, A_mirror_thresh, A0 + 2,
-                             alpha=0.08, color="#ff4444", label="Mirror unstable")
+        beta_arr = np.maximum(np.asarray(beta_par), 1e-12)
+        if INSTABILITY == "firehose":
+            threshold = 1.0 - 2.0 / beta_arr
+            threshold_label = r"Firehose threshold $1-2/\beta_\parallel$"
+        elif INSTABILITY == "mirror":
+            threshold = 1.0 + 1.0 / beta_arr
+            threshold_label = r"Mirror threshold $1+1/\beta_\parallel$"
+        else:
+            threshold = 1.0 + 0.21 / beta_arr**0.6
+            threshold_label = r"Whistler threshold $1+0.21/\beta_\parallel^{0.6}$"
         axes[0].plot(t_arr, aniso, color="#ff6666", linewidth=1.8,
-                     label=r"$\langle A \rangle = \langle T_\perp / T_\parallel \rangle_i$")
-        axes[0].plot(t_arr, A_mirror_thresh, color="#ff9999", linewidth=1.0,
-                     linestyle="--", alpha=0.7, label=r"Mirror threshold $1+1/\beta_\parallel$")
+                     label=r"$\langle P_\perp\rangle/\langle P_\parallel\rangle_i$")
+        axes[0].plot(t_arr, threshold, color="#ff9999", linewidth=1.0,
+                     linestyle="--", alpha=0.7, label=threshold_label)
         axes[0].axhline(1.0, color=TEXT_CLR, alpha=0.3, linestyle=":", linewidth=0.8)
         axes[0].axhline(A0, color="#ffd700", alpha=0.45, linestyle="--", linewidth=1.0,
                         label=rf"$A_0 = {A0:.1f}$")
         axes[0].set_ylabel(r"$\langle T_\perp / T_\parallel \rangle_i$", color=TEXT_CLR, fontsize=12)
-        axes[0].set_ylim(0.5, A0 * 1.15)
+        finite_a = np.concatenate([
+            np.asarray(aniso, dtype=float),
+            np.asarray(threshold, dtype=float),
+            np.array([1.0, A0]),
+        ])
+        finite_a = finite_a[np.isfinite(finite_a)]
+        axes[0].set_ylim(
+            max(0.02, float(np.min(finite_a)) * 0.85),
+            max(1.1, float(np.max(finite_a)) * 1.15),
+        )
         axes[0].legend(fontsize=9, facecolor="#1a1f30", edgecolor="#3a3f55",
                        labelcolor=TEXT_CLR, loc="upper right", ncol=2)
         axes[0].set_title(
-            f"Ion Heat Flux & Anisotropy Evolution — Mirror Maxwellian\n"
+            f"Ion Heat Flux & Anisotropy Evolution — {PROFILE_LABEL}\n"
             rf"PSC ($m_i/m_e = {int(MASS_RATIO)}$"
             + (rf", $\kappa = {KAPPA}$" if KAPPA is not None else ", Maxwellian")
             + ")",
