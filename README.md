@@ -1,54 +1,47 @@
+# PSC anisotropy workspace
 
-# PSC
+Este repositorio contiene PSC más un conjunto de casos de anisotropía de
+temperatura preparados para correr en COSMA con checkpoints ADIOS2.
 
-[![Documentation Status](https://readthedocs.org/projects/psc/badge/?version=latest)](https://psc.readthedocs.io/en/latest/?badge=latest)
-[![Build Status](https://travis-ci.com/psc-code/psc.svg?branch=master)](https://travis-ci.com/psc-code/psc)
+La base del código sigue siendo PSC. La documentación operativa de este
+workspace está organizada así:
 
-## Introduction
+| Documento | Uso |
+|---|---|
+| `src/SIMULACIONES.md` | Catálogo de ejecutables listos, parámetros físicos y compilación local. |
+| `src/ADIOS2_COSMA_RUNBOOK.md` | Compilar con ADIOS2, verificar checkpoints/restart y enviar jobs en COSMA. |
+| `src/SIMULACIONES_ANISOTROPIA_BM.md` | Detalle físico de los nueve casos bi-Maxwellian. |
+| `src/SIMULACIONES_INESTABILIDADES_TEMPERATURA_ANALISIS.md` | Criterios físicos y plan de análisis para Mirror, Firehose y Whistler. |
+| `CodeforAnalisys/README.md` | Cómo ejecutar la pipeline de análisis. |
+| `CodeforAnalisys/ANALISIS_ESTRUCTURA.md` | Contrato técnico de archivos, lectores y salidas. |
+| `src/SIMULACIONES_RECONNECTION.md` | Referencia separada para reconexión magnética. |
 
-This is the development version of PSC. It is usable for certain
-problems, but overall lots of changes are happening and things may be
-unstable / evolving.
+## Uso rápido en COSMA
 
-PSC is a 3-dimensional fully electromagnetic particle-in-cell code for
-kinetic plasma simulations. It supports Nvidia GPUs and patch-based
-dynamic load balancing.
-
-## Quickstart
-
-### Building the code
-
-PSC now uses cmake as its buildsystem. It is strongly recommended to build the code outside of the source in a different build directory. This is what I usually do:
-
-```sh
-$ cd src/psc # This is where the cloned git repository is (ie, the source)
-$ mkdir build # This is my build directory
-$ # create a cmake.sh so I don't have to remember the options I used
-$ cat > cmake.sh <<EOF
-cmake \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DUSE_CUDA=OFF \
-    -DUSE_VPIC=OFF \
-    ..
-EOF
-$ . cmake.sh # run cmake (hope for the best)
-$ make
-
+```bash
+cd /cosma7/data/dp433/dc-mart18/pcseditado
+BUILD_JOBS=4 src/cosma_build_psc_adios2.sh
+sbatch src/verify_mirror_kappa3_adios2.slurm
+PSC_TARGET=psc_mirror_kappa3 sbatch src/submit_anisotropy_adios2.slurm
 ```
 
-The above should build a lot of tests (you can use `ctest .` to run them) and two actual cases, `psc_bubble_yz` and `psc_flatfoil_yz` which you'll find in the `src/` subdirectory inside your build directory.
+`PSC_TARGET` puede ser cualquiera de los ejecutables listados en
+`src/SIMULACIONES.md`, por ejemplo `psc_M_S_bM`, `psc_F_S_bM`,
+`psc_W_S_bM`, `psc_mirror_kappa3` o `psc_firehose_kappa3`.
 
-### Running a case
+## Compilación local
 
-Make a directory for your run and change into it. This generation of PSC uses (almost) no command line options, rather everything gets hardcoded into a case (a.k.a. "input deck" in VPIC speak), e.g., `psc_flatfoil_yz.cxx`. (Eventually, the build system should be set up where a standalone case can be easily compiled, rather than expecting for it to be in the PSC source directory). So it should be as easy as 
+```bash
+cmake --build build --target psc_M_S_bM
+cmake --build build --target psc_mirror_kappa3
 ```
-mpirun -n 4 path/to/build/src/psc_flatfoil_yz
+
+## Análisis
+
+```bash
+cd CodeforAnalisys
+make analysis DATA_DIR=/ruta/a/la/corrida CASE=M_S_bM
 ```
 
-if you don't have to go through a batch system.
-
-## Documentation
-
-Well, this is really a big todo, so for now a lot of it is probably
-all about emailing kai.germaschewski@unh.edu. But I'm working on
-actually usable documentation and there's a start here: https://psc.readthedocs.io/en/latest/
+Los casos de producción usan 2000 partículas por celda por defecto y escriben
+checkpoints cuando se compilan con `PSC_USE_ADIOS2=ON`.

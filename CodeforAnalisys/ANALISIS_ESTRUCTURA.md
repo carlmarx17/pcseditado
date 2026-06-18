@@ -4,6 +4,9 @@
 > normales bi-Maxwellianas `F_*_bM`, `M_*_bM`, `W_*_bM` y los casos
 > Maxwellian/Kappa heredados.
 
+Para comandos de uso diario, ver `CodeforAnalisys/README.md`. Este documento
+describe el contrato de archivos, datasets y responsabilidades internas.
+
 ## 0. Contrato de una corrida
 
 Cada directorio de datos debe contener una sola simulación. Para
@@ -49,10 +52,11 @@ PSC genera dos tipos de archivos HDF5 (`.h5`) durante la simulación:
 | `pfd.NNNNNN_pN.h5`       | Campos EM en grilla (Bx, By, Bz, Ex, Ey, Ez)  | `anisotropy_analysis.py`, `mirror_physics.py` |
 | `pfd_moments.NNNNNN_pN.h5` | Momentos de partículas (P_ij, rho, J)        | `anisotropy_analysis.py`, `diamagnetic_current.py` |
 
-> **Nota sobre `.bp`:** Si la simulación se compiló con soporte ADIOS2 activado,
-> los datos se escriben en formato `.bp` (Binary Pack de ADIOS2) en lugar de `.h5`.
-> En ese caso el lector debe usar la librería `adios2` en Python en lugar de `h5py`.
-> Los scripts actuales asumen `.h5` (salida HDF5 nativa de PSC).
+> **Nota sobre ADIOS2:** Los checkpoints `checkpoint_<step>.bp/` sirven para
+> restart de simulaciones compiladas con ADIOS2. La pipeline de análisis sigue
+> leyendo las salidas HDF5 de campos, momentos y partículas (`pfd`,
+> `pfd_moments`, `prt_*`). No analizar directamente los checkpoints `.bp` con
+> estos scripts.
 
 ---
 

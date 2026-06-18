@@ -1,6 +1,6 @@
-# ADIOS2 en COSMA para `psc_mirror_kappa3`
+# ADIOS2 en COSMA para anisotropía PSC
 
-Esta es la ruta operativa para compilar y correr el caso Mirror Kappa con
+Esta es la ruta operativa para compilar y correr los casos de anisotropía con
 checkpoints ADIOS2 en COSMA. Mantiene separado el build ADIOS2 del build normal
 del repositorio.
 
@@ -8,7 +8,7 @@ del repositorio.
 
 ```text
 src/cosma_adios2_setup.sh            # instala ADIOS2 sin HDF5 en $HOME/adios2-nohdf5
-src/cosma_build_psc_adios2.sh        # compila build-adios2-nohdf5/src/psc_mirror_kappa3
+src/cosma_build_psc_adios2.sh        # compila los targets de anisotropía listos
 src/verify_mirror_kappa3_adios2.slurm # prueba checkpoint + restart
 src/submit_anisotropy_adios2.slurm    # job grande, selecciona ejecutable con PSC_TARGET
 adios2cfg.xml                        # config ADIOS2 copiada al directorio de run
@@ -57,7 +57,8 @@ ldd build-adios2-nohdf5/src/psc_mirror_kappa3 | grep -i adios
 ```
 
 Debe aparecer `PSC_HAVE_ADIOS2` y una librería `libadios2_*` desde
-`$HOME/adios2-nohdf5`.
+`$HOME/adios2-nohdf5`. El script también comprueba que existan todos los
+ejecutables de anisotropía listos.
 
 ## Verificar antes del job grande
 

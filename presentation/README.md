@@ -1,23 +1,21 @@
-# Thesis progress presentation
+# Presentación
 
-Compile from this directory:
+Material auxiliar para una presentación de progreso. No forma parte del flujo de
+simulación o análisis de producción.
+
+Compilar desde esta carpeta:
 
 ```bash
 make
 ```
 
-Main files:
+Archivos principales:
 
-- `thesis_progress.tex`: editable LaTeX source.
-- `thesis_progress.pdf`: compiled 16:9 presentation.
+```text
+thesis_progress.tex
+thesis_progress.pdf
+```
 
-The figures under `CodeforAnalisysLocal/` are explicitly labeled as local-test
-or preliminary diagnostics. Replace them with validated production figures
-before the final thesis defense.
-
-The Canva candidates remain available only as visual references:
-
-1. https://www.canva.com/d/KrFg6utXiwB1KWD
-2. https://www.canva.com/d/tIQMZ2y3UDF_QER
-3. https://www.canva.com/d/NGb0ftEfXNuZrNo
-4. https://www.canva.com/d/a8pMRXgzEYocnuR
+Las figuras usadas aquí deben generarse desde corridas validadas antes de
+usarse en una presentación final. Las figuras preliminares o locales no deben
+mezclarse con resultados de producción.
