@@ -6,8 +6,19 @@
 #SBATCH --job-name=psc_aniso
 #SBATCH --output=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.out
 #SBATCH --error=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.err
+#SBATCH --export=NONE
 
 set -euo pipefail
+
+if ! type module >/dev/null 2>&1; then
+  for modules_init in /etc/profile.d/modules.sh /usr/share/Modules/init/bash; do
+    if [ -r "$modules_init" ]; then
+      source "$modules_init"
+      break
+    fi
+  done
+fi
+type module >/dev/null 2>&1 || { echo "module command is not available"; exit 1; }
 
 BASE=/cosma7/data/dp433/dc-mart18
 REPO="$BASE/pcseditado"
@@ -15,7 +26,12 @@ BUILD_DIR="$REPO/build-adios2-nohdf5"
 RUN_ROOT="$BASE/anisotropy_adios2"
 PSC_TARGET="${PSC_TARGET:-psc_mirror_kappa3}"
 RUN_DIR="$RUN_ROOT/${PSC_TARGET}_${SLURM_JOB_ID}"
-ADIOS2_DIR="${ADIOS2_DIR:-$HOME/adios2-nohdf5}"
+if [ -d "$HOME/adios2-nohdf5" ]; then
+  DEFAULT_ADIOS2_DIR="$HOME/adios2-nohdf5"
+else
+  DEFAULT_ADIOS2_DIR="$HOME/adios2"
+fi
+ADIOS2_DIR="${ADIOS2_DIR:-$DEFAULT_ADIOS2_DIR}"
 HDF5_ROOT="${HDF5_ROOT:-/cosma/local/parallel-hdf5/gnu_14.1.0_ompi_5.0.3/1.14.4}"
 
 module purge

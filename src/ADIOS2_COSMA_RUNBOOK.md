@@ -85,16 +85,16 @@ restart/checkpoint_3.bp/
 ## Enviar jobs grandes
 
 ```bash
-PSC_TARGET=psc_mirror_kappa3 sbatch src/submit_anisotropy_adios2.slurm
+sbatch src/submit_anisotropy_adios2.slurm
 ```
 
 También se puede usar cualquier ejecutable de anisotropía listo:
 
 ```bash
-PSC_TARGET=psc_M_S_bM sbatch src/submit_anisotropy_adios2.slurm
-PSC_TARGET=psc_F_S_bM sbatch src/submit_anisotropy_adios2.slurm
-PSC_TARGET=psc_W_S_bM sbatch src/submit_anisotropy_adios2.slurm
-PSC_TARGET=psc_firehose_kappa3 sbatch src/submit_anisotropy_adios2.slurm
+sbatch --export=PSC_TARGET=psc_M_S_bM src/submit_anisotropy_adios2.slurm
+sbatch --export=PSC_TARGET=psc_F_S_bM src/submit_anisotropy_adios2.slurm
+sbatch --export=PSC_TARGET=psc_W_S_bM src/submit_anisotropy_adios2.slurm
+sbatch --export=PSC_TARGET=psc_firehose_kappa3 src/submit_anisotropy_adios2.slurm
 ```
 
 Parámetros actuales por defecto:
@@ -146,7 +146,7 @@ export PSC_RESTART=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/PSC_TARGET_JOB
 Luego enviar:
 
 ```bash
-PSC_TARGET=psc_mirror_kappa3 sbatch src/restart_anisotropy_adios2.slurm
+sbatch --export=PSC_TARGET=psc_mirror_kappa3 src/restart_anisotropy_adios2.slurm
 ```
 
 ## Problemas comunes

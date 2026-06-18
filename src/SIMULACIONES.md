@@ -111,5 +111,11 @@ Luego verificar y enviar:
 
 ```bash
 sbatch src/verify_mirror_kappa3_adios2.slurm
-PSC_TARGET=psc_mirror_kappa3 sbatch src/submit_anisotropy_adios2.slurm
+sbatch src/submit_anisotropy_adios2.slurm
+```
+
+El submit usa `psc_mirror_kappa3` por defecto. Para otro target:
+
+```bash
+sbatch --export=PSC_TARGET=psc_firehose_kappa3 src/submit_anisotropy_adios2.slurm
 ```

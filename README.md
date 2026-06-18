@@ -22,12 +22,17 @@ workspace está organizada así:
 cd /cosma7/data/dp433/dc-mart18/pcseditado
 BUILD_JOBS=4 src/cosma_build_psc_adios2.sh
 sbatch src/verify_mirror_kappa3_adios2.slurm
-PSC_TARGET=psc_mirror_kappa3 sbatch src/submit_anisotropy_adios2.slurm
+sbatch src/submit_anisotropy_adios2.slurm
 ```
 
-`PSC_TARGET` puede ser cualquiera de los ejecutables listados en
+Por defecto se ejecuta `psc_mirror_kappa3`. `PSC_TARGET` puede ser cualquiera
+de los ejecutables listados en
 `src/SIMULACIONES.md`, por ejemplo `psc_M_S_bM`, `psc_F_S_bM`,
 `psc_W_S_bM`, `psc_mirror_kappa3` o `psc_firehose_kappa3`.
+
+```bash
+sbatch --export=PSC_TARGET=psc_firehose_kappa3 src/submit_anisotropy_adios2.slurm
+```
 
 ## Compilación local
 
