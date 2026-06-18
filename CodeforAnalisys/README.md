@@ -190,10 +190,17 @@ A_s = T_perp / T_parallel
 Desde momentos de grilla:
 
 ```text
+P_parallel = b_hat · P · b_hat
+P_perp = [Tr(P) - P_parallel] / 2
 T_parallel = P_parallel / n
 T_perp = P_perp / n
 A_s = P_perp / P_parallel
 ```
+
+Aquí `P` es el tensor térmico central, después de restar la contribución del
+flujo colectivo, y `b_hat=B/|B|` usa la dirección magnética local. Esta
+proyección evita confundir la inclinación de las fluctuaciones con una
+relajación lenta de la anisotropía.
 
 La anisotropía es la fuente de energía libre:
 

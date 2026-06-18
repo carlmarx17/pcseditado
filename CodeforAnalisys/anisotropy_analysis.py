@@ -67,6 +67,40 @@ def ic_threshold(b):       return 1.0 + 0.43 / b**0.42
 def whistler_threshold(b): return 1.0 + 0.21 / b**0.6
 
 
+def instability_threshold(beta):
+    """Return the active marginal-stability threshold at beta_parallel."""
+    beta = np.maximum(np.asarray(beta, dtype=float), 1e-12)
+    if INSTABILITY == "firehose":
+        return firehose_threshold(beta)
+    if INSTABILITY == "mirror":
+        return mirror_threshold(beta)
+    return whistler_threshold(beta)
+
+
+def instability_drive(anisotropy, threshold):
+    """Positive values mean that the state is on the unstable side."""
+    if INSTABILITY == "firehose":
+        return np.asarray(threshold) - np.asarray(anisotropy)
+    return np.asarray(anisotropy) - np.asarray(threshold)
+
+
+def field_aligned_pressures(
+    Pxx, Pyy, Pzz, Pxy, Pyz, Pzx, Bx, By, Bz
+):
+    """Project a symmetric pressure tensor onto the local magnetic field."""
+    B2 = Bx**2 + By**2 + Bz**2
+    inv_B = 1.0 / np.sqrt(np.maximum(B2, 1e-30))
+    bx, by, bz = Bx * inv_B, By * inv_B, Bz * inv_B
+    p_par = (
+        Pxx * bx**2 + Pyy * by**2 + Pzz * bz**2
+        + 2.0 * Pxy * bx * by
+        + 2.0 * Pyz * by * bz
+        + 2.0 * Pzx * bz * bx
+    )
+    p_perp = 0.5 * (Pxx + Pyy + Pzz - p_par)
+    return p_par, p_perp, B2
+
+
 # ── Lectura de un snapshot ────────────────────────────────────────────────────
 def process_snapshot(mom_file: str, bz_file: str, species: str = DRIVEN_SPECIES):
     """Devuelve dict{anisotropy, beta_par} o None si hay error."""
@@ -77,7 +111,9 @@ def process_snapshot(mom_file: str, bz_file: str, species: str = DRIVEN_SPECIES)
             mom_file, "all_1st",
             [
                 f"txx_{suffix}/p0/3d", f"tyy_{suffix}/p0/3d",
-                f"tzz_{suffix}/p0/3d", f"px_{suffix}/p0/3d",
+                f"tzz_{suffix}/p0/3d", f"txy_{suffix}/p0/3d",
+                f"tyz_{suffix}/p0/3d", f"tzx_{suffix}/p0/3d",
+                f"px_{suffix}/p0/3d",
                 f"py_{suffix}/p0/3d", f"pz_{suffix}/p0/3d",
                 f"rho_{suffix}/p0/3d",
             ],
@@ -93,6 +129,9 @@ def process_snapshot(mom_file: str, bz_file: str, species: str = DRIVEN_SPECIES)
     Mxx = moments[f"txx_{suffix}/p0/3d"].ravel()
     Myy = moments[f"tyy_{suffix}/p0/3d"].ravel()
     Mzz = moments[f"tzz_{suffix}/p0/3d"].ravel()
+    Mxy = moments[f"txy_{suffix}/p0/3d"].ravel()
+    Myz = moments[f"tyz_{suffix}/p0/3d"].ravel()
+    Mzx = moments[f"tzx_{suffix}/p0/3d"].ravel()
     px  = moments[f"px_{suffix}/p0/3d"].ravel()
     py  = moments[f"py_{suffix}/p0/3d"].ravel()
     pz  = moments[f"pz_{suffix}/p0/3d"].ravel()
@@ -109,14 +148,20 @@ def process_snapshot(mom_file: str, bz_file: str, species: str = DRIVEN_SPECIES)
     Pxx = Mxx - px**2 / (safe_n * mass)
     Pyy = Myy - py**2 / (safe_n * mass)
     Pzz = Mzz - pz**2 / (safe_n * mass)
-    T_par  = Pzz / safe_n
-    T_perp = 0.5 * (Pxx + Pyy) / safe_n
+    Pxy = Mxy - px * py / (safe_n * mass)
+    Pyz = Myz - py * pz / (safe_n * mass)
+    Pzx = Mzx - pz * px / (safe_n * mass)
+    P_par, P_perp, B2 = field_aligned_pressures(
+        Pxx, Pyy, Pzz, Pxy, Pyz, Pzx, Bx, By, Bz
+    )
+    T_par  = P_par / safe_n
+    T_perp = P_perp / safe_n
     aniso  = T_perp / (T_par + 1e-30)
     P_mag  = B2 / (2.0 * MU0)
-    beta   = Pzz / (P_mag + 1e-30)
+    beta   = P_par / (P_mag + 1e-30)
 
     mask = (
-        (Pxx > 0) & (Pyy > 0) & (Pzz > 0) & (n > 0.05) & (B2 > 1e-10)
+        (P_par > 0) & (P_perp > 0) & (n > 0.05) & (B2 > 1e-10)
         & np.isfinite(beta) & np.isfinite(aniso)
         & (aniso > 0.05) & (aniso < 20.0)
         & (beta  > 0.1)  & (beta  < 2000.0)   # recorta artefactos numericos
@@ -124,15 +169,18 @@ def process_snapshot(mom_file: str, bz_file: str, species: str = DRIVEN_SPECIES)
     if not np.any(mask):
         return None
 
-    pperp = 0.5 * (Pxx + Pyy)
     return {
         "anisotropy": aniso[mask],
         "beta_par": beta[mask],
         # Global thermodynamic state. Ratios of volume-averaged pressures are
         # the appropriate trajectory coordinates; medians remain useful for
         # showing spatial spread but are not the trajectory itself.
-        "anisotropy_global": float(np.mean(pperp[mask]) / np.mean(Pzz[mask])),
-        "beta_global": float(2.0 * np.mean(Pzz[mask]) / np.mean(B2[mask])),
+        "anisotropy_global": float(
+            np.mean(P_perp[mask]) / np.mean(P_par[mask])
+        ),
+        "beta_global": float(
+            2.0 * np.mean(P_par[mask]) / np.mean(B2[mask])
+        ),
         "valid_cells": int(np.count_nonzero(mask)),
     }
 
@@ -338,16 +386,14 @@ def plot_temporal_evolution(snap_data: list, outdir: Path):
              label="mediana por celda")
     ax1.axhline(1.0, color=TEXT_CLR, alpha=0.3, lw=0.9, ls="--", label="Isotropía A=1")
 
+    dynamic_threshold = instability_threshold(b_global)
     if INSTABILITY == "firehose":
-        dynamic_threshold = firehose_threshold(np.maximum(b_global, 1e-12))
         threshold_label = r"Umbral Firehose $1-2/\beta_\parallel(t)$"
         threshold_color = "#74b9ff"
     elif INSTABILITY == "mirror":
-        dynamic_threshold = mirror_threshold(np.maximum(b_global, 1e-12))
         threshold_label = r"Umbral Mirror $1+1/\beta_\parallel(t)$"
         threshold_color = "#ff9999"
     else:
-        dynamic_threshold = whistler_threshold(np.maximum(b_global, 1e-12))
         threshold_label = r"Umbral Whistler $1+0.21/\beta_{e\parallel}^{0.6}$"
         threshold_color = "#c084fc"
     ax1.plot(toci, dynamic_threshold, color=threshold_color, alpha=0.9, lw=1.2,
@@ -498,7 +544,7 @@ def write_summary_csv(snap_stats: list, outdir: Path):
         "parallel_over_perpendicular_global", "anisotropy_median",
         "anisotropy_p25", "anisotropy_p75", "beta_parallel_global",
         "beta_parallel_median", "beta_parallel_p25", "beta_parallel_p75",
-        "valid_cells",
+        "marginal_threshold", "instability_drive", "valid_cells",
     ]
     out = output_path(outdir, "anisotropy_evolution", ".csv")
     with out.open("w", newline="", encoding="utf-8") as handle:
@@ -519,6 +565,8 @@ def write_summary_csv(snap_stats: list, outdir: Path):
                 "beta_parallel_median": stat["beta_med"],
                 "beta_parallel_p25": stat["beta_p25"],
                 "beta_parallel_p75": stat["beta_p75"],
+                "marginal_threshold": stat["threshold"],
+                "instability_drive": stat["drive"],
                 "valid_cells": stat["valid_cells"],
             })
     print(f"  Guardado → {out}")
@@ -573,6 +621,7 @@ def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
 
         # Estadisticas por paso
         if n_pts > 5:
+            threshold = float(instability_threshold(data["beta_global"]))
             snap_stats.append({
                 "step":      step,
                 "toci":      toci,
@@ -584,6 +633,10 @@ def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
                 "beta_med":  float(np.median(bv)),
                 "beta_p25":  float(np.percentile(bv, 25)),
                 "beta_p75":  float(np.percentile(bv, 75)),
+                "threshold": threshold,
+                "drive": float(
+                    instability_drive(data["anisotropy_global"], threshold)
+                ),
                 "valid_cells": data["valid_cells"],
             })
 
@@ -608,8 +661,10 @@ def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
         first, last = snap_stats[0], snap_stats[-1]
         print(
             "Evolucion global: "
-            f"A_i {first['aniso_global']:.5g} -> {last['aniso_global']:.5g}; "
-            f"beta_i|| {first['beta_global']:.5g} -> {last['beta_global']:.5g}"
+            f"A_{SPECIES_SYMBOL} {first['aniso_global']:.5g} -> "
+            f"{last['aniso_global']:.5g}; beta_{SPECIES_SYMBOL}|| "
+            f"{first['beta_global']:.5g} -> {last['beta_global']:.5g}; "
+            f"drive inestable {first['drive']:.5g} -> {last['drive']:.5g}"
         )
     print("Listo.")
 

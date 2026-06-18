@@ -51,6 +51,14 @@ add_psc_executable(psc_W_S_bM)   # Whistler Strong  βe∥=0.5 Ae=3.0
 add_psc_executable(psc_W_M_bM)   # Whistler Moderate βe∥=0.5 Ae=2.0
 add_psc_executable(psc_W_W_bM)   # Whistler Weak    βe∥=0.5 Ae=1.5
 
+# Fast seeded runs for same-day instability diagnostics.
+add_psc_kappa_executable(psc_M_lite psc_anisotropy_lite.cxx 0 M_lite)
+target_compile_definitions(psc_M_lite PRIVATE PSC_LITE_CASE=1)
+add_psc_kappa_executable(psc_F_lite psc_anisotropy_lite.cxx 0 F_lite)
+target_compile_definitions(psc_F_lite PRIVATE PSC_LITE_CASE=2)
+add_psc_kappa_executable(psc_W_lite psc_anisotropy_lite.cxx 0 W_lite)
+target_compile_definitions(psc_W_lite PRIVATE PSC_LITE_CASE=3)
+
 add_psc_executable(psc_reconnection)
 
 if(NOT USE_CUDA)

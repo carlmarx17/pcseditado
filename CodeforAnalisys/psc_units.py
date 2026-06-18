@@ -223,6 +223,36 @@ _PROFILES = {
         "instability": "firehose",
         "driven_species": "ion",
     },
+    "M_lite": {
+        "label": "Mirror Lite Seeded",
+        "mass_ratio": 200.0, "vA_over_c": 0.05,
+        "beta_i_par": 5.0, "Ti_perp_over_Ti_par": 3.0,
+        "beta_e_par": 1.0, "Te_perp_over_Te_par": 1.0,
+        "kappa": None, "domain_di": 20.0, "ngrid": 512,
+        "nmax": 180_000, "nicell": 64,
+        "particle_basename": "prt_M_lite",
+        "instability": "mirror", "driven_species": "ion",
+    },
+    "F_lite": {
+        "label": "Firehose Lite Seeded",
+        "mass_ratio": 200.0, "vA_over_c": 0.05,
+        "beta_i_par": 10.0, "Ti_perp_over_Ti_par": 0.1,
+        "beta_e_par": 1.0, "Te_perp_over_Te_par": 1.0,
+        "kappa": None, "domain_di": 20.0, "ngrid": 512,
+        "nmax": 180_000, "nicell": 64,
+        "particle_basename": "prt_F_lite",
+        "instability": "firehose", "driven_species": "ion",
+    },
+    "W_lite": {
+        "label": "Whistler Lite Seeded",
+        "mass_ratio": 200.0, "vA_over_c": 0.05,
+        "beta_i_par": 1.0, "Ti_perp_over_Ti_par": 1.0,
+        "beta_e_par": 0.5, "Te_perp_over_Te_par": 3.0,
+        "kappa": None, "domain_di": 4.0, "ngrid": 512,
+        "nmax": 40_000, "nicell": 64,
+        "particle_basename": "prt_W_lite",
+        "instability": "whistler", "driven_species": "electron",
+    },
 }
 
 # ── Seleccionar perfil activo ────────────────────────────────────────────
