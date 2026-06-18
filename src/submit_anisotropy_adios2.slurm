@@ -1,4 +1,4 @@
-#!/bin/bash -l
+#!/bin/bash
 #SBATCH --partition=cosma7-rp
 #SBATCH --account=dp433
 #SBATCH --ntasks=1024
