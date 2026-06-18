@@ -114,6 +114,12 @@ sbatch src/verify_mirror_kappa3_adios2.slurm
 sbatch src/submit_anisotropy_adios2.slurm
 ```
 
+Para producción larga en COSMA:
+
+```bash
+sbatch src/submit_anisotropy_adios2_big.slurm
+```
+
 El submit usa `psc_mirror_kappa3` por defecto. Para otro target:
 
 ```bash

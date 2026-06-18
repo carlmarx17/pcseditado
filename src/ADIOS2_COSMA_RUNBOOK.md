@@ -11,6 +11,7 @@ src/cosma_adios2_setup.sh            # instala ADIOS2 sin HDF5 en $HOME/adios2-n
 src/cosma_build_psc_adios2.sh        # compila los targets de anisotropía listos
 src/verify_mirror_kappa3_adios2.slurm # prueba checkpoint + restart
 src/submit_anisotropy_adios2.slurm    # job grande, selecciona ejecutable con PSC_TARGET
+src/submit_anisotropy_adios2_big.slurm # job grande 72h, exclusive, notificación por email
 adios2cfg.xml                        # config ADIOS2 copiada al directorio de run
 ```
 
@@ -88,6 +89,13 @@ restart/checkpoint_3.bp/
 sbatch src/submit_anisotropy_adios2.slurm
 ```
 
+Para producción larga estilo plantilla COSMA, con `--exclusive`, 72 horas y
+correo al terminar/fallar:
+
+```bash
+sbatch src/submit_anisotropy_adios2_big.slurm
+```
+
 También se puede usar cualquier ejecutable de anisotropía listo:
 
 ```bash
@@ -95,6 +103,12 @@ sbatch --export=PSC_TARGET=psc_M_S_bM src/submit_anisotropy_adios2.slurm
 sbatch --export=PSC_TARGET=psc_F_S_bM src/submit_anisotropy_adios2.slurm
 sbatch --export=PSC_TARGET=psc_W_S_bM src/submit_anisotropy_adios2.slurm
 sbatch --export=PSC_TARGET=psc_firehose_kappa3 src/submit_anisotropy_adios2.slurm
+```
+
+Para el Slurm grande se usa la misma forma:
+
+```bash
+sbatch --export=PSC_TARGET=psc_firehose_kappa3 src/submit_anisotropy_adios2_big.slurm
 ```
 
 Parámetros actuales por defecto:
@@ -112,6 +126,10 @@ PSC_PARTICLES_EVERY:    10000
 
 La grilla y `PSC_NMAX` salen del ejecutable seleccionado, aunque se pueden
 sobrescribir con variables de entorno si hace falta.
+
+No usar `--ntasks=616` con estos ejecutables sin cambiar también
+`PSC_NP_Y/PSC_NP_Z` y asegurar que la grilla se divide exactamente. Los casos
+actuales usan `64 x 16 = 1024` patches.
 
 Cada job escribe en:
 
