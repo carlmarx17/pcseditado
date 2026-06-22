@@ -128,4 +128,7 @@ Para otro target:
 sbatch --export=PSC_TARGET=psc_firehose_kappa3 src/submit_anisotropy_adios2.slurm
 ```
 
+Los scripts limpian Conda y usan `srun` por defecto para evitar fallos de
+`prted` al arrancar OpenMPI desde Slurm.
+
 Detalles operativos en `ADIOS2_COSMA_RUNBOOK.md`.

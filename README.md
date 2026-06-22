@@ -34,6 +34,12 @@ de los ejecutables listados en
 sbatch --export=PSC_TARGET=psc_firehose_kappa3 src/submit_anisotropy_adios2.slurm
 ```
 
+Los jobs limpian Conda y usan `srun` por defecto. Para revisar el estado:
+
+```bash
+sacct -u dc-mart18 --format=JobID,JobName,Partition,State,ExitCode,Elapsed
+```
+
 ## Compilación local
 
 ```bash

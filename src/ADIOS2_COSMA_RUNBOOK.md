@@ -114,6 +114,20 @@ Para el Slurm grande se usa la misma forma:
 sbatch --export=PSC_TARGET=psc_firehose_kappa3 src/submit_anisotropy_adios2_big.slurm
 ```
 
+Los scripts limpian Conda y lanzan MPI con `srun` por defecto para evitar
+fallos de `prted` al arrancar OpenMPI desde Slurm. Si COSMA cambia el plugin
+PMIx, se puede probar:
+
+```bash
+sbatch --export=PSC_SRUN_MPI_TYPE=pmix_v4 src/submit_anisotropy_adios2.slurm
+```
+
+Solo si hace falta volver a OpenMPI directo:
+
+```bash
+sbatch --export=PSC_LAUNCHER=mpirun src/submit_anisotropy_adios2.slurm
+```
+
 Parámetros actuales por defecto:
 
 ```text
@@ -158,7 +172,7 @@ Crear una copia del script grande:
 cp src/submit_anisotropy_adios2.slurm src/restart_anisotropy_adios2.slurm
 ```
 
-En la copia, antes de `mpirun`, añadir:
+En la copia, antes de `psc_mpi_run`, añadir:
 
 ```bash
 export PSC_RESTART=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/PSC_TARGET_JOBID/checkpoint_7500.bp
@@ -171,6 +185,15 @@ sbatch --export=PSC_TARGET=psc_mirror_kappa3 src/restart_anisotropy_adios2.slurm
 ```
 
 ## Problemas comunes
+
+Para revisar jobs, el usuario va con `-u`; no va dentro de `--format`:
+
+```bash
+sacct -u dc-mart18 --format=JobID,JobName,Partition,State,ExitCode,Elapsed
+```
+
+Si `sacct --format=...` termina con `Invalid field requested: "dc-mart18"`,
+el comando mezcló el usuario con las columnas de salida.
 
 Si aparece `write_checkpoint not available without adios2`, se está usando el
 build equivocado. Recompilar con `src/cosma_build_psc_adios2.sh` y correr
@@ -190,6 +213,9 @@ export ADIOS2_DIR="$HOME/adios2"
 export PATH="$ADIOS2_DIR/bin:$PATH"
 export LD_LIBRARY_PATH="$ADIOS2_DIR/lib64:$ADIOS2_DIR/lib:${LD_LIBRARY_PATH:-}"
 ```
+
+También se detecta automáticamente `ADIOS2_DIR=$HOME/build_adios2_nohdf5/build`
+si ese build existe.
 
 No cargues `cosma/2018`, `hdf5/1.10.3` ni `adios2/2.7.1`: esos módulos no
 aparecen en el árbol actual de COSMA. Los scripts cargan

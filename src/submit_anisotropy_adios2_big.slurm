@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --ntasks=1024
 #SBATCH --job-name=psc_aniso_big
-#SBATCH --output=standard_output_file.%J.out
-#SBATCH --error=standard_error_file.%J.err
+#SBATCH --output=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.out
+#SBATCH --error=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.err
 #SBATCH --partition=cosma7
 #SBATCH --account=dp433
 #SBATCH --exclusive
@@ -41,6 +41,7 @@ echo "ntasks=$SLURM_NTASKS"
 echo "run_dir=$RUN_DIR"
 echo "adios2_dir=$ADIOS2_DIR"
 echo "adios2_config=$(command -v adios2-config)"
+echo "launcher=${PSC_LAUNCHER:-srun}"
 echo "start=$(date --iso-8601=seconds)"
 adios2-config --version || true
 
@@ -49,6 +50,6 @@ export PSC_CHECKPOINT_EVERY="${PSC_CHECKPOINT_EVERY:-7500}"
 export PSC_FIELDS_EVERY="${PSC_FIELDS_EVERY:-1000}"
 export PSC_PARTICLES_EVERY="${PSC_PARTICLES_EVERY:-10000}"
 
-mpirun -np "$SLURM_NTASKS" "./$PSC_TARGET"
+psc_mpi_run "$SLURM_NTASKS" "./$PSC_TARGET"
 
 echo "end=$(date --iso-8601=seconds)"

@@ -32,6 +32,7 @@ cd "$RUN_DIR"
 echo "verify_start=$(date --iso-8601=seconds)"
 echo "adios2_dir=$ADIOS2_DIR"
 echo "adios2_config=$(command -v adios2-config || true)"
+echo "launcher=${PSC_LAUNCHER:-srun}"
 adios2-config --version || true
 
 export PSC_NGRID=32
@@ -43,7 +44,7 @@ export PSC_CHECKPOINT_EVERY=2
 export PSC_FIELDS_EVERY=2
 export PSC_PARTICLES_EVERY=2
 
-mpirun -np 1 ./psc_mirror_kappa3
+psc_mpi_run 1 ./psc_mirror_kappa3
 test -d checkpoint_2.bp
 test -d checkpoint_4.bp
 
@@ -52,7 +53,7 @@ cp ./psc_mirror_kappa3 ./adios2cfg.xml restart/
 cd restart
 export PSC_RESTART="$RUN_DIR/checkpoint_2.bp"
 export PSC_NMAX=3
-mpirun -np 1 ./psc_mirror_kappa3
+psc_mpi_run 1 ./psc_mirror_kappa3
 test -d checkpoint_3.bp
 
 echo "verify_ok=$(date --iso-8601=seconds)"

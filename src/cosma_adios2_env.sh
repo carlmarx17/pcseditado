@@ -3,6 +3,8 @@
 # Shared COSMA environment for PSC + ADIOS2 jobs. Source this file; do not run
 # it directly. It intentionally avoids Conda and login-shell startup files.
 
+unset BASH_ENV ENV
+
 if ! type module >/dev/null 2>&1; then
   for modules_init in /etc/profile.d/modules.sh /usr/share/Modules/init/bash; do
     if [ -r "$modules_init" ]; then
@@ -23,6 +25,29 @@ if [ -z "${HOME:-}" ]; then
   export HOME
 fi
 
+unset CONDA_DEFAULT_ENV CONDA_EXE CONDA_PREFIX CONDA_PROMPT_MODIFIER CONDA_PYTHON_EXE CONDA_SHLVL
+
+if [ -n "${PATH:-}" ]; then
+  clean_path=
+  old_ifs=$IFS
+  IFS=:
+  for path_entry in $PATH; do
+    case "$path_entry" in
+      "$HOME"/miniconda*|"$HOME"/anaconda*|*/miniconda*/bin|*/anaconda*/bin|*/conda*/bin|*/condabin)
+        continue
+        ;;
+    esac
+    if [ -z "$clean_path" ]; then
+      clean_path="$path_entry"
+    else
+      clean_path="$clean_path:$path_entry"
+    fi
+  done
+  IFS=$old_ifs
+  PATH=$clean_path
+  export PATH
+fi
+
 module purge
 module load gnu_comp/14.1.0
 module load openmpi/5.0.3
@@ -33,6 +58,8 @@ if [ -z "${ADIOS2_DIR:-}" ]; then
     ADIOS2_DIR="$HOME/adios2"
   elif [ -x "$HOME/adios2-nohdf5/bin/adios2-config" ]; then
     ADIOS2_DIR="$HOME/adios2-nohdf5"
+  elif [ -x "$HOME/build_adios2_nohdf5/build/bin/adios2-config" ]; then
+    ADIOS2_DIR="$HOME/build_adios2_nohdf5/build"
   elif command -v adios2-config >/dev/null 2>&1; then
     ADIOS2_DIR="$(cd "$(dirname "$(command -v adios2-config)")/.." && pwd)"
   else
@@ -54,6 +81,42 @@ else
 fi
 
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+
+psc_mpi_run() {
+  nproc=$1
+  shift
+
+  case "${PSC_LAUNCHER:-srun}" in
+    srun)
+      if [ -n "${PSC_SRUN_MPI_TYPE:-}" ]; then
+        srun_mpi_type=$PSC_SRUN_MPI_TYPE
+      else
+        srun_mpi_type=pmix
+        srun_mpi_list="$(srun --mpi=list 2>&1 || true)"
+        normalized_mpi_list=" $(printf '%s' "$srun_mpi_list" | tr ',\n\t' '    ') "
+        for candidate in pmix pmix_v4 pmix_v3 pmi2; do
+          case "$normalized_mpi_list" in
+            *" $candidate "*)
+              srun_mpi_type=$candidate
+              break
+              ;;
+          esac
+        done
+      fi
+      echo "launcher=srun --mpi=$srun_mpi_type -n $nproc $*"
+      srun --mpi="$srun_mpi_type" -n "$nproc" "$@"
+      ;;
+    mpirun)
+      echo "launcher=mpirun -np $nproc $*"
+      mpirun -np "$nproc" "$@"
+      ;;
+    *)
+      echo "ERROR: unsupported PSC_LAUNCHER=${PSC_LAUNCHER}" >&2
+      echo "       Use PSC_LAUNCHER=srun or PSC_LAUNCHER=mpirun." >&2
+      return 2
+      ;;
+  esac
+}
 
 command -v h5pcc >/dev/null 2>&1 || {
   echo "ERROR: h5pcc not found after loading parallel_hdf5/1.14.4" >&2
