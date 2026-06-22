@@ -21,7 +21,6 @@ workspace está organizada así:
 ```bash
 cd /cosma7/data/dp433/dc-mart18/pcseditado
 BUILD_JOBS=4 src/cosma_build_psc_adios2.sh
-sbatch src/verify_mirror_kappa3_adios2.slurm
 sbatch src/submit_anisotropy_adios2.slurm
 ```
 
@@ -31,7 +30,8 @@ de los ejecutables listados en
 `psc_W_S_bM`, `psc_mirror_kappa3` o `psc_firehose_kappa3`.
 
 ```bash
-sbatch --export=PSC_TARGET=psc_firehose_kappa3 src/submit_anisotropy_adios2.slurm
+sbatch --export=ALL,PSC_TARGET=psc_firehose_kappa3 src/submit_anisotropy_adios2.slurm
+sbatch --export=ALL,PSC_TARGET=psc_mirror_kappa5 src/submit_anisotropy_adios2.slurm
 ```
 
 Los jobs limpian Conda y usan `srun` por defecto. Para revisar el estado:

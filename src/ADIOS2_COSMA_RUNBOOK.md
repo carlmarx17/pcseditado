@@ -10,9 +10,7 @@ del repositorio.
 src/cosma_adios2_env.sh              # carga módulos COSMA actuales y localiza ADIOS2
 src/cosma_adios2_setup.sh            # instala ADIOS2 si no existe en $HOME/adios2
 src/cosma_build_psc_adios2.sh        # compila los targets de anisotropía listos
-src/verify_mirror_kappa3_adios2.slurm # prueba checkpoint + restart
-src/submit_anisotropy_adios2.slurm    # job grande, selecciona ejecutable con PSC_TARGET
-src/submit_anisotropy_adios2_big.slurm # job grande 72h, exclusive, notificación por email
+src/submit_anisotropy_adios2.slurm    # job de producción, selecciona ejecutable con PSC_TARGET
 adios2cfg.xml                        # config ADIOS2 copiada al directorio de run
 ```
 
@@ -22,7 +20,6 @@ Los scripts asumen:
 repo:       /cosma7/data/dp433/dc-mart18/pcseditado
 ADIOS2:     $HOME/adios2 si existe; si no, $HOME/adios2-nohdf5
 build:      /cosma7/data/dp433/dc-mart18/pcseditado/build-adios2-nohdf5
-verify:     /cosma7/data/dp433/dc-mart18/mirror_kappa3_adios2
 runs:       /cosma7/data/dp433/dc-mart18/anisotropy_adios2
 modules:    gnu_comp/14.1.0 openmpi/5.0.3 parallel_hdf5/1.14.4
 ```
@@ -64,54 +61,20 @@ Debe aparecer `PSC_HAVE_ADIOS2` y una librería `libadios2_*` desde el
 `ADIOS2_DIR` detectado. El script también comprueba que existan todos los
 ejecutables de anisotropía listos.
 
-## Verificar antes del job grande
-
-```bash
-mkdir -p /cosma7/data/dp433/dc-mart18/mirror_kappa3_adios2
-sbatch src/verify_mirror_kappa3_adios2.slurm
-squeue -u dc-mart18
-```
-
-Revisar:
-
-```bash
-tail -100 /cosma7/data/dp433/dc-mart18/mirror_kappa3_adios2/verify_*.out
-```
-
-El test es correcto si aparece `verify_ok=...`. Genera:
-
-```text
-checkpoint_2.bp/
-checkpoint_4.bp/
-restart/checkpoint_3.bp/
-```
-
-## Enviar jobs grandes
+## Enviar jobs
 
 ```bash
 sbatch src/submit_anisotropy_adios2.slurm
 ```
 
-Para producción larga estilo plantilla COSMA, con `--exclusive`, 72 horas y
-correo al terminar/fallar:
-
-```bash
-sbatch src/submit_anisotropy_adios2_big.slurm
-```
-
 También se puede usar cualquier ejecutable de anisotropía listo:
 
 ```bash
-sbatch --export=PSC_TARGET=psc_M_S_bM src/submit_anisotropy_adios2.slurm
-sbatch --export=PSC_TARGET=psc_F_S_bM src/submit_anisotropy_adios2.slurm
-sbatch --export=PSC_TARGET=psc_W_S_bM src/submit_anisotropy_adios2.slurm
-sbatch --export=PSC_TARGET=psc_firehose_kappa3 src/submit_anisotropy_adios2.slurm
-```
-
-Para el Slurm grande se usa la misma forma:
-
-```bash
-sbatch --export=PSC_TARGET=psc_firehose_kappa3 src/submit_anisotropy_adios2_big.slurm
+sbatch --export=ALL,PSC_TARGET=psc_M_S_bM src/submit_anisotropy_adios2.slurm
+sbatch --export=ALL,PSC_TARGET=psc_F_S_bM src/submit_anisotropy_adios2.slurm
+sbatch --export=ALL,PSC_TARGET=psc_W_S_bM src/submit_anisotropy_adios2.slurm
+sbatch --export=ALL,PSC_TARGET=psc_mirror_kappa5 src/submit_anisotropy_adios2.slurm
+sbatch --export=ALL,PSC_TARGET=psc_firehose_kappa3 src/submit_anisotropy_adios2.slurm
 ```
 
 Los scripts limpian Conda y lanzan MPI con `srun` por defecto para evitar
@@ -119,13 +82,13 @@ fallos de `prted` al arrancar OpenMPI desde Slurm. Si COSMA cambia el plugin
 PMIx, se puede probar:
 
 ```bash
-sbatch --export=PSC_SRUN_MPI_TYPE=pmix_v4 src/submit_anisotropy_adios2.slurm
+sbatch --export=ALL,PSC_SRUN_MPI_TYPE=pmix_v4 src/submit_anisotropy_adios2.slurm
 ```
 
 Solo si hace falta volver a OpenMPI directo:
 
 ```bash
-sbatch --export=PSC_LAUNCHER=mpirun src/submit_anisotropy_adios2.slurm
+sbatch --export=ALL,PSC_LAUNCHER=mpirun src/submit_anisotropy_adios2.slurm
 ```
 
 Parámetros actuales por defecto:
@@ -133,16 +96,19 @@ Parámetros actuales por defecto:
 ```text
 partition:              cosma7-rp
 account:                dp433
+nodes:                  37
+ntasks-per-node:        28
 ntasks:                 1024
 time:                   48:00:00
-PSC_NICELL:             2000
-PSC_CHECKPOINT_EVERY:   7500
-PSC_FIELDS_EVERY:       1000
-PSC_PARTICLES_EVERY:    10000
 ```
 
-La grilla y `PSC_NMAX` salen del ejecutable seleccionado, aunque se pueden
-sobrescribir con variables de entorno si hace falta.
+La grilla, `PSC_NMAX`, partículas por celda y frecuencias de salida salen del
+ejecutable seleccionado. Se pueden sobrescribir con variables de entorno si
+hace falta hacer una prueba corta, por ejemplo:
+
+```bash
+sbatch --export=ALL,PSC_TARGET=psc_mirror_kappa3,PSC_NMAX=1000 src/submit_anisotropy_adios2.slurm
+```
 
 No usar `--ntasks=616` con estos ejecutables sin cambiar también
 `PSC_NP_Y/PSC_NP_Z` y asegurar que la grilla se divide exactamente. Los casos
@@ -181,7 +147,7 @@ export PSC_RESTART=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/PSC_TARGET_JOB
 Luego enviar:
 
 ```bash
-sbatch --export=PSC_TARGET=psc_mirror_kappa3 src/restart_anisotropy_adios2.slurm
+sbatch --export=ALL,PSC_TARGET=psc_mirror_kappa3 src/restart_anisotropy_adios2.slurm
 ```
 
 ## Problemas comunes

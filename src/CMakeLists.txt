@@ -8,15 +8,6 @@ macro(add_psc_executable name)
   target_link_libraries(${name} psc)
 endmacro(add_psc_executable)
 
-function(add_psc_kappa_executable name source kappa suffix)
-  add_executable(${name})
-  target_gtensor_sources(${name} PRIVATE ${source})
-  target_compile_definitions(
-    ${name} PRIVATE PSC_KAPPA=${kappa} PSC_KAPPA_SUFFIX="${suffix}"
-  )
-  target_link_libraries(${name} psc)
-endfunction()
-
 if(NOT USE_CUDA)
   add_psc_executable(psc_bgk)
 endif()
@@ -32,10 +23,10 @@ add_psc_executable(psc_radiation)
 add_psc_executable(psc_shock)
 add_psc_executable(psc_mirror_maxwellian)
 add_psc_executable(psc_firehose_maxwellian)
-add_psc_kappa_executable(psc_mirror_kappa3 psc_mirror_kappa.cxx 3.0 kappa3)
-add_psc_kappa_executable(psc_mirror_kappa5 psc_mirror_kappa.cxx 5.0 kappa5)
-add_psc_kappa_executable(psc_firehose_kappa3 psc_firehose_kappa.cxx 3.0 kappa3)
-add_psc_kappa_executable(psc_firehose_kappa5 psc_firehose_kappa.cxx 5.0 kappa5)
+add_psc_executable(psc_mirror_kappa3)
+add_psc_executable(psc_mirror_kappa5)
+add_psc_executable(psc_firehose_kappa3)
+add_psc_executable(psc_firehose_kappa5)
 
 # --- Bi-Maxwellian anisotropy scan (2000 ppc, 1408², mr=200) ---
 # Mirror

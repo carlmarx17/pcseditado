@@ -1,12 +1,13 @@
 #!/bin/bash
 #SBATCH --partition=cosma7-rp
 #SBATCH --account=dp433
+#SBATCH --nodes=37
+#SBATCH --ntasks-per-node=28
 #SBATCH --ntasks=1024
 #SBATCH --time=48:00:00
 #SBATCH --job-name=psc_aniso
 #SBATCH --output=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.out
 #SBATCH --error=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.err
-#SBATCH --export=NONE
 
 set -euo pipefail
 
@@ -41,11 +42,7 @@ echo "adios2_config=$(command -v adios2-config)"
 echo "launcher=${PSC_LAUNCHER:-srun}"
 echo "start=$(date --iso-8601=seconds)"
 adios2-config --version || true
-
-export PSC_NICELL="${PSC_NICELL:-2000}"
-export PSC_CHECKPOINT_EVERY="${PSC_CHECKPOINT_EVERY:-7500}"
-export PSC_FIELDS_EVERY="${PSC_FIELDS_EVERY:-1000}"
-export PSC_PARTICLES_EVERY="${PSC_PARTICLES_EVERY:-10000}"
+module list 2>&1
 
 psc_mpi_run "$SLURM_NTASKS" "./$PSC_TARGET"
 
