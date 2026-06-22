@@ -7,7 +7,8 @@ del repositorio.
 ## Archivos relevantes
 
 ```text
-src/cosma_adios2_setup.sh            # instala ADIOS2 sin HDF5 en $HOME/adios2-nohdf5
+src/cosma_adios2_env.sh              # carga módulos COSMA actuales y localiza ADIOS2
+src/cosma_adios2_setup.sh            # instala ADIOS2 si no existe en $HOME/adios2
 src/cosma_build_psc_adios2.sh        # compila los targets de anisotropía listos
 src/verify_mirror_kappa3_adios2.slurm # prueba checkpoint + restart
 src/submit_anisotropy_adios2.slurm    # job grande, selecciona ejecutable con PSC_TARGET
@@ -19,7 +20,7 @@ Los scripts asumen:
 
 ```text
 repo:       /cosma7/data/dp433/dc-mart18/pcseditado
-ADIOS2:     $HOME/adios2-nohdf5
+ADIOS2:     $HOME/adios2 si existe; si no, $HOME/adios2-nohdf5
 build:      /cosma7/data/dp433/dc-mart18/pcseditado/build-adios2-nohdf5
 verify:     /cosma7/data/dp433/dc-mart18/mirror_kappa3_adios2
 runs:       /cosma7/data/dp433/dc-mart18/anisotropy_adios2
@@ -28,7 +29,9 @@ modules:    gnu_comp/14.1.0 openmpi/5.0.3 parallel_hdf5/1.14.4
 
 ## Preparar ADIOS2
 
-Solo hace falta si `$HOME/adios2-nohdf5/bin/adios2-config` no existe.
+Solo hace falta si no existe `adios2-config`. En tu COSMA actual ya aparece
+como `$HOME/adios2/bin/adios2-config`, así que normalmente puedes saltar este
+paso.
 
 ```bash
 cd /cosma7/data/dp433/dc-mart18/pcseditado
@@ -39,7 +42,7 @@ BUILD_JOBS=4 src/cosma_adios2_setup.sh
 Comprobar:
 
 ```bash
-$HOME/adios2-nohdf5/bin/adios2-config --version
+$HOME/adios2/bin/adios2-config --version
 ```
 
 ## Compilar PSC con ADIOS2
@@ -57,8 +60,8 @@ grep -n "PSC_HAVE_ADIOS2" build-adios2-nohdf5/src/include/PscConfig.h
 ldd build-adios2-nohdf5/src/psc_mirror_kappa3 | grep -i adios
 ```
 
-Debe aparecer `PSC_HAVE_ADIOS2` y una librería `libadios2_*` desde
-`$HOME/adios2-nohdf5`. El script también comprueba que existan todos los
+Debe aparecer `PSC_HAVE_ADIOS2` y una librería `libadios2_*` desde el
+`ADIOS2_DIR` detectado. El script también comprueba que existan todos los
 ejecutables de anisotropía listos.
 
 ## Verificar antes del job grande
@@ -179,6 +182,18 @@ Si `adios2-config` no aparece, revisar:
 export PATH="$HOME/adios2-nohdf5/bin:$PATH"
 export LD_LIBRARY_PATH="$HOME/adios2-nohdf5/lib64:$HOME/adios2-nohdf5/lib:${LD_LIBRARY_PATH:-}"
 ```
+
+Si tu instalación es la actual de COSMA, usa:
+
+```bash
+export ADIOS2_DIR="$HOME/adios2"
+export PATH="$ADIOS2_DIR/bin:$PATH"
+export LD_LIBRARY_PATH="$ADIOS2_DIR/lib64:$ADIOS2_DIR/lib:${LD_LIBRARY_PATH:-}"
+```
+
+No cargues `cosma/2018`, `hdf5/1.10.3` ni `adios2/2.7.1`: esos módulos no
+aparecen en el árbol actual de COSMA. Los scripts cargan
+`gnu_comp/14.1.0 openmpi/5.0.3 parallel_hdf5/1.14.4`.
 
 Si el job falla al copiar el binario, confirmar que existe:
 
