@@ -33,17 +33,20 @@ DIAMAGNETIC_OUT = $(OUTPUT_DIR)/05_diamagnetic
 HEATFLUX_OUT = $(OUTPUT_DIR)/06_heat_flux
 MIRROR_OUT = $(OUTPUT_DIR)/07_mirror_structures
 VALIDATION_OUT = $(OUTPUT_DIR)/08_validation
+PHYSICS_OUT = $(OUTPUT_DIR)/09_physical_diagnostics
+COMPARE_CASES ?=
+COMPARE_OUT ?= $(RESULTS_ROOT)/comparison_physical
 
 export MPLCONFIGDIR ?= /tmp/psc-matplotlib
 
 .PHONY: all analysis common manifest F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM \
 	W_S_bM W_M_bM W_W_bM brazil mirror diamagnetic fields spectral validate \
-	particles particles-3d heatflux report clean help check-fields \
+	particles particles-3d heatflux physics compare-physics report clean help check-fields \
 	check-moments check-particles check-case show-inputs
 
 all: analysis
 
-common: brazil fields particles spectral diamagnetic heatflux validate
+common: brazil fields particles spectral diamagnetic heatflux validate physics
 
 analysis: manifest common
 	@if printf '%s' "$(CASE)" | grep -q '^M_'; then \
@@ -151,6 +154,20 @@ heatflux: check-case check-fields check-moments
 		--moments "$(MOMENT_PATTERN)" --fields "$(FIELD_PATTERN)" \
 		--outdir "$(HEATFLUX_OUT)"
 
+physics: check-case
+	@echo "Generating integrated physical diagnostics"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) physical_diagnostics.py \
+		--data-dir "$(DATA_DIR)" --particles "$(PARTICLE_PATTERN)" \
+		--fields "$(FIELD_PATTERN)" --moments "$(MOMENT_PATTERN)" \
+		--outdir "$(PHYSICS_OUT)"
+
+compare-physics:
+	@test -n "$(COMPARE_CASES)" || { \
+		echo "ERROR: set COMPARE_CASES='maxwellian=../analysis_results/mirror_maxwellian/09_physical_diagnostics kappa=../analysis_results/mirror_kappa/09_physical_diagnostics'"; \
+		exit 1; \
+	}
+	$(PYTHON) compare_physical_cases.py $(COMPARE_CASES) --outdir "$(COMPARE_OUT)"
+
 report:
 	$(PYTHON) generar_pdf_reporte.py
 
@@ -163,8 +180,9 @@ help:
 	@echo "  make F_M_bM DATA_DIR=../path/to/F_M_bM"
 	@echo "  make brazil DATA_DIR=../path/to/F_M_bM CASE=F_M_bM"
 	@echo "  make particles DATA_DIR=../path/to/F_M_bM CASE=F_M_bM"
+	@echo "  make compare-physics COMPARE_CASES='maxwellian=../analysis_results/mirror_maxwellian/09_physical_diagnostics kappa=../analysis_results/mirror_kappa/09_physical_diagnostics'"
 	@echo ""
 	@echo "Cases: F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM W_S_bM W_M_bM W_W_bM"
-	@echo "Main targets: analysis brazil particles fields spectral diamagnetic heatflux validate"
+	@echo "Main targets: analysis brazil particles fields spectral diamagnetic heatflux validate physics compare-physics"
 	@echo "Utility target: show-inputs"
 	@echo "Results default to ../analysis_results/<RUN_NAME>/"

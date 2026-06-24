@@ -61,6 +61,100 @@ Debe aparecer `PSC_HAVE_ADIOS2` y una librería `libadios2_*` desde el
 `ADIOS2_DIR` detectado. El script también comprueba que existan todos los
 ejecutables de anisotropía listos.
 
+## Flujo Kappa en COSMA
+
+Los casos Kappa de producción son archivos completos e independientes:
+
+```text
+src/psc_mirror_kappa3.cxx      # kappa=3, mirror, nmax=1800000
+src/psc_mirror_kappa5.cxx      # kappa=5, mirror, nmax=1800000
+src/psc_firehose_kappa3.cxx    # kappa=3, firehose, nmax=1200000
+src/psc_firehose_kappa5.cxx    # kappa=5, firehose, nmax=1200000
+```
+
+No se debe usar un script de verificación corto para producción. La ruta
+correcta es compilar con ADIOS2 y enviar `src/submit_anisotropy_adios2.slurm`.
+
+Compilar:
+
+```bash
+cd /cosma7/data/dp433/dc-mart18/pcseditado
+BUILD_JOBS=4 src/cosma_build_psc_adios2.sh
+```
+
+Confirmar que los ejecutables Kappa existen y quedaron enlazados con ADIOS2:
+
+```bash
+ls -l build-adios2-nohdf5/src/psc_mirror_kappa3 \
+      build-adios2-nohdf5/src/psc_mirror_kappa5 \
+      build-adios2-nohdf5/src/psc_firehose_kappa3 \
+      build-adios2-nohdf5/src/psc_firehose_kappa5
+
+grep -n "PSC_HAVE_ADIOS2" build-adios2-nohdf5/src/include/PscConfig.h
+ldd build-adios2-nohdf5/src/psc_mirror_kappa3 | grep -i adios
+```
+
+Enviar `mirror kappa=3`, que es el target por defecto:
+
+```bash
+sbatch src/submit_anisotropy_adios2.slurm
+```
+
+Enviar los otros Kappa:
+
+```bash
+sbatch --export=ALL,PSC_TARGET=psc_mirror_kappa5 src/submit_anisotropy_adios2.slurm
+sbatch --export=ALL,PSC_TARGET=psc_firehose_kappa3 src/submit_anisotropy_adios2.slurm
+sbatch --export=ALL,PSC_TARGET=psc_firehose_kappa5 src/submit_anisotropy_adios2.slurm
+```
+
+Comprobar que Slurm asignó la corrida grande:
+
+```bash
+squeue --me
+scontrol show job JOBID | egrep 'NumNodes=|NumTasks=|Command=|SubmitLine='
+```
+
+Debe verse `ST R`, `NODES 37` en `squeue`, y `NumTasks=1024` en
+`scontrol`. Si aparece muy poco tiempo en `CG` o termina enseguida, revisar el
+`.out` y confirmar que no se sobrescribió `PSC_NMAX` con una prueba corta.
+
+Monitorear una corrida ya creada:
+
+```bash
+JOBID=11463779
+TARGET=psc_mirror_kappa3
+RUN=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/${TARGET}_${JOBID}
+
+tail -f "$RUN/diag.asc"
+tail -50 /cosma7/data/dp433/dc-mart18/anisotropy_adios2/psc_aniso_${JOBID}.out
+```
+
+Ver si ya empezó a escribir salidas:
+
+```bash
+watch -n 30 "ls -ltr $RUN | tail"
+watch -n 60 "ls -d $RUN/checkpoint_*.bp 2>/dev/null | tail"
+```
+
+Para `psc_mirror_kappa3` y `psc_mirror_kappa5`, las salidas por defecto son:
+
+```text
+campos/momentos: cada 750 pasos
+partículas:      cada 1000 pasos
+checkpoints:     cada 7500 pasos
+nmax:            1800000
+```
+
+Para `psc_firehose_kappa3` y `psc_firehose_kappa5`:
+
+```text
+campos/momentos: cada 500 pasos
+partículas:      cada 1000 pasos
+checkpoints:     cada 5000 pasos
+nmax:            1200000
+```
+
 ## Enviar jobs
 
 ```bash
@@ -78,8 +172,16 @@ sbatch --export=ALL,PSC_TARGET=psc_firehose_kappa3 src/submit_anisotropy_adios2.
 ```
 
 Los scripts limpian Conda y lanzan MPI con `srun` por defecto para evitar
-fallos de `prted` al arrancar OpenMPI desde Slurm. Si COSMA cambia el plugin
-PMIx, se puede probar:
+fallos de `prted` al arrancar OpenMPI desde Slurm. El wrapper solo selecciona
+plugins PMIx para `srun`; no usa `pmi2` automáticamente porque con OpenMPI 5
+puede aparecer:
+
+```text
+No PMIx server was reachable ... 1024 singletons will be started
+```
+
+Ese síntoma significa que los ranks no formaron un `MPI_COMM_WORLD` normal y
+puede acabar en OOM masivo. Si COSMA cambia el plugin PMIx, se puede probar:
 
 ```bash
 sbatch --export=ALL,PSC_SRUN_MPI_TYPE=pmix_v4 src/submit_anisotropy_adios2.slurm

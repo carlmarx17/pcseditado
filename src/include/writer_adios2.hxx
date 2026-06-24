@@ -216,6 +216,7 @@ public:
     };
 
     std::unique_lock<std::mutex> lock(queue_lock_);
+    cv_producer_.wait(lock, [this] { return queue_.size() < 2; });
     queue_.push(write_func);
     lock.unlock();
     cv_.notify_one();
@@ -242,6 +243,7 @@ private:
       if (!exit_ && queue_.size()) {
         auto task = std::move(queue_.front());
         queue_.pop();
+        cv_producer_.notify_one();
 
         lock.unlock();
         task();
@@ -265,6 +267,7 @@ private:
   std::queue<task_type> queue_;
   std::mutex queue_lock_;
   std::condition_variable cv_;
+  std::condition_variable cv_producer_;
   bool exit_ = false;
 #endif
 };

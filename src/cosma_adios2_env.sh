@@ -90,11 +90,17 @@ psc_mpi_run() {
     srun)
       if [ -n "${PSC_SRUN_MPI_TYPE:-}" ]; then
         srun_mpi_type=$PSC_SRUN_MPI_TYPE
+        if [ "$srun_mpi_type" = "pmi2" ] && [ "${PSC_ALLOW_SRUN_PMI2:-0}" != "1" ]; then
+          echo "ERROR: PSC_SRUN_MPI_TYPE=pmi2 is unsafe with OpenMPI 5." >&2
+          echo "       It can start singleton MPI ranks and trigger OOM." >&2
+          echo "       Use a PMIx type, PSC_LAUNCHER=mpirun, or set PSC_ALLOW_SRUN_PMI2=1 knowingly." >&2
+          return 2
+        fi
       else
-        srun_mpi_type=pmix
+        srun_mpi_type=
         srun_mpi_list="$(srun --mpi=list 2>&1 || true)"
         normalized_mpi_list=" $(printf '%s' "$srun_mpi_list" | tr ',\n\t' '    ') "
-        for candidate in pmix pmix_v4 pmix_v3 pmi2; do
+        for candidate in pmix pmix_v4 pmix_v3; do
           case "$normalized_mpi_list" in
             *" $candidate "*)
               srun_mpi_type=$candidate
@@ -102,6 +108,13 @@ psc_mpi_run() {
               ;;
           esac
         done
+        if [ -z "$srun_mpi_type" ]; then
+          echo "WARNING: no PMIx-capable srun MPI type found; falling back to mpirun." >&2
+          echo "         srun --mpi=pmi2 is not used because OpenMPI 5 may start singleton ranks." >&2
+          echo "launcher=mpirun -np $nproc $*"
+          mpirun -np "$nproc" "$@"
+          return
+        fi
       fi
       echo "launcher=srun --mpi=$srun_mpi_type -n $nproc $*"
       srun --mpi="$srun_mpi_type" -n "$nproc" "$@"

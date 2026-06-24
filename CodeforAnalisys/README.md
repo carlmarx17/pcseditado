@@ -67,7 +67,35 @@ Subcarpetas principales:
 04_spectra/        espectros y modos dominantes
 05_diamagnetic/    corrientes diamagnéticas
 06_heat_flux/      flujo de calor y regiones espaciales
+07_mirror_structures/ depresiones locales de |B| para mirror
+08_validation/     validación puntual contra partículas
+09_physical_diagnostics/ diagnóstico integrado con las salidas estándar
 ```
+
+El target integrado:
+
+```bash
+make physics DATA_DIR=/ruta/a/run CASE=M_M_bM
+```
+
+genera en `09_physical_diagnostics/` las tablas y figuras de la lista física:
+`validation_table.csv`, `validation_summary.txt`, `anisotropy_table.csv`,
+`fit_metrics.csv`, `field_fluctuation_table.csv`, `growth_rate_summary.csv`,
+`anisotropy_spatial_stats.csv`, `spatial_correlations.csv`, `energy_table.csv`,
+mapas `T_parallel/T_perp/A_i`, `deltaB`, `mirror_holes`, `J_dia`, VDF 2D,
+ajuste Maxwellian/Kappa, tasa de crecimiento, correlaciones y energía.
+
+Para comparar casos ya analizados, por ejemplo Maxwelliano vs Kappa:
+
+```bash
+make compare-physics \
+  COMPARE_CASES="maxwellian=../analysis_results/mirror_maxwellian/09_physical_diagnostics kappa=../analysis_results/mirror_kappa/09_physical_diagnostics"
+```
+
+Esto produce `comparison_kappa_vs_maxwellian.csv`,
+`comparison_anisotropy.png`, `comparison_deltaB.png`,
+`comparison_growth_rate.png`, `comparison_energy.png` y
+`comparison_heat_flux.png`.
 
 ## Definiciones usadas
 
