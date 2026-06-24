@@ -1,296 +1,406 @@
-# ADIOS2 en COSMA para anisotropía PSC
+# PSC con ADIOS2 en COSMA7
 
-Esta es la ruta operativa para compilar y correr los casos de anisotropía con
-checkpoints ADIOS2 en COSMA. Mantiene separado el build ADIOS2 del build normal
-del repositorio.
+Procedimiento operativo para compilar, validar, ejecutar y reiniciar los casos
+de anisotropía de PSC con checkpoints ADIOS2.
 
-## Archivos relevantes
+## Estado validado
 
-```text
-src/cosma_adios2_env.sh              # carga módulos COSMA actuales y localiza ADIOS2
-src/cosma_adios2_setup.sh            # instala ADIOS2 si no existe en $HOME/adios2
-src/cosma_build_psc_adios2.sh        # compila los targets de anisotropía listos
-src/submit_anisotropy_adios2.slurm    # job de producción, selecciona ejecutable con PSC_TARGET
-adios2cfg.xml                        # config ADIOS2 copiada al directorio de run
-```
-
-Los scripts asumen:
+Configuración comprobada el 24 de junio de 2026:
 
 ```text
-repo:       /cosma7/data/dp433/dc-mart18/pcseditado
-ADIOS2:     $HOME/adios2 si existe; si no, $HOME/adios2-nohdf5
-build:      /cosma7/data/dp433/dc-mart18/pcseditado/build-adios2-nohdf5
-runs:       /cosma7/data/dp433/dc-mart18/anisotropy_adios2
-modules:    gnu_comp/14.1.0 openmpi/5.0.3 parallel_hdf5/1.14.4
+Repositorio: /cosma7/data/dp433/dc-mart18/pcseditado
+Build único: /cosma7/data/dp433/dc-mart18/pcseditado/build
+ADIOS2:      $HOME/adios2 (versión 2.12.0.182)
+Partición:   cosma7-rp
+Cuenta:      dp433
+Compilador:  gnu_comp/14.1.0
+MPI:         openmpi/5.0.3
+HDF5:        parallel_hdf5/1.14.4
+Launcher:    mpirun
 ```
 
-## Preparar ADIOS2
-
-Solo hace falta si no existe `adios2-config`. En tu COSMA actual ya aparece
-como `$HOME/adios2/bin/adios2-config`, así que normalmente puedes saltar este
-paso.
+ADIOS2 está realmente activado porque:
 
 ```bash
+grep -n PSC_HAVE_ADIOS2 build/src/include/PscConfig.h
+ldd build/src/psc_mirror_kappa3 | grep adios2
+```
+
+La salida esperada contiene:
+
+```text
+#define PSC_HAVE_ADIOS2
+libadios2_cxx_mpi.so
+libadios2_core_mpi.so
+```
+
+También se validaron:
+
+- escritura de checkpoints BP5;
+- lectura de un checkpoint y continuación del cálculo;
+- ejecución MPI con 28 procesos en un nodo;
+- ejecución MPI con 56 procesos en dos nodos;
+- ejecución de producción con 1024 procesos en 37 nodos.
+
+## Archivos importantes
+
+```text
+src/cosma_adios2_env.sh
+src/cosma_adios2_setup.sh
+src/cosma_build_psc_adios2.sh
+src/submit_anisotropy_adios2.slurm
+adios2cfg.xml
+build/
+```
+
+Solo debe existir una carpeta de compilación llamada `build`. No usar
+`build-adios2` ni `build-adios2-nohdf5`.
+
+## 1. Entrar y cargar el entorno
+
+```bash
+ssh dc-mart18@login7.cosma.dur.ac.uk
 cd /cosma7/data/dp433/dc-mart18/pcseditado
-chmod +x src/cosma_adios2_setup.sh
-BUILD_JOBS=4 src/cosma_adios2_setup.sh
+source src/cosma_adios2_env.sh
+```
+
+Comprobar el entorno:
+
+```bash
+adios2-config --version
+command -v mpirun
+command -v h5pcc
+module list
+```
+
+El script limpia Conda, carga los módulos compatibles y configura
+`ADIOS2_DIR`, `PATH` y `LD_LIBRARY_PATH`.
+
+## 2. Instalar ADIOS2 si falta
+
+Este paso no es necesario mientras exista:
+
+```text
+$HOME/adios2/bin/adios2-config
 ```
 
 Comprobar:
 
 ```bash
+test -x "$HOME/adios2/bin/adios2-config"
 $HOME/adios2/bin/adios2-config --version
 ```
 
-## Compilar PSC con ADIOS2
+Si no existe:
 
 ```bash
 cd /cosma7/data/dp433/dc-mart18/pcseditado
-chmod +x src/cosma_build_psc_adios2.sh
+BUILD_JOBS=4 src/cosma_adios2_setup.sh
+```
+
+No mezclar esta instalación con módulos antiguos de ADIOS2, OpenMPI o HDF5.
+
+## 3. Crear el build único
+
+Para una reconstrucción limpia:
+
+```bash
+cd /cosma7/data/dp433/dc-mart18/pcseditado
+rm -rf build
 BUILD_JOBS=4 src/cosma_build_psc_adios2.sh
 ```
 
-Confirmaciones esperadas:
-
-```bash
-grep -n "PSC_HAVE_ADIOS2" build-adios2-nohdf5/src/include/PscConfig.h
-ldd build-adios2-nohdf5/src/psc_mirror_kappa3 | grep -i adios
-```
-
-Debe aparecer `PSC_HAVE_ADIOS2` y una librería `libadios2_*` desde el
-`ADIOS2_DIR` detectado. El script también comprueba que existan todos los
-ejecutables de anisotropía listos.
-
-## Flujo Kappa en COSMA
-
-Los casos Kappa de producción son archivos completos e independientes:
+El script configura CMake con:
 
 ```text
-src/psc_mirror_kappa3.cxx      # kappa=3, mirror, nmax=1800000
-src/psc_mirror_kappa5.cxx      # kappa=5, mirror, nmax=1800000
-src/psc_firehose_kappa3.cxx    # kappa=3, firehose, nmax=1200000
-src/psc_firehose_kappa5.cxx    # kappa=5, firehose, nmax=1200000
+PSC_USE_ADIOS2=ON
+USE_CUDA=OFF
+USE_VPIC=OFF
+BUILD_TESTING=OFF
 ```
 
-No se debe usar un script de verificación corto para producción. La ruta
-correcta es compilar con ADIOS2 y enviar `src/submit_anisotropy_adios2.slurm`.
+Nota de COSMA7: actualmente `cmake` está disponible en el login, pero no
+necesariamente en los nodos de cómputo. Un job de compilación puede fallar con:
 
-Compilar:
+```text
+cmake: command not found
+```
+
+No confundir ese problema de entorno con un fallo de ADIOS2. Si se quiere
+compilar completamente en un nodo, primero debe instalarse o exponerse una
+versión de CMake accesible desde ese nodo.
+
+## 4. Verificar la compilación
 
 ```bash
 cd /cosma7/data/dp433/dc-mart18/pcseditado
-BUILD_JOBS=4 src/cosma_build_psc_adios2.sh
+source src/cosma_adios2_env.sh
+
+grep -n PSC_HAVE_ADIOS2 build/src/include/PscConfig.h
+ldd build/src/psc_mirror_kappa3 | grep -i adios
 ```
 
-Confirmar que los ejecutables Kappa existen y quedaron enlazados con ADIOS2:
+Comprobar los ejecutables:
 
 ```bash
-ls -l build-adios2-nohdf5/src/psc_mirror_kappa3 \
-      build-adios2-nohdf5/src/psc_mirror_kappa5 \
-      build-adios2-nohdf5/src/psc_firehose_kappa3 \
-      build-adios2-nohdf5/src/psc_firehose_kappa5
-
-grep -n "PSC_HAVE_ADIOS2" build-adios2-nohdf5/src/include/PscConfig.h
-ldd build-adios2-nohdf5/src/psc_mirror_kappa3 | grep -i adios
+ls -l \
+  build/src/psc_mirror_kappa3 \
+  build/src/psc_mirror_kappa5 \
+  build/src/psc_firehose_kappa3 \
+  build/src/psc_firehose_kappa5 \
+  build/src/psc_M_S_bM \
+  build/src/psc_F_S_bM \
+  build/src/psc_W_S_bM
 ```
 
-Enviar `mirror kappa=3`, que es el target por defecto:
+No enviar producción si falta `PSC_HAVE_ADIOS2` o si `ldd` muestra
+`not found`.
+
+## 5. Por qué se usa mpirun
+
+El launcher validado es:
+
+```text
+mpirun -np $SLURM_NTASKS
+```
+
+No usar `srun --mpi=pmi2` con OpenMPI 5. En una prueba anterior produjo:
+
+```text
+No PMIx server was reachable, but a PMI1/2 was detected.
+1024 singletons will be started.
+```
+
+Eso inicia rangos MPI independientes, consume memoria masivamente y termina
+en OOM. `src/cosma_adios2_env.sh` usa `mpirun` por defecto.
+
+## 6. Enviar un caso
+
+El target por defecto es `psc_mirror_kappa3`:
 
 ```bash
+cd /cosma7/data/dp433/dc-mart18/pcseditado
 sbatch src/submit_anisotropy_adios2.slurm
 ```
 
-Enviar los otros Kappa:
+Otros casos:
 
 ```bash
-sbatch --export=ALL,PSC_TARGET=psc_mirror_kappa5 src/submit_anisotropy_adios2.slurm
-sbatch --export=ALL,PSC_TARGET=psc_firehose_kappa3 src/submit_anisotropy_adios2.slurm
-sbatch --export=ALL,PSC_TARGET=psc_firehose_kappa5 src/submit_anisotropy_adios2.slurm
+sbatch --export=ALL,PSC_TARGET=psc_mirror_kappa5 \
+  src/submit_anisotropy_adios2.slurm
+
+sbatch --export=ALL,PSC_TARGET=psc_firehose_kappa3 \
+  src/submit_anisotropy_adios2.slurm
+
+sbatch --export=ALL,PSC_TARGET=psc_firehose_kappa5 \
+  src/submit_anisotropy_adios2.slurm
+
+sbatch --export=ALL,PSC_TARGET=psc_M_S_bM \
+  src/submit_anisotropy_adios2.slurm
 ```
 
-Comprobar que Slurm asignó la corrida grande:
+El script solicita:
 
-```bash
-squeue --me
-scontrol show job JOBID | egrep 'NumNodes=|NumTasks=|Command=|SubmitLine='
+```text
+37 nodos
+28 procesos por nodo
+1024 procesos MPI
+48 horas
+partición cosma7-rp
+cuenta dp433
 ```
 
-Debe verse `ST R`, `NODES 37` en `squeue`, y `NumTasks=1024` en
-`scontrol`. Si aparece muy poco tiempo en `CG` o termina enseguida, revisar el
-`.out` y confirmar que no se sobrescribió `PSC_NMAX` con una prueba corta.
+No fija un `--nodelist`: Slurm selecciona nodos libres.
 
-Monitorear una corrida ya creada:
+## 7. Fallos de prólogo de Slurm
+
+Si un job termina inmediatamente con:
+
+```text
+State=CANCELLED
+Reason=Prolog
+ExitCode=0:0
+```
+
+y no genera `.out` ni `.err`, el script PSC nunca llegó a ejecutarse. Es un
+fallo del prólogo del nodo, no de ADIOS2.
+
+Consultar:
 
 ```bash
-JOBID=11463779
+scontrol show job -dd JOBID
+sacct -j JOBID \
+  --format=JobID,State,ExitCode,Elapsed,NodeList,Reason -X
+```
+
+Si COSMA todavía no ha reparado los nodos afectados, se pueden excluir
+temporalmente al enviar:
+
+```bash
+sbatch --exclude='m[7031-7043]' src/submit_anisotropy_adios2.slurm
+```
+
+La exclusión debe ser temporal y basarse en fallos de prólogo observados; no
+se debe convertir en una lista fija permanente.
+
+## 8. Confirmar que el job usa ADIOS2
+
+```bash
+JOBID=12345678
+LOG=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/psc_aniso_${JOBID}.out
+
+grep -E '^(target|job|nodes|ntasks|adios2_dir|adios2_config|launcher)=' "$LOG"
+```
+
+Debe mostrar:
+
+```text
+adios2_dir=/cosma/home/dp433/dc-mart18/adios2
+adios2_config=/cosma/home/dp433/dc-mart18/adios2/bin/adios2-config
+launcher=mpirun
+launcher=mpirun -np 1024 ./psc_mirror_kappa3
+```
+
+Verificar además el binario copiado al directorio de ejecución:
+
+```bash
 TARGET=psc_mirror_kappa3
 RUN=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/${TARGET}_${JOBID}
 
-tail -f "$RUN/diag.asc"
-tail -50 /cosma7/data/dp433/dc-mart18/anisotropy_adios2/psc_aniso_${JOBID}.out
+ldd "$RUN/$TARGET" | grep -i adios
 ```
 
-Ver si ya empezó a escribir salidas:
+## 9. Confirmar la escritura de checkpoints
 
-```bash
-watch -n 30 "ls -ltr $RUN | tail"
-watch -n 60 "ls -d $RUN/checkpoint_*.bp 2>/dev/null | tail"
-```
-
-Para `psc_mirror_kappa3` y `psc_mirror_kappa5`, las salidas por defecto son:
+Para `psc_mirror_kappa3` y `psc_mirror_kappa5`:
 
 ```text
-campos/momentos: cada 750 pasos
-partículas:      cada 1000 pasos
-checkpoints:     cada 7500 pasos
-nmax:            1800000
+campos y momentos: cada 750 pasos
+partículas:        cada 1000 pasos
+checkpoint:        cada 7500 pasos
+nmax:              1800000
 ```
 
 Para `psc_firehose_kappa3` y `psc_firehose_kappa5`:
 
 ```text
-campos/momentos: cada 500 pasos
-partículas:      cada 1000 pasos
-checkpoints:     cada 5000 pasos
-nmax:            1200000
+campos y momentos: cada 500 pasos
+partículas:        cada 1000 pasos
+checkpoint:        cada 5000 pasos
+nmax:              1200000
 ```
 
-## Enviar jobs
+Antes del primer intervalo no habrá una carpeta `checkpoint_*.bp`. Eso no
+significa que ADIOS2 esté desactivado.
+
+Cuando se alcance el intervalo:
 
 ```bash
-sbatch src/submit_anisotropy_adios2.slurm
+find "$RUN" -maxdepth 1 -type d -name 'checkpoint_*.bp' -print
+find "$RUN" -maxdepth 2 -type f -path '*.bp/*' -ls | head
 ```
 
-También se puede usar cualquier ejecutable de anisotropía listo:
-
-```bash
-sbatch --export=ALL,PSC_TARGET=psc_M_S_bM src/submit_anisotropy_adios2.slurm
-sbatch --export=ALL,PSC_TARGET=psc_F_S_bM src/submit_anisotropy_adios2.slurm
-sbatch --export=ALL,PSC_TARGET=psc_W_S_bM src/submit_anisotropy_adios2.slurm
-sbatch --export=ALL,PSC_TARGET=psc_mirror_kappa5 src/submit_anisotropy_adios2.slurm
-sbatch --export=ALL,PSC_TARGET=psc_firehose_kappa3 src/submit_anisotropy_adios2.slurm
-```
-
-Los scripts limpian Conda y lanzan MPI con `srun` por defecto para evitar
-fallos de `prted` al arrancar OpenMPI desde Slurm. El wrapper solo selecciona
-plugins PMIx para `srun`; no usa `pmi2` automáticamente porque con OpenMPI 5
-puede aparecer:
+Una carpeta BP5 válida contiene archivos como:
 
 ```text
-No PMIx server was reachable ... 1024 singletons will be started
+data.0
+md.0
+md.idx
+profiling.json
 ```
 
-Ese síntoma significa que los ranks no formaron un `MPI_COMM_WORLD` normal y
-puede acabar en OOM masivo. Si COSMA cambia el plugin PMIx, se puede probar:
+## 10. Monitorizar
 
 ```bash
-sbatch --export=ALL,PSC_SRUN_MPI_TYPE=pmix_v4 src/submit_anisotropy_adios2.slurm
+squeue -j "$JOBID" -o '%.18i %.16P %.24j %.2t %.10M %.4D %R'
+tail -f "$LOG"
 ```
 
-Solo si hace falta volver a OpenMPI directo:
+Diagnóstico y resultados:
 
 ```bash
-sbatch --export=ALL,PSC_LAUNCHER=mpirun src/submit_anisotropy_adios2.slurm
+tail -f "$RUN/diag.asc"
+ls -ltr "$RUN" | tail
+du -sh "$RUN"
 ```
 
-Parámetros actuales por defecto:
+No ejecutar la simulación directamente en el login.
+
+## 11. Reiniciar desde un checkpoint
+
+Ejemplo:
+
+```bash
+export PSC_RESTART=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/psc_mirror_kappa3_JOBID/checkpoint_7500.bp
+
+sbatch \
+  --export=ALL,PSC_TARGET=psc_mirror_kappa3,PSC_RESTART="$PSC_RESTART" \
+  src/submit_anisotropy_adios2.slurm
+```
+
+El ejecutable debe imprimir:
 
 ```text
-partition:              cosma7-rp
-account:                dp433
-nodes:                  37
-ntasks-per-node:        28
-ntasks:                 1024
-time:                   48:00:00
+**** Reading checkpoint...
 ```
 
-La grilla, `PSC_NMAX`, partículas por celda y frecuencias de salida salen del
-ejecutable seleccionado. Se pueden sobrescribir con variables de entorno si
-hace falta hacer una prueba corta, por ejemplo:
+y continuar desde el paso almacenado.
+
+## 12. Prueba corta opcional
+
+Las variables de entorno permiten reducir el problema:
 
 ```bash
-sbatch --export=ALL,PSC_TARGET=psc_mirror_kappa3,PSC_NMAX=1000 src/submit_anisotropy_adios2.slurm
+sbatch \
+  --export=ALL,PSC_TARGET=psc_mirror_kappa3,PSC_NMAX=4,PSC_NGRID=16,PSC_NP_Y=1,PSC_NP_Z=1,PSC_NICELL=16,PSC_CHECKPOINT_EVERY=2,PSC_FIELDS_EVERY=2,PSC_PARTICLES_EVERY=2 \
+  src/submit_anisotropy_adios2.slurm
 ```
 
-No usar `--ntasks=616` con estos ejecutables sin cambiar también
-`PSC_NP_Y/PSC_NP_Z` y asegurar que la grilla se divide exactamente. Los casos
-actuales usan `64 x 16 = 1024` patches.
+Para una prueba hay que ajustar también los recursos Slurm. No enviar esa
+configuración con 37 nodos.
 
-Cada job escribe en:
+La prueba correcta debe:
+
+1. terminar con código cero;
+2. crear `checkpoint_2.bp`;
+3. contener `data.0`, `md.0` y `md.idx`;
+4. permitir un restart con `PSC_RESTART`.
+
+## Problemas frecuentes
+
+### `write_checkpoint not available without adios2`
+
+El ejecutable fue compilado sin ADIOS2 o se tomó de otro build:
+
+```bash
+grep PSC_HAVE_ADIOS2 build/src/include/PscConfig.h
+ldd build/src/psc_mirror_kappa3 | grep -i adios
+```
+
+### `libadios2_*.so => not found`
+
+```bash
+source src/cosma_adios2_env.sh
+echo "$ADIOS2_DIR"
+echo "$LD_LIBRARY_PATH"
+```
+
+### OOM inmediato con 1024 procesos
+
+Buscar en el error:
 
 ```text
-/cosma7/data/dp433/dc-mart18/anisotropy_adios2/PSC_TARGET_JOBID/
+1024 singletons will be started
 ```
 
-Salidas esperadas:
+Si aparece, se usó `srun --mpi=pmi2`. Volver a `mpirun`.
 
-```text
-checkpoint_7500.bp/
-checkpoint_15000.bp/
-pfd.*
-pfd_moments.*
-prt_mirror_kappa3.*
-```
+### Job cancelado sin logs
 
-## Restart desde checkpoint
+Consultar `Reason=Prolog`. Si aparece, revisar o excluir temporalmente los
+nodos afectados.
 
-Crear una copia del script grande:
+### No aparece todavía `checkpoint_*.bp`
 
-```bash
-cp src/submit_anisotropy_adios2.slurm src/restart_anisotropy_adios2.slurm
-```
-
-En la copia, antes de `psc_mpi_run`, añadir:
-
-```bash
-export PSC_RESTART=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/PSC_TARGET_JOBID/checkpoint_7500.bp
-```
-
-Luego enviar:
-
-```bash
-sbatch --export=ALL,PSC_TARGET=psc_mirror_kappa3 src/restart_anisotropy_adios2.slurm
-```
-
-## Problemas comunes
-
-Para revisar jobs, el usuario va con `-u`; no va dentro de `--format`:
-
-```bash
-sacct -u dc-mart18 --format=JobID,JobName,Partition,State,ExitCode,Elapsed
-```
-
-Si `sacct --format=...` termina con `Invalid field requested: "dc-mart18"`,
-el comando mezcló el usuario con las columnas de salida.
-
-Si aparece `write_checkpoint not available without adios2`, se está usando el
-build equivocado. Recompilar con `src/cosma_build_psc_adios2.sh` y correr
-`build-adios2-nohdf5/src/psc_mirror_kappa3`.
-
-Si `adios2-config` no aparece, revisar:
-
-```bash
-export PATH="$HOME/adios2-nohdf5/bin:$PATH"
-export LD_LIBRARY_PATH="$HOME/adios2-nohdf5/lib64:$HOME/adios2-nohdf5/lib:${LD_LIBRARY_PATH:-}"
-```
-
-Si tu instalación es la actual de COSMA, usa:
-
-```bash
-export ADIOS2_DIR="$HOME/adios2"
-export PATH="$ADIOS2_DIR/bin:$PATH"
-export LD_LIBRARY_PATH="$ADIOS2_DIR/lib64:$ADIOS2_DIR/lib:${LD_LIBRARY_PATH:-}"
-```
-
-También se detecta automáticamente `ADIOS2_DIR=$HOME/build_adios2_nohdf5/build`
-si ese build existe.
-
-No cargues `cosma/2018`, `hdf5/1.10.3` ni `adios2/2.7.1`: esos módulos no
-aparecen en el árbol actual de COSMA. Los scripts cargan
-`gnu_comp/14.1.0 openmpi/5.0.3 parallel_hdf5/1.14.4`.
-
-Si el job falla al copiar el binario, confirmar que existe:
-
-```bash
-ls -l build-adios2-nohdf5/src/psc_mirror_kappa3
-```
+Comprobar el paso actual y el intervalo de checkpoint. Por ejemplo,
+`psc_mirror_kappa3` no escribe el primer checkpoint hasta el paso 7500.

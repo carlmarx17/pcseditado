@@ -10,12 +10,20 @@ describe el contrato de archivos, datasets y responsabilidades internas.
 ## 0. Contrato de una corrida
 
 Cada directorio de datos debe contener una sola simulación. Para
-`CASE=F_M_bM`, los nombres esperados son:
+`CASE=F_M_bM`, se admite una serie HDF5:
 
 ```text
 pfd.<step>_p000000.h5
 pfd_moments.<step>_p000000.h5
 prt_F_M_bM.<step>.h5
+```
+
+o la serie ADIOS2 equivalente:
+
+```text
+pfd.<step>.bp/
+pfd_moments.<step>.bp/
+prt_F_M_bM.<step>.bp/
 ```
 
 El comando de producción es:
@@ -44,19 +52,19 @@ de estas dos razones se está usando.
 
 ## 1. Formatos de Archivos de Salida
 
-PSC genera dos tipos de archivos HDF5 (`.h5`) durante la simulación:
+La pipeline acepta snapshots HDF5 (`.h5`) y ADIOS2 BP (`.bp`):
 
 | Patrón de archivo        | Contenido                                      | Leído por                            |
 |--------------------------|------------------------------------------------|--------------------------------------|
-| `prt_<CASE>.NNNNNNNNN.h5` | Datos de partículas (q, m, px, py, pz, w)     | `plot_prt.py`, `validate_moments.py` |
-| `pfd.NNNNNN_pN.h5`       | Campos EM en grilla (Bx, By, Bz, Ex, Ey, Ez)  | `anisotropy_analysis.py`, `mirror_physics.py` |
-| `pfd_moments.NNNNNN_pN.h5` | Momentos de partículas (P_ij, rho, J)        | `anisotropy_analysis.py`, `diamagnetic_current.py` |
+| `prt_<CASE>.<step>.h5` o `.bp/` | Datos de partículas (q, m, px, py, pz, w) | `physical_diagnostics.py`, scripts de partículas |
+| `pfd.<step>_pN.h5` o `pfd.<step>.bp/` | Campos EM en grilla | `physical_diagnostics.py`, scripts de campos |
+| `pfd_moments.<step>_pN.h5` o `.bp/` | Momentos de partículas | `physical_diagnostics.py`, scripts de momentos |
 
-> **Nota sobre ADIOS2:** Los checkpoints `checkpoint_<step>.bp/` sirven para
-> restart de simulaciones compiladas con ADIOS2. La pipeline de análisis sigue
-> leyendo las salidas HDF5 de campos, momentos y partículas (`pfd`,
-> `pfd_moments`, `prt_*`). No analizar directamente los checkpoints `.bp` con
-> estos scripts.
+> **Importante:** `checkpoint_<step>.bp/` es un checkpoint de restart y no
+> sustituye automáticamente a `pfd`, `pfd_moments` o `prt_*`. El análisis de
+> campos, momentos y partículas requiere esas series, en HDF5 o BP. Una
+> simulación puede escribir checkpoints ADIOS2 y mantener sus diagnósticos
+> regulares en HDF5 si el ejecutable usa `WriterDefault`.
 
 ---
 
@@ -273,16 +281,15 @@ colisiones MPI.  En ADIOS2 este hash **no se agrega** — el prefijo es limpio
 (`jeh/`, `all_1st/`).  Esto significa que `PICDataReader.get_uid_group()`
 no es necesario con `.bp`.
 
-### Qué cambiar en los scripts de análisis para `.bp`
+### Soporte implementado para `.bp`
 
-| Componente | Cambio necesario |
+| Componente | Estado |
 |---|---|
-| `data_reader.py` | Agregar un `PICDataReaderBP` que use `adios2.open()` en vez de `h5py.File()`. No necesita `get_uid_group()` (sin UUID hash). |
-| `plot_prt.py` | Cambiar `h5py.File → adios2.open` en `load_particles()` y `load_particle_phase_space()`. La ruta interna pasa de `f["particles"]["p0"]["1d"]["q"]` a `step.read("particles/p0/1d/q")`. |
-| `validate_moments.py` | Mismo cambio en `load_particles()`. |
-| `anisotropy_analysis.py` | Usar el nuevo reader BP en `process_snapshot()`. |
-| `psc_units.py` | Cambiar los patrones: `FIELD_FILE_PATTERN = "pfd.*.bp"`, `PARTICLE_FILE_PATTERN = "prt.*.bp"`. |
-| `Makefile` | Actualizar `DATA_DIR` y los globs de `--fields` / `--moments` para buscar `.bp` en vez de `.h5`. |
+| `data_reader.py` | Lector unificado HDF5/BP, resolución de grupos UID y compatibilidad con `FileReader`, `Stream` y `adios2.open`. |
+| `physical_diagnostics.py` | Partículas, campos y momentos se leen mediante `PICDataReader`; no contiene una ruta HDF5 paralela. |
+| Descubrimiento | Busca automáticamente `pfd`, `pfd_moments` y `prt_*` en ambos formatos. |
+| Espectros | El diagnóstico maestro calcula directamente $E_{B_\perp}(k)$. |
+| Checkpoints | Se reservan para restart; no se interpretan como snapshots físicos. |
 
 ### Estrategia dual recomendada
 
@@ -317,8 +324,8 @@ CodeforAnalisys/
 │   │                            B0, OMEGA_CI, DI, TI_PAR, TI_PERP, KAPPA ...
 │   └── (importado por todos los demás scripts)
 │
-├── data_reader.py            ← LECTOR HDF5 genérico
-│   │                            PICDataReader: find_files(), read_multiple_fields_3d()
+├── data_reader.py            ← LECTOR HDF5/ADIOS2 unificado
+│   │                            PICDataReader: descubrimiento, apertura y resolución de rutas
 │   └── (importado por anisotropy_analysis, diamagnetic_current, mirror_physics)
 │
 ├── plot_prt.py               ← ANÁLISIS DE PARTÍCULAS (lee prt.*.h5)
@@ -345,8 +352,14 @@ CodeforAnalisys/
 ├── fluctuationofmagneticfiel.py  ← FLUCTUACIONES δB (lee pfd)
 │   └── Mapas de δB, δB/B₀, animaciones GIF
 │
-├── spectral_analysis.py      ← ESPECTROS (lee pfd) [en desarrollo]
+├── spectral_analysis.py      ← MOTOR ESPECTRAL (lee pfd HDF5/BP)
 │   └── PSD 1D y 2D de componentes magnéticas
+│
+├── physical_diagnostics.py  ← DIAGNÓSTICO MAESTRO HDF5/BP
+│   ├── partículas, temperaturas, VDF y ajustes
+│   ├── momentos, mapas, corrientes y correlaciones
+│   ├── fluctuaciones, crecimiento y energía
+│   └── espectro transversal E_Bperp(k)
 │
 ├── validate_moments.py       ← VALIDACIÓN (lee prt.*.h5)
 │   └── Verifica que momentos medidos = parámetros de inicialización
@@ -597,3 +610,256 @@ make clean
 python plot_prt.py ../build/src/prt.000001200.h5
 python plot_prt.py "../build/src/prt.*.h5"    # todos los snapshots (evolución temporal)
 ```
+
+---
+
+## 9. Pipeline unificada: 17 diagnósticos físicos
+
+El punto de entrada integrado es:
+
+```bash
+PSC_PROFILE=F_S_bM python physical_diagnostics.py \
+  --data-dir ../corridas_locales/mi_prueba \
+  --outdir ../analysis_results/F_S_bM/09_physical_diagnostics
+```
+
+Si no se pasan `--particles`, `--fields` o `--moments`,
+`PICDataReader.discover_outputs()` selecciona automáticamente las series
+`.h5` o `.bp`. No se deben mezclar dos formatos para el mismo paso.
+
+### 1. Lectura de datos
+
+Carga snapshots de partículas, campos y momentos desde HDF5 o ADIOS2. Los
+grupos HDF5 con UID y los nombres limpios de ADIOS2 se resuelven con la misma
+API.
+
+### 2. Separación de especies
+
+Separa iones y electrones por el signo de la carga:
+
+```text
+q > 0: iones
+q < 0: electrones
+```
+
+### 3. Temperaturas y anisotropía
+
+Calcula:
+
+```text
+T_parallel = m <(v_parallel - <v_parallel>)²>
+T_perp     = m/2 [<(vx-<vx>)²> + <(vy-<vy>)²>]
+A          = T_perp / T_parallel
+R          = T_parallel / T_perp
+```
+
+Salidas principales: `validation_table.csv` y `anisotropy_table.csv`.
+
+### 4. Series temporales
+
+Genera `anisotropy_vs_time.png` y
+`temperature_parallel_perp_vs_time.png`.
+
+### 5. VDF bidimensional
+
+Construye mapas logarítmicos
+$f(v_\perp,v_\parallel)$ para los snapshots de partículas seleccionados:
+`vdf_2d_step_<step>.png`.
+
+### 6. Ajustes Maxwelliano y Kappa
+
+Ajusta ambas distribuciones, compara errores globales y de cola, estima
+$\kappa$ y calcula la fracción supratermal. Salidas:
+`fit_metrics.csv`, `kappa_fit_vs_time.png`,
+`suprathermal_fraction_vs_time.png` y
+`kappa_vs_maxwellian_step_<step>.png`.
+
+### 7. Brazil plots
+
+Representa $\langle\beta_{\parallel i}\rangle$ frente a
+$\langle A_i\rangle$ y superpone umbrales mirror/firehose. Salidas:
+`brazil_plot_global.png` y `brazil_plot_spatial.png`.
+
+### 8. Mapas espaciales de anisotropía
+
+Reconstruye $T_{\parallel i}$, $T_{\perp i}$ y
+$A_i(y,z)$ desde momentos de grilla. Produce estadísticas temporales en
+`anisotropy_spatial_stats.csv` y mapas `A_i_map_step_<step>.png`.
+
+### 9. Fluctuaciones magnéticas
+
+Calcula $|B|$, $\delta B/B_0$, mínimos, profundidad de estructuras mirror y
+$\delta B_{\mathrm{rms}}(t)$. Salida tabular:
+`field_fluctuation_table.csv`.
+
+### 10. Tasa de crecimiento
+
+Ajusta la fase aproximadamente lineal de
+$\ln(\delta B_{\mathrm{rms}})$ para estimar $\gamma$. Salidas:
+`growth_rate_summary.csv` y `growth_rate_fit.png`.
+
+### 11. Componentes magnéticas
+
+Separa fluctuaciones paralelas y transversales respecto a
+$B_0\parallel z$. Salidas:
+`deltaB_parallel_vs_time.png`, `deltaB_perp_vs_time.png` y
+`deltaB_components_comparison.png`.
+
+### 12. Espectro magnético transversal
+
+El diagnóstico maestro reutiliza el núcleo numérico de `SpectralAnalyzer` y
+calcula:
+
+```text
+PSD_Bperp(k_y,k_z) = PSD_deltaBx + PSD_deltaBy
+E_Bperp(k)         = suma radial de PSD_Bperp
+```
+
+Aplica ventana de Hann, obtiene el modo dominante y ajusta una ley de potencia
+en el intervalo central disponible. Salidas:
+
+```text
+magnetic_spectrum_step_<step>.png
+magnetic_spectrum_table.csv
+```
+
+La tabla registra plano, espaciado, `peak_k`, potencia máxima, pendiente y
+coeficiente de correlación del ajuste.
+
+### 13. Corrientes diamagnéticas
+
+Calcula mapas iónicos, electrónicos y totales a partir de
+$\nabla P_\perp\times B/B^2$. Salidas:
+`J_dia_i_map_step_<step>.png`,
+`J_dia_e_map_step_<step>.png` y
+`J_dia_total_map_step_<step>.png`.
+
+### 14. Correlaciones espaciales
+
+Evalúa correlaciones de $A_i$ con $\delta B$, $|B|$, $J_{dia}$ y densidad.
+Produce `spatial_correlations.csv` y los scatter plots correspondientes.
+
+### 15. Partición y conservación de energía
+
+Combina proxies de energía bulk, térmica y magnética; calcula la variación
+relativa respecto al primer estado disponible. Salidas:
+`energy_table.csv`, `energy_partition.png` y
+`energy_conservation_error.png`.
+
+### 16. Flujos de calor
+
+Calcula los terceros momentos globales de partículas
+$q_\parallel$ y $q_\perp$ para cada snapshot. Salidas:
+`heat_flux_parallel_vs_time.png` y `heat_flux_perp_vs_time.png`.
+
+Además calcula proxies espaciales desde el tensor de presión y la velocidad
+bulk:
+
+```text
+q_parallel ≈ P_parallel v_parallel
+q_perp     ≈ P_perp |v_perp|
+```
+
+El dominio se divide en cuatro cuadrantes fijos para comparar transporte
+localizado. Salidas:
+
+```text
+localized_heat_flux_table.csv
+q_parallel_map_step_<step>.png
+q_perp_map_step_<step>.png
+```
+
+`heat_flux_analysis.py` permanece disponible para una ejecución especializada,
+pero el diagnóstico localizado básico ya forma parte del pipeline maestro y
+usa el mismo lector HDF5/BP.
+
+### 17. Comparación Maxwelliana frente a Kappa
+
+`compare_physical_cases.py` combina las tablas de dos o más casos:
+
+```bash
+python compare_physical_cases.py \
+  maxwellian=../analysis_results/mirror_maxwellian/09_physical_diagnostics \
+  kappa=../analysis_results/mirror_kappa/09_physical_diagnostics \
+  --outdir ../analysis_results/comparison_physical
+```
+
+Compara anisotropía, crecimiento, fluctuaciones, energía, flujo de calor y
+fracción supratermal sin volver a leer los snapshots originales.
+
+## 10. Verificación de formatos
+
+Instalar las dependencias del análisis:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+`requirements.txt` incluye las bindings Python `adios2`; la instalación C++
+de ADIOS2 por sí sola no garantiza que `import adios2` esté disponible.
+
+Prueba HDF5 local:
+
+```bash
+PSC_PROFILE=F_S_bM ../.venv/bin/python physical_diagnostics.py \
+  --data-dir ../corridas_locales/mi_prueba \
+  --outdir /tmp/psc_physical_validation \
+  --max-particle-steps 2 --max-map-steps 2
+```
+
+Comprobación ADIOS2 en COSMA:
+
+```bash
+source ../src/cosma_adios2_env.sh
+python -c "import adios2; print(adios2.__file__)"
+
+python physical_diagnostics.py \
+  --data-dir /ruta/a/snapshots_bp \
+  --outdir /ruta/a/resultados
+```
+
+Si el directorio solo contiene `checkpoint_<step>.bp`, faltan las series
+físicas `pfd`, `pfd_moments` y `prt_*`; el checkpoint no es una entrada
+equivalente para estos 17 diagnósticos.
+
+## 11. Implementación y validación realizadas
+
+Cambios incorporados a la pipeline:
+
+1. `PICDataReader.open_data_file()` unifica HDF5 y ADIOS2.
+2. El descubrimiento reconoce archivos `.h5` y directorios `.bp`.
+3. La resolución de rutas acepta grupos limpios y grupos con UID.
+4. Las partículas BP se leen como variables separadas `q`, `m`, `px`, `py`,
+   `pz` y `w`.
+5. `physical_diagnostics.py` dejó de abrir HDF5 directamente.
+6. El espectro transversal $E_{B_\perp}(k)$ forma parte del diagnóstico
+   maestro.
+7. Se añadieron mapas y estadísticas regionales de flujo de calor.
+8. `spectral_analysis.py` dispone de fallback NumPy cuando SciPy no está
+   instalado.
+
+Validación ejecutada sobre `corridas_locales/mi_prueba`:
+
+```text
+25 snapshots de campos HDF5
+25 snapshots de momentos HDF5
+2 snapshots de partículas seleccionados
+2 snapshots espectrales seleccionados
+4 regiones espaciales × 25 pasos = 100 filas de flujo localizado
+```
+
+Resultados comprobados:
+
+```text
+physical_diagnostics.py: finaliza con código 0
+compare_physical_cases.py: finaliza con código 0
+magnetic_spectrum_table.csv: generado
+localized_heat_flux_table.csv: generado
+q_parallel_map_step_<step>.png: generado
+q_perp_map_step_<step>.png: generado
+```
+
+La ruta ADIOS2 también se comprobó con un backend simulado que reproduce
+`FileReader` y con variables separadas de campos y partículas. La prueba real
+en un clúster requiere que las bindings Python ADIOS2 estén instaladas en el
+entorno que ejecuta el análisis.

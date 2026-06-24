@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-import h5py
 import matplotlib
 
 matplotlib.use("Agg")
@@ -37,6 +36,7 @@ except ImportError:  # pragma: no cover - requirements include scipy
     curve_fit = None
 
 from data_reader import PICDataReader
+from spectral_analysis import SpectralAnalyzer
 from psc_units import (
     B0,
     BETA_I_PAR,
@@ -142,22 +142,9 @@ def _select_steps(steps: list[int], requested: list[int] | None, max_count: int)
 
 def _read_particle_snapshot(path: str, max_particles: int) -> ParticleSnapshot:
     step = _extract_step(path)
-    with h5py.File(path, "r") as handle:
-        dset = handle["particles"]["p0"]["1d"]
-        n_total = len(dset["q"])
-        if n_total > max_particles:
-            idx = np.sort(RNG.choice(n_total, max_particles, replace=False))
-        else:
-            idx = slice(None)
-        q = np.asarray(dset["q"][idx], dtype=float)
-        m = np.asarray(dset["m"][idx], dtype=float)
-        px = np.asarray(dset["px"][idx], dtype=float)
-        py = np.asarray(dset["py"][idx], dtype=float)
-        pz = np.asarray(dset["pz"][idx], dtype=float)
-        if "w" in dset.dtype.names:
-            w = np.asarray(dset["w"][idx], dtype=float)
-        else:
-            w = np.ones_like(q)
+    q, m, px, py, pz, w = PICDataReader.read_particles_snapshot(
+        path, max_particles=max_particles, rng=RNG
+    )
     return ParticleSnapshot(step, step_to_omegaci(step), q, m, px, py, pz, w)
 
 
@@ -301,6 +288,115 @@ def field_metrics(field_file: str, b0: float = B0) -> dict:
         "mirror_area_fraction": float(np.nanmean(bmag < (b0 - sigma_b))),
         "magnetic_energy_fluct": float(0.5 * np.nanmean(delta_b**2)),
     }
+
+
+def _spectral_plane(shape: tuple[int, ...]) -> str:
+    """Select the physical 2D plane from the singleton PSC dimension."""
+    if len(shape) != 3:
+        raise ValueError(f"Expected a 3D PSC field, got shape {shape}")
+    if shape[2] == 1:
+        return "yz"
+    if shape[1] == 1:
+        return "xz"
+    if shape[0] == 1:
+        return "xy"
+    # Full 3D output: analyze the central yz plane, matching B0 || z.
+    return "yz"
+
+
+def magnetic_perpendicular_spectrum(field_file: str) -> dict:
+    """Compute the transverse magnetic spectrum PSD(Bx) + PSD(By)."""
+    fields = load_fields(field_file)
+    bx = np.asarray(fields["Bx"], dtype=float)
+    by = np.asarray(fields["By"], dtype=float)
+    bz = np.asarray(fields["Bz"], dtype=float)
+    plane = _spectral_plane(bx.shape)
+
+    axis_lengths = {"x": 1.0, "y": DOMAIN_DI_Y, "z": DOMAIN_DI_Z}
+    probe = SpectralAnalyzer(outdir="/tmp/psc_spectral_probe", parallel_axis="z")
+    plane_data = probe._get_plane_slice(bx, by, bz, plane)
+    axes = plane_data["axes"]
+    plane_shape = np.atleast_2d(plane_data["bx"]).shape
+    spacing = (
+        axis_lengths[axes[0]] / max(plane_shape[0], 1),
+        axis_lengths[axes[1]] / max(plane_shape[1], 1),
+    )
+    analyzer = SpectralAnalyzer(
+        dx=spacing[1],
+        dy=spacing[0],
+        outdir="/tmp/psc_spectral_probe",
+        parallel_axis="z",
+    )
+    plane_data = analyzer._get_plane_slice(bx, by, bz, plane)
+    bx_2d = np.atleast_2d(plane_data["bx"])
+    by_2d = np.atleast_2d(plane_data["by"])
+    dbx = bx_2d - np.nanmean(bx_2d)
+    dby = by_2d - np.nanmean(by_2d)
+    psd_2d = analyzer._compute_fft_psd(dbx) + analyzer._compute_fft_psd(dby)
+    k_grids = analyzer._compute_k_grids(
+        psd_2d.shape, plane_data["spacing"], plane_data["axes"]
+    )
+    k, power = analyzer._radial_spectrum(psd_2d, k_grids["k_mag"])
+    fit = analyzer._fit_power_law(k, power)
+    if power.size:
+        peak_idx = int(np.nanargmax(power))
+        peak_k = float(k[peak_idx])
+        peak_power = float(power[peak_idx])
+    else:
+        peak_k = np.nan
+        peak_power = np.nan
+    return {
+        "plane": plane,
+        "axes": axes,
+        "spacing": spacing,
+        "k": k,
+        "power": power,
+        "fit": fit,
+        "peak_k": peak_k,
+        "peak_power": peak_power,
+    }
+
+
+def plot_magnetic_spectrum(spectrum: dict, step: int, outdir: Path):
+    k = np.asarray(spectrum["k"], dtype=float)
+    power = np.asarray(spectrum["power"], dtype=float)
+    if k.size == 0:
+        return
+    fig, ax = plt.subplots(figsize=(8.5, 5.5))
+    fig.patch.set_facecolor(DARK_BG)
+    _style_axes(ax)
+    ax.loglog(k, power, color="#58a6ff", lw=2.0, label=r"$E_{B_\perp}(k)$")
+    fit = spectrum["fit"]
+    if fit is not None and len(fit["k_fit"]) >= 3:
+        fit_power = 10 ** (
+            fit["intercept"] + fit["slope"] * np.log10(fit["k_fit"])
+        )
+        ax.loglog(
+            fit["k_fit"],
+            fit_power,
+            "--",
+            color="#ff7b72",
+            lw=1.8,
+            label=rf"fit: $k^{{{fit['slope']:.2f}}}$",
+        )
+    if len(k) > 8:
+        ref = slice(len(k) // 4, 3 * len(k) // 4)
+        k_ref = k[ref]
+        p_ref = power[ref]
+        valid = (k_ref > 0) & (p_ref > 0)
+        if np.any(valid):
+            first = np.flatnonzero(valid)[0]
+            kolmogorov = p_ref[first] * (k_ref / k_ref[first]) ** (-5.0 / 3.0)
+            ax.loglog(k_ref, kolmogorov, ":", color="#f2cc60", label=r"$k^{-5/3}$")
+    ax.set_xlabel(r"$k\,[d_i^{-1}]$", color=TEXT_CLR)
+    ax.set_ylabel(r"$E_{B_\perp}(k)$", color=TEXT_CLR)
+    ax.set_title(
+        f"Transverse magnetic spectrum - step {step} ({spectrum['plane']})",
+        color=TEXT_CLR,
+        fontweight="bold",
+    )
+    ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
+    _savefig(fig, outdir / f"magnetic_spectrum_step_{step}.png")
 
 
 def maxwellian_pdf(x: np.ndarray, amp: float, sigma: float) -> np.ndarray:
@@ -794,6 +890,88 @@ def compute_jdia(moment_file: str, field_file: str) -> dict[str, np.ndarray]:
     return {"J_dia_i": j_i, "J_dia_e": j_e, "J_dia_total": j_i + j_e}
 
 
+def moment_heat_flux_maps(moment_file: str, field_file: str) -> dict[str, np.ndarray]:
+    """Compute spatial ion heat-flux proxies from pressure and bulk velocity."""
+    names = [
+        "rho_i/p0/3d",
+        "txx_i/p0/3d", "tyy_i/p0/3d", "tzz_i/p0/3d",
+        "txy_i/p0/3d", "tyz_i/p0/3d", "tzx_i/p0/3d",
+        "px_i/p0/3d", "py_i/p0/3d", "pz_i/p0/3d",
+    ]
+    raw = PICDataReader.read_multiple_fields_3d(
+        moment_file, "all_1st", names
+    )
+    mom = {
+        key.split("/")[0]: PICDataReader.flatten_2d_slice(value).astype(float)
+        for key, value in raw.items()
+    }
+    fields = load_fields(field_file)
+    bx = PICDataReader.flatten_2d_slice(fields["Bx"]).astype(float)
+    by = PICDataReader.flatten_2d_slice(fields["By"]).astype(float)
+    bz = PICDataReader.flatten_2d_slice(fields["Bz"]).astype(float)
+
+    n = np.where(mom["rho_i"] > 1e-12, mom["rho_i"], np.nan)
+    px, py, pz = mom["px_i"], mom["py_i"], mom["pz_i"]
+    vx, vy, vz = px / (n * M_ION), py / (n * M_ION), pz / (n * M_ION)
+    pxx = mom["txx_i"] - px * px / (n * M_ION)
+    pyy = mom["tyy_i"] - py * py / (n * M_ION)
+    pzz = mom["tzz_i"] - pz * pz / (n * M_ION)
+    pxy = mom["txy_i"] - px * py / (n * M_ION)
+    pyz = mom["tyz_i"] - py * pz / (n * M_ION)
+    pzx = mom["tzx_i"] - pz * px / (n * M_ION)
+
+    bmag = np.sqrt(bx**2 + by**2 + bz**2 + 1e-30)
+    bhx, bhy, bhz = bx / bmag, by / bmag, bz / bmag
+    vpar = vx * bhx + vy * bhy + vz * bhz
+    ppar = (
+        pxx * bhx**2 + pyy * bhy**2 + pzz * bhz**2
+        + 2.0 * pxy * bhx * bhy
+        + 2.0 * pyz * bhy * bhz
+        + 2.0 * pzx * bhz * bhx
+    )
+    pperp = 0.5 * (pxx + pyy + pzz - ppar)
+    vperp = np.sqrt(
+        (vx - vpar * bhx) ** 2
+        + (vy - vpar * bhy) ** 2
+        + (vz - vpar * bhz) ** 2
+    )
+    return {
+        "q_parallel": ppar * vpar,
+        "q_perp": pperp * vperp,
+        "P_parallel": ppar,
+        "P_perp": pperp,
+    }
+
+
+def localized_heat_flux_rows(
+    heat_flux: dict[str, np.ndarray], step: int
+) -> list[dict]:
+    """Summarize heat flux in four fixed spatial quadrants."""
+    qpar = np.asarray(heat_flux["q_parallel"], dtype=float)
+    qperp = np.asarray(heat_flux["q_perp"], dtype=float)
+    mid0, mid1 = qpar.shape[0] // 2, qpar.shape[1] // 2
+    slices = {
+        "low_y_low_z": (slice(0, mid0), slice(0, mid1)),
+        "low_y_high_z": (slice(0, mid0), slice(mid1, None)),
+        "high_y_low_z": (slice(mid0, None), slice(0, mid1)),
+        "high_y_high_z": (slice(mid0, None), slice(mid1, None)),
+    }
+    rows = []
+    for region, selection in slices.items():
+        local_par = qpar[selection]
+        local_perp = qperp[selection]
+        rows.append({
+            "step": step,
+            "omega_ci_t": step_to_omegaci(step),
+            "region": region,
+            "q_parallel_mean": float(np.nanmean(local_par)),
+            "q_parallel_abs_mean": float(np.nanmean(np.abs(local_par))),
+            "q_perp_mean": float(np.nanmean(local_perp)),
+            "q_perp_abs_mean": float(np.nanmean(np.abs(local_perp))),
+        })
+    return rows
+
+
 def correlations(a_map: np.ndarray, delta_b: np.ndarray, bmag: np.ndarray,
                  jdia: np.ndarray, rho: np.ndarray, step: int) -> dict:
     def corr(x, y):
@@ -853,14 +1031,29 @@ class PhysicalDiagnostics:
         self.max_particle_steps = max_particle_steps
         self.max_map_steps = max_map_steps
         self.selected_steps = selected_steps
-        self.particle_files = PICDataReader.find_files(
-            particle_pattern or str(self.data_dir / "prt*.h5")
+        discovered = PICDataReader.discover_outputs(str(self.data_dir))
+        if particle_pattern:
+            self.particle_files = PICDataReader.find_files(particle_pattern)
+        else:
+            particle_series = discovered["particles"]
+            if len(particle_series) > 1:
+                names = ", ".join(sorted(particle_series))
+                raise ValueError(
+                    f"Multiple particle series found ({names}). Pass --particles "
+                    "to select exactly one case."
+                )
+            self.particle_files = (
+                next(iter(particle_series.values())) if particle_series else {}
+            )
+        self.field_files = (
+            PICDataReader.find_files(field_pattern)
+            if field_pattern
+            else discovered["fields"]
         )
-        self.field_files = PICDataReader.find_files(
-            field_pattern or str(self.data_dir / "pfd.*_p*.h5")
-        )
-        self.moment_files = PICDataReader.find_files(
-            moment_pattern or str(self.data_dir / "pfd_moments.*_p*.h5")
+        self.moment_files = (
+            PICDataReader.find_files(moment_pattern)
+            if moment_pattern
+            else discovered["moments"]
         )
 
     def run(self):
@@ -1018,7 +1211,34 @@ class PhysicalDiagnostics:
                 "linear_phase_end": growth["linear_phase_end"],
             }])
         self.plot_field_maps()
+        self.run_magnetic_spectra()
         return rows
+
+    def run_magnetic_spectra(self):
+        """Generate transverse P(k) within the integrated diagnostics run."""
+        steps = _select_steps(
+            sorted(self.field_files), self.selected_steps, self.max_map_steps
+        )
+        rows = []
+        for step in steps:
+            print(f"Magnetic spectrum step {step}")
+            spectrum = magnetic_perpendicular_spectrum(self.field_files[step])
+            plot_magnetic_spectrum(spectrum, step, self.outdir)
+            fit = spectrum["fit"]
+            rows.append({
+                "step": step,
+                "omega_ci_t": step_to_omegaci(step),
+                "plane": spectrum["plane"],
+                "axis0": spectrum["axes"][0],
+                "axis1": spectrum["axes"][1],
+                "delta_axis0": spectrum["spacing"][0],
+                "delta_axis1": spectrum["spacing"][1],
+                "peak_k": spectrum["peak_k"],
+                "peak_power": spectrum["peak_power"],
+                "power_law_slope": np.nan if fit is None else fit["slope"],
+                "power_law_rvalue": np.nan if fit is None else fit["rvalue"],
+            })
+        _write_csv(self.outdir / "magnetic_spectrum_table.csv", rows)
 
     def plot_field_maps(self):
         steps = _select_steps(sorted(self.field_files), self.selected_steps, self.max_map_steps)
@@ -1039,6 +1259,7 @@ class PhysicalDiagnostics:
             return []
         rows = []
         corr_rows = []
+        heat_flux_rows = []
         common = sorted(set(self.moment_files) & set(self.field_files))
         steps_for_maps = _select_steps(sorted(self.moment_files), self.selected_steps, self.max_map_steps)
         species = "ion"
@@ -1075,6 +1296,10 @@ class PhysicalDiagnostics:
             maps = moment_thermal_maps(self.moment_files[step], self.field_files[step], species)
             fmet = field_metrics(self.field_files[step], B0)
             jdia = compute_jdia(self.moment_files[step], self.field_files[step])
+            heat_flux = moment_heat_flux_maps(
+                self.moment_files[step], self.field_files[step]
+            )
+            heat_flux_rows.extend(localized_heat_flux_rows(heat_flux, step))
             corr_rows.append(correlations(
                 maps["A"],
                 PICDataReader.flatten_2d_slice(fmet["delta_B"]),
@@ -1090,6 +1315,21 @@ class PhysicalDiagnostics:
                          rf"$J_{{dia,e}}$ - step {step}", r"$J_{dia,e}$", cmap="RdBu_r", symmetric=True)
                 plot_map(jdia["J_dia_total"], self.outdir / f"J_dia_total_map_step_{step}.png",
                          rf"$J_{{dia,total}}$ - step {step}", r"$J_{dia,total}$", cmap="RdBu_r", symmetric=True)
+                plot_map(
+                    heat_flux["q_parallel"],
+                    self.outdir / f"q_parallel_map_step_{step}.png",
+                    rf"$q_{{\parallel,i}}$ - step {step}",
+                    r"$q_{\parallel,i}$",
+                    cmap="RdBu_r",
+                    symmetric=True,
+                )
+                plot_map(
+                    heat_flux["q_perp"],
+                    self.outdir / f"q_perp_map_step_{step}.png",
+                    rf"$q_{{\perp,i}}$ - step {step}",
+                    r"$q_{\perp,i}$",
+                    cmap="inferno",
+                )
                 plot_scatter(maps["A"], PICDataReader.flatten_2d_slice(fmet["delta_B"]),
                              self.outdir / "A_vs_deltaB_scatter.png", r"$A_i$", r"$\delta B$",
                              "Spatial correlation: anisotropy vs delta B")
@@ -1102,6 +1342,7 @@ class PhysicalDiagnostics:
 
         _write_csv(self.outdir / "anisotropy_spatial_stats.csv", rows)
         _write_csv(self.outdir / "spatial_correlations.csv", corr_rows)
+        _write_csv(self.outdir / "localized_heat_flux_table.csv", heat_flux_rows)
         plot_spatial_maps(rows, self.outdir)
         self.plot_brazil_from_rows(rows)
         return rows
@@ -1209,9 +1450,18 @@ def parse_args():
     )
     parser.add_argument("--data-dir", default=".", help="Directory containing pfd, pfd_moments and prt files.")
     parser.add_argument("--outdir", default="physical_diagnostics", help="Output directory.")
-    parser.add_argument("--particles", help="Particle glob pattern. Defaults to DATA_DIR/prt*.h5")
-    parser.add_argument("--fields", help="Field glob pattern. Defaults to DATA_DIR/pfd.*_p*.h5")
-    parser.add_argument("--moments", help="Moment glob pattern. Defaults to DATA_DIR/pfd_moments.*_p*.h5")
+    parser.add_argument(
+        "--particles",
+        help="Particle glob pattern. Defaults to auto-discovery of prt*.h5/prt*.bp.",
+    )
+    parser.add_argument(
+        "--fields",
+        help="Field glob pattern. Defaults to auto-discovery of pfd HDF5/BP snapshots.",
+    )
+    parser.add_argument(
+        "--moments",
+        help="Moment glob pattern. Defaults to auto-discovery of pfd_moments HDF5/BP snapshots.",
+    )
     parser.add_argument("--max-particles", type=int, default=500_000,
                         help="Maximum particles read per snapshot.")
     parser.add_argument("--max-particle-steps", type=int, default=12,

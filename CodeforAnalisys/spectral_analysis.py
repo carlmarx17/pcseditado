@@ -20,8 +20,23 @@ import warnings
 
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.fft import fft2, fftshift
-from scipy.stats import linregress
+from numpy.fft import fft2, fftshift
+
+try:
+    from scipy.stats import linregress
+except ImportError:  # NumPy fallback keeps spectra available without SciPy.
+    def linregress(x, y):
+        slope, intercept = np.polyfit(x, y, 1)
+        rvalue = np.corrcoef(x, y)[0, 1]
+        return type(
+            "LinearRegression",
+            (),
+            {
+                "slope": float(slope),
+                "intercept": float(intercept),
+                "rvalue": float(rvalue),
+            },
+        )()
 
 from data_reader import PICDataReader
 
