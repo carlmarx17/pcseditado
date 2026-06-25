@@ -37,6 +37,8 @@ cmake -S "$REPO" -B "$BUILD_DIR" \
   -DBUILD_TESTING=OFF
 
 TARGETS=(
+  psc_turbulence_3D_kappa_3
+  psc_turbulence_3D_maxwellian_3
   psc_mirror_bimaxwellian_strong
   psc_mirror_bimaxwellian_moderate
   psc_mirror_bimaxwellian_weak
@@ -49,6 +51,10 @@ TARGETS=(
   psc_mirror_bikappa3 psc_mirror_bikappa5
   psc_firehose_bikappa3 psc_firehose_bikappa5
 )
+
+if [ -n "${PSC_TARGETS:-}" ]; then
+  read -r -a TARGETS <<< "$PSC_TARGETS"
+fi
 
 cmake --build "$BUILD_DIR" -j "${BUILD_JOBS:-16}" --target "${TARGETS[@]}"
 

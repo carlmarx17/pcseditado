@@ -42,6 +42,8 @@ add_psc_executable(psc_firehose_bikappa3)
 add_psc_executable(psc_firehose_bikappa5)
 
 add_psc_executable(psc_reconnection)
+add_psc_executable(psc_turbulence_3D_kappa_3)
+add_psc_executable(psc_turbulence_3D_maxwellian_3)
 
 if(NOT USE_CUDA)
   install(
