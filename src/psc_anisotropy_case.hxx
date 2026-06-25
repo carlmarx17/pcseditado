@@ -84,6 +84,9 @@ int np_z = PSC_NP_Z_DEFAULT;
 int nicell = PSC_NICELL_DEFAULT;
 int fields_every = PSC_FIELDS_EVERY_DEFAULT;
 int particles_every = PSC_PARTICLES_EVERY_DEFAULT;
+int balance_interval = PSC_BALANCE_INTERVAL;
+int continuity_every = 5000;
+int energies_every = 5000;
 
 } // namespace
 
@@ -133,6 +136,9 @@ void setupParameters()
   nicell = envInt("PSC_NICELL", nicell);
   fields_every = envInt("PSC_FIELDS_EVERY", fields_every);
   particles_every = envInt("PSC_PARTICLES_EVERY", particles_every);
+  balance_interval = envInt("PSC_BALANCE_INTERVAL", balance_interval);
+  continuity_every = envInt("PSC_CONTINUITY_EVERY", continuity_every);
+  energies_every = envInt("PSC_ENERGIES_EVERY", energies_every);
 
   g.BB = 1.0;
   g.Zi = 1.;
@@ -290,7 +296,7 @@ void run()
     read_checkpoint(read_checkpoint_filename, grid, mprts, mflds);
   }
 
-  psc_params.balance_interval = PSC_BALANCE_INTERVAL;
+  psc_params.balance_interval = balance_interval;
   Balance balance{3};
 
   psc_params.sort_interval = 10;
@@ -301,7 +307,7 @@ void run()
   Collision collision{grid, collision_interval, collision_nu};
 
   ChecksParams checks_params{};
-  checks_params.continuity.check_interval = 0;
+  checks_params.continuity.check_interval = continuity_every;
   checks_params.continuity.err_threshold = 1e-4;
   checks_params.continuity.print_max_err_always = true;
   checks_params.continuity.dump_always = false;
@@ -332,8 +338,7 @@ void run()
   outp_params.hi = {1, int(0.6 * ngrid), int(0.6 * ngrid)};
   OutputParticles outp{grid, outp_params};
 
-  int oute_interval = -100;
-  DiagEnergies oute{grid.comm(), oute_interval};
+  DiagEnergies oute{grid.comm(), energies_every};
 
   auto diagnostics = makeDiagnosticsDefault(outf, outp, oute);
 

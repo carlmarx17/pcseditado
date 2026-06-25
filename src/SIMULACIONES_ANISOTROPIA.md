@@ -5,18 +5,18 @@ La guía de ejecución con ADIOS2 en COSMA está en `ADIOS2_COSMA_RUNBOOK.md`.
 
 ## Estructura del código
 
-Los casos bi-Maxwellian comparten `psc_anisotropy_case.hxx`. Los casos Kappa
-son archivos completos e independientes para facilitar lectura y compilación:
+Todos los casos comparten `psc_anisotropy_case.hxx`. Cada archivo de caso solo
+define la distribución, el régimen físico y sus parámetros:
 
 ```text
-psc_mirror_kappa3.cxx
-psc_mirror_kappa5.cxx
-psc_firehose_kappa3.cxx
-psc_firehose_kappa5.cxx
+psc_mirror_bikappa3.cxx
+psc_mirror_bikappa5.cxx
+psc_firehose_bikappa3.cxx
+psc_firehose_bikappa5.cxx
 ```
 
-Cada `.cxx` Kappa contiene dentro del mismo archivo su `kappa`, `nmax`,
-frecuencia de checkpoints/salidas, grilla y parámetros físicos:
+Los casos bi-Kappa activan `PSC_USE_KAPPA=1` y especifican `PSC_KAPPA`.
+Los bi-Maxwellianos usan el valor por defecto `PSC_USE_KAPPA=0`.
 
 ```
 PSC_CASE_LABEL / PSC_DISTRIBUTION_LABEL / PSC_OUTPUT_BASENAME
@@ -38,9 +38,18 @@ PSC_KAPPA
 | `mi/me` | 200 |
 | `lambda0` | 20 |
 | Densidad inicial | 1.0 |
-| Partículas por celda | 2000 (defecto) |
+| Dominio | `20 d_i × 20 d_i` |
+| Grilla | `1024×1024` |
+| Resolución | `51.2 celdas/d_i` |
+| Partículas por celda | 1500 (defecto) |
+| Pasos máximos | 1,200,000 |
 | Fronteras | Periódicas |
-| Checkpoint ADIOS2 | cada 7500 pasos |
+| Campos/momentos | cada 500 pasos |
+| Partículas | cada 10,000 pasos |
+| Checkpoint ADIOS2 | cada 5000 pasos |
+| Continuidad de carga | cada 5000 pasos |
+| Diagnóstico de energía | cada 5000 pasos (`diag.asc`) |
+| Balanceo de carga | cada 2500 pasos |
 
 El campo paralelo es `z`:
 ```
@@ -56,9 +65,9 @@ Criterio: `beta_i_parallel * (A_i - 1) > 1`
 
 | Ejecutable | Archivo | Régimen | beta_i_par | A_i | beta_e_par | A_e | Grilla |
 |---|---|---|---:|---:|---:|---:|---:|
-| `psc_M_S_bM` | `psc_M_S_bM.cxx` | Strong | 5.0 | 3.0 | 1.0 | 1.0 | 1408×1408 |
-| `psc_M_M_bM` | `psc_M_M_bM.cxx` | Moderate | 5.0 | 2.0 | 1.0 | 1.0 | 1408×1408 |
-| `psc_M_W_bM` | `psc_M_W_bM.cxx` | Weak | 6.0 | 1.5 | 1.0 | 1.0 | 1408×1408 |
+| `psc_mirror_bimaxwellian_strong` | `psc_mirror_bimaxwellian_strong.cxx` | Strong | 5.0 | 3.0 | 1.0 | 1.0 | 1024×1024 |
+| `psc_mirror_bimaxwellian_moderate` | `psc_mirror_bimaxwellian_moderate.cxx` | Moderate | 5.0 | 2.0 | 1.0 | 1.0 | 1024×1024 |
+| `psc_mirror_bimaxwellian_weak` | `psc_mirror_bimaxwellian_weak.cxx` | Weak | 6.0 | 1.5 | 1.0 | 1.0 | 1024×1024 |
 
 ## Firehose
 
@@ -67,9 +76,9 @@ Criterio: `beta_i_parallel * (1 - A_i) > 2`
 
 | Ejecutable | Archivo | Régimen | beta_i_par | A_i | beta_e_par | A_e | Grilla |
 |---|---|---|---:|---:|---:|---:|---:|
-| `psc_F_S_bM` | `psc_F_S_bM.cxx` | Strong | 10.0 | 0.1 | 1.0 | 1.0 | 1408×1408 |
-| `psc_F_M_bM` | `psc_F_M_bM.cxx` | Moderate | 6.0 | 0.3 | 1.0 | 1.0 | 1408×1408 |
-| `psc_F_W_bM` | `psc_F_W_bM.cxx` | Weak | 3.0 | 0.6 | 1.0 | 1.0 | 1408×1408 |
+| `psc_firehose_bimaxwellian_strong` | `psc_firehose_bimaxwellian_strong.cxx` | Strong | 10.0 | 0.1 | 1.0 | 1.0 | 1024×1024 |
+| `psc_firehose_bimaxwellian_moderate` | `psc_firehose_bimaxwellian_moderate.cxx` | Moderate | 6.0 | 0.3 | 1.0 | 1.0 | 1024×1024 |
+| `psc_firehose_bimaxwellian_weak` | `psc_firehose_bimaxwellian_weak.cxx` | Weak | 3.0 | 0.6 | 1.0 | 1.0 | 1024×1024 |
 
 ## Whistler
 
@@ -78,18 +87,18 @@ Criterio: `A_e > 1 + 0.21 / beta_e_parallel^0.6`
 
 | Ejecutable | Archivo | Régimen | beta_i_par | A_i | beta_e_par | A_e | Grilla |
 |---|---|---|---:|---:|---:|---:|---:|
-| `psc_W_S_bM` | `psc_W_S_bM.cxx` | Strong | 1.0 | 1.0 | 0.5 | 3.0 | 1408×1408 |
-| `psc_W_M_bM` | `psc_W_M_bM.cxx` | Moderate | 1.0 | 1.0 | 0.5 | 2.0 | 1408×1408 |
-| `psc_W_W_bM` | `psc_W_W_bM.cxx` | Weak | 1.0 | 1.0 | 0.5 | 1.5 | 1408×1408 |
+| `psc_whistler_bimaxwellian_strong` | `psc_whistler_bimaxwellian_strong.cxx` | Strong | 1.0 | 1.0 | 0.5 | 3.0 | 1024×1024 |
+| `psc_whistler_bimaxwellian_moderate` | `psc_whistler_bimaxwellian_moderate.cxx` | Moderate | 1.0 | 1.0 | 0.5 | 2.0 | 1024×1024 |
+| `psc_whistler_bimaxwellian_weak` | `psc_whistler_bimaxwellian_weak.cxx` | Weak | 1.0 | 1.0 | 0.5 | 1.5 | 1024×1024 |
 
-## Kappa
+## Bi-Kappa
 
 | Ejecutable | Archivo | κ | beta_i_par | A_i | beta_e_par | A_e | Grilla |
 |---|---|---|---:|---:|---:|---:|---:|
-| `psc_mirror_kappa3` | `psc_mirror_kappa3.cxx` | 3 | 5.0 | 3.0 | 1.0 | 1.0 | 1536×1536 |
-| `psc_mirror_kappa5` | `psc_mirror_kappa5.cxx` | 5 | 5.0 | 3.0 | 1.0 | 1.0 | 1536×1536 |
-| `psc_firehose_kappa3` | `psc_firehose_kappa3.cxx` | 3 | 10.0 | 0.1 | 1.0 | 1.0 | 1024×1024 |
-| `psc_firehose_kappa5` | `psc_firehose_kappa5.cxx` | 5 | 10.0 | 0.1 | 1.0 | 1.0 | 1024×1024 |
+| `psc_mirror_bikappa3` | `psc_mirror_bikappa3.cxx` | 3 | 5.0 | 3.0 | 1.0 | 1.0 | 1024×1024 |
+| `psc_mirror_bikappa5` | `psc_mirror_bikappa5.cxx` | 5 | 5.0 | 3.0 | 1.0 | 1.0 | 1024×1024 |
+| `psc_firehose_bikappa3` | `psc_firehose_bikappa3.cxx` | 3 | 10.0 | 0.1 | 1.0 | 1.0 | 1024×1024 |
+| `psc_firehose_bikappa5` | `psc_firehose_bikappa5.cxx` | 5 | 10.0 | 0.1 | 1.0 | 1.0 | 1024×1024 |
 
 ## Salidas
 
@@ -104,18 +113,18 @@ checkpoint_<step>.bp/            # solo con ADIOS2
 ## Compilación local
 
 ```bash
-cmake --build build --target psc_M_S_bM
-cmake --build build --target psc_mirror_kappa3
+cmake --build build --target psc_mirror_bimaxwellian_strong
+cmake --build build --target psc_mirror_bikappa3
 ```
 
 Todos los targets:
 ```bash
 cmake --build build --target \
-  psc_M_S_bM psc_M_M_bM psc_M_W_bM \
-  psc_F_S_bM psc_F_M_bM psc_F_W_bM \
-  psc_W_S_bM psc_W_M_bM psc_W_W_bM \
-  psc_mirror_kappa3 psc_mirror_kappa5 \
-  psc_firehose_kappa3 psc_firehose_kappa5
+  psc_mirror_bimaxwellian_strong psc_mirror_bimaxwellian_moderate psc_mirror_bimaxwellian_weak \
+  psc_firehose_bimaxwellian_strong psc_firehose_bimaxwellian_moderate psc_firehose_bimaxwellian_weak \
+  psc_whistler_bimaxwellian_strong psc_whistler_bimaxwellian_moderate psc_whistler_bimaxwellian_weak \
+  psc_mirror_bikappa3 psc_mirror_bikappa5 \
+  psc_firehose_bikappa3 psc_firehose_bikappa5
 ```
 
 ## Compilación y ejecución con ADIOS2 en COSMA
@@ -128,7 +137,14 @@ sbatch src/submit_anisotropy_adios2.slurm
 
 Para otro target:
 ```bash
-sbatch --export=ALL,PSC_TARGET=psc_firehose_kappa3 src/submit_anisotropy_adios2.slurm
+sbatch --export=ALL,PSC_TARGET=psc_firehose_bikappa3 src/submit_anisotropy_adios2.slurm
+```
+
+Los intervalos de control pueden modificarse sin recompilar:
+
+```bash
+sbatch --export=ALL,PSC_TARGET=psc_mirror_bikappa3,PSC_BALANCE_INTERVAL=2500,PSC_CONTINUITY_EVERY=5000,PSC_ENERGIES_EVERY=5000 \
+  src/submit_anisotropy_adios2.slurm
 ```
 
 Los scripts limpian Conda y usan `srun` por defecto para evitar fallos de

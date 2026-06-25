@@ -23,7 +23,7 @@ ADIOS2 está realmente activado porque:
 
 ```bash
 grep -n PSC_HAVE_ADIOS2 build/src/include/PscConfig.h
-ldd build/src/psc_mirror_kappa3 | grep adios2
+ldd build/src/psc_mirror_bikappa3 | grep adios2
 ```
 
 La salida esperada contiene:
@@ -137,20 +137,20 @@ cd /cosma7/data/dp433/dc-mart18/pcseditado
 source src/cosma_adios2_env.sh
 
 grep -n PSC_HAVE_ADIOS2 build/src/include/PscConfig.h
-ldd build/src/psc_mirror_kappa3 | grep -i adios
+ldd build/src/psc_mirror_bikappa3 | grep -i adios
 ```
 
 Comprobar los ejecutables:
 
 ```bash
 ls -l \
-  build/src/psc_mirror_kappa3 \
-  build/src/psc_mirror_kappa5 \
-  build/src/psc_firehose_kappa3 \
-  build/src/psc_firehose_kappa5 \
-  build/src/psc_M_S_bM \
-  build/src/psc_F_S_bM \
-  build/src/psc_W_S_bM
+  build/src/psc_mirror_bikappa3 \
+  build/src/psc_mirror_bikappa5 \
+  build/src/psc_firehose_bikappa3 \
+  build/src/psc_firehose_bikappa5 \
+  build/src/psc_mirror_bimaxwellian_strong \
+  build/src/psc_firehose_bimaxwellian_strong \
+  build/src/psc_whistler_bimaxwellian_strong
 ```
 
 No enviar producción si falta `PSC_HAVE_ADIOS2` o si `ldd` muestra
@@ -176,7 +176,7 @@ en OOM. `src/cosma_adios2_env.sh` usa `mpirun` por defecto.
 
 ## 6. Enviar un caso
 
-El target por defecto es `psc_mirror_kappa3`:
+El target por defecto es `psc_mirror_bikappa3`:
 
 ```bash
 cd /cosma7/data/dp433/dc-mart18/pcseditado
@@ -186,16 +186,16 @@ sbatch src/submit_anisotropy_adios2.slurm
 Otros casos:
 
 ```bash
-sbatch --export=ALL,PSC_TARGET=psc_mirror_kappa5 \
+sbatch --export=ALL,PSC_TARGET=psc_mirror_bikappa5 \
   src/submit_anisotropy_adios2.slurm
 
-sbatch --export=ALL,PSC_TARGET=psc_firehose_kappa3 \
+sbatch --export=ALL,PSC_TARGET=psc_firehose_bikappa3 \
   src/submit_anisotropy_adios2.slurm
 
-sbatch --export=ALL,PSC_TARGET=psc_firehose_kappa5 \
+sbatch --export=ALL,PSC_TARGET=psc_firehose_bikappa5 \
   src/submit_anisotropy_adios2.slurm
 
-sbatch --export=ALL,PSC_TARGET=psc_M_S_bM \
+sbatch --export=ALL,PSC_TARGET=psc_mirror_bimaxwellian_strong \
   src/submit_anisotropy_adios2.slurm
 ```
 
@@ -258,13 +258,13 @@ Debe mostrar:
 adios2_dir=/cosma/home/dp433/dc-mart18/adios2
 adios2_config=/cosma/home/dp433/dc-mart18/adios2/bin/adios2-config
 launcher=mpirun
-launcher=mpirun -np 1024 ./psc_mirror_kappa3
+launcher=mpirun -np 1024 ./psc_mirror_bikappa3
 ```
 
 Verificar además el binario copiado al directorio de ejecución:
 
 ```bash
-TARGET=psc_mirror_kappa3
+TARGET=psc_mirror_bikappa3
 RUN=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/${TARGET}_${JOBID}
 
 ldd "$RUN/$TARGET" | grep -i adios
@@ -272,22 +272,19 @@ ldd "$RUN/$TARGET" | grep -i adios
 
 ## 9. Confirmar la escritura de checkpoints
 
-Para `psc_mirror_kappa3` y `psc_mirror_kappa5`:
-
-```text
-campos y momentos: cada 750 pasos
-partículas:        cada 1000 pasos
-checkpoint:        cada 7500 pasos
-nmax:              1800000
-```
-
-Para `psc_firehose_kappa3` y `psc_firehose_kappa5`:
+Para los cuatro casos bi-Kappa mirror/firehose:
 
 ```text
 campos y momentos: cada 500 pasos
-partículas:        cada 1000 pasos
+partículas:        cada 10000 pasos
 checkpoint:        cada 5000 pasos
+grilla:            1024x1024
+partículas/celda:  1500
+mi/me:             200
 nmax:              1200000
+balanceo:          cada 2500 pasos
+continuidad:       cada 5000 pasos
+energía:           cada 5000 pasos en diag.asc
 ```
 
 Antes del primer intervalo no habrá una carpeta `checkpoint_*.bp`. Eso no
@@ -331,10 +328,10 @@ No ejecutar la simulación directamente en el login.
 Ejemplo:
 
 ```bash
-export PSC_RESTART=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/psc_mirror_kappa3_JOBID/checkpoint_7500.bp
+export PSC_RESTART=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/psc_mirror_bikappa3_JOBID/checkpoint_5000.bp
 
 sbatch \
-  --export=ALL,PSC_TARGET=psc_mirror_kappa3,PSC_RESTART="$PSC_RESTART" \
+  --export=ALL,PSC_TARGET=psc_mirror_bikappa3,PSC_RESTART="$PSC_RESTART" \
   src/submit_anisotropy_adios2.slurm
 ```
 
@@ -352,7 +349,7 @@ Las variables de entorno permiten reducir el problema:
 
 ```bash
 sbatch \
-  --export=ALL,PSC_TARGET=psc_mirror_kappa3,PSC_NMAX=4,PSC_NGRID=16,PSC_NP_Y=1,PSC_NP_Z=1,PSC_NICELL=16,PSC_CHECKPOINT_EVERY=2,PSC_FIELDS_EVERY=2,PSC_PARTICLES_EVERY=2 \
+  --export=ALL,PSC_TARGET=psc_mirror_bikappa3,PSC_NMAX=4,PSC_NGRID=16,PSC_NP_Y=1,PSC_NP_Z=1,PSC_NICELL=16,PSC_CHECKPOINT_EVERY=2,PSC_FIELDS_EVERY=2,PSC_PARTICLES_EVERY=2 \
   src/submit_anisotropy_adios2.slurm
 ```
 
@@ -374,7 +371,7 @@ El ejecutable fue compilado sin ADIOS2 o se tomó de otro build:
 
 ```bash
 grep PSC_HAVE_ADIOS2 build/src/include/PscConfig.h
-ldd build/src/psc_mirror_kappa3 | grep -i adios
+ldd build/src/psc_mirror_bikappa3 | grep -i adios
 ```
 
 ### `libadios2_*.so => not found`
@@ -403,4 +400,4 @@ nodos afectados.
 ### No aparece todavía `checkpoint_*.bp`
 
 Comprobar el paso actual y el intervalo de checkpoint. Por ejemplo,
-`psc_mirror_kappa3` no escribe el primer checkpoint hasta el paso 7500.
+`psc_mirror_bikappa3` no escribe el primer checkpoint hasta el paso 5000.

@@ -251,13 +251,13 @@ El parámetro κ se configura con `setup_particles.kappa = PSC_KAPPA;`.
 
 | Archivo | `PSC_USE_KAPPA` | Distribución |
 |---|---|---|
-| `psc_mirror_maxwellian.cxx` | (no definido, default 0) | Maxwelliana |
-| `psc_firehose_maxwellian.cxx` | (no definido, default 0) | Maxwelliana |
-| `psc_M_S_bM.cxx` | (no definido, default 0) | Bi-Maxwelliana |
-| `psc_mirror_kappa3.cxx` | 1 | Kappa (κ=3) |
-| `psc_mirror_kappa5.cxx` | 1 | Kappa (κ=5) |
-| `psc_firehose_kappa3.cxx` | 1 | Kappa (κ=3) |
-| `psc_firehose_kappa5.cxx` | 1 | Kappa (κ=5) |
+| `psc_mirror_bimaxwellian_strong.cxx` | (no definido, default 0) | Maxwelliana |
+| `psc_firehose_bimaxwellian_strong.cxx` | (no definido, default 0) | Maxwelliana |
+| `psc_mirror_bimaxwellian_strong.cxx` | (no definido, default 0) | Bi-Maxwelliana |
+| `psc_mirror_bikappa3.cxx` | 1 | Kappa (κ=3) |
+| `psc_mirror_bikappa5.cxx` | 1 | Kappa (κ=5) |
+| `psc_firehose_bikappa3.cxx` | 1 | Kappa (κ=3) |
+| `psc_firehose_bikappa5.cxx` | 1 | Kappa (κ=5) |
 
 ---
 
@@ -280,7 +280,7 @@ npt.kind = kind;            // ← añadir esta línea
 (`kinds_[npt.kind].m`). Sin esto, `npt.kind` queda en 0 (MY_ION) para ambas
 especies, y los electrones se inicializan con masa de ión.
 
-Referencia: `psc_mirror_kappa3.cxx`.
+Referencia: `psc_mirror_bikappa3.cxx`.
 
 ### 2. Falta `PSC_RESTART` en `main()`
 

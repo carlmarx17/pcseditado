@@ -37,11 +37,17 @@ cmake -S "$REPO" -B "$BUILD_DIR" \
   -DBUILD_TESTING=OFF
 
 TARGETS=(
-  psc_M_S_bM psc_M_M_bM psc_M_W_bM
-  psc_F_S_bM psc_F_M_bM psc_F_W_bM
-  psc_W_S_bM psc_W_M_bM psc_W_W_bM
-  psc_mirror_kappa3 psc_mirror_kappa5
-  psc_firehose_kappa3 psc_firehose_kappa5
+  psc_mirror_bimaxwellian_strong
+  psc_mirror_bimaxwellian_moderate
+  psc_mirror_bimaxwellian_weak
+  psc_firehose_bimaxwellian_strong
+  psc_firehose_bimaxwellian_moderate
+  psc_firehose_bimaxwellian_weak
+  psc_whistler_bimaxwellian_strong
+  psc_whistler_bimaxwellian_moderate
+  psc_whistler_bimaxwellian_weak
+  psc_mirror_bikappa3 psc_mirror_bikappa5
+  psc_firehose_bikappa3 psc_firehose_bikappa5
 )
 
 cmake --build "$BUILD_DIR" -j "${BUILD_JOBS:-16}" --target "${TARGETS[@]}"
@@ -50,4 +56,4 @@ grep -n "PSC_HAVE_ADIOS2" "$BUILD_DIR/src/include/PscConfig.h"
 for target in "${TARGETS[@]}"; do
   test -x "$BUILD_DIR/src/$target"
 done
-ldd "$BUILD_DIR/src/psc_mirror_kappa3" | grep -i adios || true
+ldd "$BUILD_DIR/src/psc_mirror_bikappa3" | grep -i adios || true

@@ -35,7 +35,7 @@ Firmas esperadas:
 Casos:
 
 ```text
-psc_M_S_bM, psc_M_M_bM, psc_M_W_bM, psc_mirror_kappa3, psc_mirror_kappa5
+psc_mirror_bimaxwellian_strong, psc_mirror_bimaxwellian_moderate, psc_mirror_bimaxwellian_weak, psc_mirror_bikappa3, psc_mirror_bikappa5
 ```
 
 ## Firehose
@@ -57,7 +57,7 @@ Firmas esperadas:
 Casos:
 
 ```text
-psc_F_S_bM, psc_F_M_bM, psc_F_W_bM, psc_firehose_kappa3, psc_firehose_kappa5
+psc_firehose_bimaxwellian_strong, psc_firehose_bimaxwellian_moderate, psc_firehose_bimaxwellian_weak, psc_firehose_bikappa3, psc_firehose_bikappa5
 ```
 
 ## Whistler
@@ -77,7 +77,7 @@ Firmas esperadas:
 Casos:
 
 ```text
-psc_W_S_bM, psc_W_M_bM, psc_W_W_bM
+psc_whistler_bimaxwellian_strong, psc_whistler_bimaxwellian_moderate, psc_whistler_bimaxwellian_weak
 ```
 
 ## Diagnósticos mínimos
