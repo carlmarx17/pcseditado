@@ -2,6 +2,8 @@
 #include <setup_fields.hxx>
 #include <setup_particles.hxx>
 
+#include <cstdlib>
+
 #include "DiagnosticsDefault.h"
 #include "OutputFieldsDefault.h"
 #include "psc_config.hxx"
@@ -289,7 +291,8 @@ void initializeParticles(SetupParticles<Mparticles>& setup_particles,
   partitionAndSetupParticles(
 		  setup_particles, balance, grid_ptr, mprts,
                              [&](int kind, Double3 pos, int patch, Int3 idx, psc_particle_np& np) {
-			     psc_particle_npt npt{};  
+			     psc_particle_npt npt{};
+			     npt.kind = kind;
 			     double y = pos[1];
                               double z = pos[2];
 
@@ -584,6 +587,10 @@ void run()
 int main(int argc, char** argv)
 {
   psc_init(argc, argv);
+
+  if (const char* restart = std::getenv("PSC_RESTART")) {
+    read_checkpoint_filename = restart;
+  }
 
   run();
 

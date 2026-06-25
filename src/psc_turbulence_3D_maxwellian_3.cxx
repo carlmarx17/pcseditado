@@ -2,6 +2,8 @@
 #include <setup_fields.hxx>
 #include <setup_particles.hxx>
 
+#include <cstdlib>
+
 #include "DiagnosticsDefault.h"
 #include "OutputFieldsDefault.h"
 #include "psc_config.hxx"
@@ -579,6 +581,10 @@ void run()
 int main(int argc, char** argv)
 {
   psc_init(argc, argv);
+
+  if (const char* restart = std::getenv("PSC_RESTART")) {
+    read_checkpoint_filename = restart;
+  }
 
   run();
 
