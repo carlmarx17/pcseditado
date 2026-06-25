@@ -10,6 +10,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/cosma_adios2_env.sh"
 
 CMAKE_BIN="${CMAKE_BIN:-$(command -v cmake || true)}"
+if [ -z "$CMAKE_BIN" ] && [ -x "$HOME/bin/cmake" ]; then
+  CMAKE_BIN="$HOME/bin/cmake"
+fi
 if [ -z "$CMAKE_BIN" ] && [ -x /usr/bin/cmake ]; then
   CMAKE_BIN=/usr/bin/cmake
 fi
