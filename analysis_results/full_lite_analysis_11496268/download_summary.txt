@@ -1,0 +1,27 @@
+COSMA lite analysis download summary
+
+Remote job: 11496268
+Remote source:
+/cosma7/data/dp433/dc-mart18/lite_runs/full_lite_analysis_11496268
+
+Local destination:
+/home/carlmartx/Documents/pcseditado/analysis_results/full_lite_analysis_11496268
+
+SLURM summary checked on remote:
+processed=6 failures=0
+end=2026-06-26T11:33:02+01:00
+
+Local verification:
+disk usage: 4.9G
+downloaded files before this summary: 4281
+
+Runs included:
+F_lite_11395544
+F_lite_11395576
+M_lite_11395543
+M_lite_11395575
+W_lite_11395545
+W_lite_11395577
+
+Notes:
+Single-snapshot runs include spatial spectra but dispersion requires at least 4 field snapshots, so dispersion was only produced for runs with enough snapshots.

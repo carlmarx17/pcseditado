@@ -27,6 +27,70 @@
 #define PSC_COLLISION_TEMP g.Te_perp
 #endif
 
+#ifndef PSC_NMAX_DEFAULT
+#define PSC_NMAX_DEFAULT 1200000
+#endif
+
+#ifndef PSC_CHECKPOINT_EVERY_DEFAULT
+#define PSC_CHECKPOINT_EVERY_DEFAULT 5000
+#endif
+
+#ifndef PSC_STATS_EVERY
+#define PSC_STATS_EVERY 50
+#endif
+
+#ifndef PSC_MASS_RATIO
+#define PSC_MASS_RATIO 200.
+#endif
+
+#ifndef PSC_LAMBDA0
+#define PSC_LAMBDA0 20.
+#endif
+
+#ifndef PSC_VA_OVER_C
+#define PSC_VA_OVER_C 0.08
+#endif
+
+#ifndef PSC_DOMAIN_DI
+#define PSC_DOMAIN_DI 20.0
+#endif
+
+#ifndef PSC_NGRID_DEFAULT
+#define PSC_NGRID_DEFAULT 1024
+#endif
+
+#ifndef PSC_NP_Y_DEFAULT
+#define PSC_NP_Y_DEFAULT 64
+#endif
+
+#ifndef PSC_NP_Z_DEFAULT
+#define PSC_NP_Z_DEFAULT 16
+#endif
+
+#ifndef PSC_NICELL_DEFAULT
+#define PSC_NICELL_DEFAULT 1500
+#endif
+
+#ifndef PSC_BALANCE_INTERVAL
+#define PSC_BALANCE_INTERVAL 2500
+#endif
+
+#ifndef PSC_FIELDS_EVERY_DEFAULT
+#define PSC_FIELDS_EVERY_DEFAULT 500
+#endif
+
+#ifndef PSC_PARTICLES_EVERY_DEFAULT
+#define PSC_PARTICLES_EVERY_DEFAULT 10000
+#endif
+
+#ifndef PSC_CONTINUITY_EVERY_DEFAULT
+#define PSC_CONTINUITY_EVERY_DEFAULT 5000
+#endif
+
+#ifndef PSC_ENERGIES_EVERY_DEFAULT
+#define PSC_ENERGIES_EVERY_DEFAULT 5000
+#endif
+
 // ======================================================================
 // Particle kinds
 
@@ -85,8 +149,8 @@ int nicell = PSC_NICELL_DEFAULT;
 int fields_every = PSC_FIELDS_EVERY_DEFAULT;
 int particles_every = PSC_PARTICLES_EVERY_DEFAULT;
 int balance_interval = PSC_BALANCE_INTERVAL;
-int continuity_every = 5000;
-int energies_every = 5000;
+int continuity_every = PSC_CONTINUITY_EVERY_DEFAULT;
+int energies_every = PSC_ENERGIES_EVERY_DEFAULT;
 
 } // namespace
 
@@ -188,6 +252,15 @@ Grid_t* setupGrid()
 
   mpi_printf(MPI_COMM_WORLD, "case = %s\n", PSC_CASE_LABEL);
   mpi_printf(MPI_COMM_WORLD, "distribution = %s\n", PSC_DISTRIBUTION_LABEL);
+  mpi_printf(MPI_COMM_WORLD,
+             "run = nmax %d, ngrid %d, nicell %d, np 1x%dx%d\n",
+             psc_params.nmax, ngrid, nicell, np_y, np_z);
+  mpi_printf(MPI_COMM_WORLD,
+             "intervals = fields %d, particles %d, checkpoint %d, "
+             "balance %d, continuity %d, energies %d\n",
+             fields_every, particles_every,
+             psc_params.write_checkpoint_every_step, balance_interval,
+             continuity_every, energies_every);
   mpi_printf(MPI_COMM_WORLD, "d_e = %g, d_i = %g\n", 1., g.d_i);
   mpi_printf(MPI_COMM_WORLD, "lambda_De (background) = %g\n",
              sqrt(PSC_COLLISION_TEMP));

@@ -14,6 +14,14 @@ en `CodeforAnalisys/README.md`.
 - `spectral_analysis.py` conserva `--outdir` para seleccionar la carpeta de
   salida de espectros.
 - Los perfiles `*_lite` no forman parte del flujo de producción.
+- Los scripts cualitativos o de otra física se mantienen en `legacy/` y no se
+  exponen como targets de `Makefile`.
+- `physical_diagnostics.py` no genera figuras que solo indican disponibilidad
+  de snapshots ni curvas de heat flux etiquetadas como proxy de partículas; las
+  VDF individuales y las tablas CSV son la salida verificable.
+- La figura de error de energía solo se genera cuando el paso contiene energía
+  cinética de partículas y energía magnética finitas; no se mezclan pasos
+  incompletos.
 
 ## Alcance mantenido
 
@@ -31,3 +39,5 @@ Excluido:
 - `__pycache__`;
 - notebooks o presentaciones;
 - scripts experimentales no conectados al `Makefile`.
+- figuras cualitativas archivadas en `legacy/`;
+- proxies no defendibles como figuras principales de tesis.

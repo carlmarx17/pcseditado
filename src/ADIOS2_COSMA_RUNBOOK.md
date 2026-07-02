@@ -272,7 +272,7 @@ ldd "$RUN/$TARGET" | grep -i adios
 
 ## 9. Confirmar la escritura de checkpoints
 
-Para los cuatro casos bi-Kappa mirror/firehose:
+Para todos los casos de anisotropía mirror/firehose/whistler:
 
 ```text
 campos y momentos: cada 500 pasos
@@ -281,11 +281,14 @@ checkpoint:        cada 5000 pasos
 grilla:            1024x1024
 partículas/celda:  1500
 mi/me:             200
-nmax:              1200000
+nmax:              depende de saturación; defecto 1200000
 balanceo:          cada 2500 pasos
 continuidad:       cada 5000 pasos
 energía:           cada 5000 pasos en diag.asc
 ```
+
+Usar `PSC_NMAX` en `--export` para fijar el tope de pasos de cada corrida según
+la saturación observada.
 
 Antes del primer intervalo no habrá una carpeta `checkpoint_*.bp`. Eso no
 significa que ADIOS2 esté desactivado.

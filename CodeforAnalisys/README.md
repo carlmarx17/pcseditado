@@ -32,6 +32,36 @@ También se puede ejecutar por caso:
 make F_M_bM DATA_DIR=/ruta/a/F_M_bM
 ```
 
+Para ejecutar únicamente el análisis espectral:
+
+```bash
+make spectral DATA_DIR=/ruta/a/run CASE=F_S_bM_local
+```
+
+El script detecta automáticamente el plano físico no degenerado (`xy`, `xz`
+o `yz`) y toma el espaciado en unidades de \(d_i\) del perfil seleccionado
+mediante `PSC_PROFILE`. El mismo target genera
+`dispersion_density_<plano>_perp_absolute.png`, un mapa de densidad modal
+\(\omega/\Omega_{ci}\) frente a \(|v_{\rm ph}|/v_A\), y superpone con puntos
+negros las crestas de mayor potencia.
+
+La FFT temporal se rellena con ceros para dibujar las crestas con continuidad;
+esto interpola el espectro, pero no aumenta el número de frecuencias físicamente
+independientes determinado por la cantidad y cadencia de snapshots.
+
+Para generar solamente ese diagrama:
+
+```bash
+make dispersion DATA_DIR=/ruta/a/run CASE=F_S_bM_local
+```
+
+Las pruebas de regresión se ejecutan con:
+
+```bash
+../.venv/bin/python -m unittest -v \
+  test_spectral_analysis.py test_dispersion_analysis.py
+```
+
 ## Casos soportados
 
 | `CASE` | Inestabilidad | Especie | Parámetros iniciales |
@@ -738,8 +768,9 @@ $$
    Mirror y corriente asociada.
 4. `spectral_analysis.py`: sección 7; calcula FFT, PSD, espectro radial,
    pendiente y modos dominantes.
-5. `plot_prt.py` y `plot_vdf_3d.py`: sección 8; construyen VDF, evolución de
-   distribuciones y comparación Maxwelliana/Kappa.
+5. `plot_prt.py`: sección 8; construye VDF 2D, evolución de distribuciones y
+   comparación Maxwelliana/Kappa. Las visualizaciones 3D cualitativas quedan en
+   `legacy/` y no forman parte del flujo mantenido.
 6. `diamagnetic_current.py`: sección 9; calcula
    \(J_{{\rm dia},i}\), \(J_{{\rm dia},e}\) y la corriente total.
 7. `heat_flux_analysis.py`: sección 10; calcula los proxies espaciales

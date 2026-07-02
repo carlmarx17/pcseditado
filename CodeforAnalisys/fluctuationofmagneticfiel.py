@@ -18,6 +18,15 @@ from data_reader import PICDataReader
 from psc_units import step_to_omegaci, DOMAIN_DI_Y, DOMAIN_DI_Z, B0 as B0_DEFAULT
 
 plt.switch_backend('Agg')
+plt.rcParams.update({
+    "font.size": 15,
+    "axes.labelsize": 18,
+    "axes.titlesize": 19,
+    "xtick.labelsize": 15,
+    "ytick.labelsize": 15,
+    "legend.fontsize": 14,
+    "figure.titlesize": 20,
+})
 DARK_BG  = "#0c0e14"
 PANEL_BG = "#12151f"
 TEXT_CLR  = "#dde2f0"
@@ -178,14 +187,14 @@ class FieldImagePlotter:
             im = ax.imshow(mag.T, origin='lower', cmap=self.palettes['Bmag'],
                            vmin=vmin, vmax=vmax, aspect='auto', extent=extent_phys)
             cb = fig.colorbar(im, ax=ax, pad=0.02)
-            cb.set_label(r'$|\delta B|/B_0$', fontsize=14, color=TEXT_CLR)
+            cb.set_label(r'$|\delta B|/B_0$', fontsize=17, color=TEXT_CLR)
             cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
             plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
-            ax.set_xlabel(xlabel_phys, fontsize=13, color=TEXT_CLR)
-            ax.set_ylabel(ylabel_phys, fontsize=13, color=TEXT_CLR)
+            ax.set_xlabel(xlabel_phys, fontsize=16, color=TEXT_CLR)
+            ax.set_ylabel(ylabel_phys, fontsize=16, color=TEXT_CLR)
             ax.set_title(
                 rf'$|\delta B|/B_0$  —  $t \approx {time_omega_ci:.2f}\,\Omega_{{ci}}^{{-1}}$ (step {step})',
-                fontsize=14, color=TEXT_CLR, fontweight='bold'
+                fontsize=17, color=TEXT_CLR, fontweight='bold'
             )
             ax.tick_params(colors=TEXT_CLR, direction='in', which='both', top=True, right=True)
             ax.grid(True, linestyle=':', alpha=0.25, color=GRID_CLR)
@@ -216,14 +225,14 @@ class FieldImagePlotter:
             im = ax.imshow(fluct.T, origin='lower', cmap=self.palettes[comp],
                            vmin=vmin, vmax=vmax, aspect='auto', extent=extent_phys)
             cb = fig.colorbar(im, ax=ax, pad=0.02)
-            cb.set_label(rf'$\delta B_{comp[-1]}/B_0$', fontsize=14, color=TEXT_CLR)
+            cb.set_label(rf'$\delta B_{comp[-1]}/B_0$', fontsize=17, color=TEXT_CLR)
             cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
             plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
-            ax.set_xlabel(xlabel_phys, fontsize=13, color=TEXT_CLR)
-            ax.set_ylabel(ylabel_phys, fontsize=13, color=TEXT_CLR)
+            ax.set_xlabel(xlabel_phys, fontsize=16, color=TEXT_CLR)
+            ax.set_ylabel(ylabel_phys, fontsize=16, color=TEXT_CLR)
             ax.set_title(
                 rf'$\delta B_{comp[-1]}/B_0$  —  $t \approx {time_omega_ci:.2f}\,\Omega_{{ci}}^{{-1}}$ (step {step})',
-                fontsize=14, color=TEXT_CLR, fontweight='bold'
+                fontsize=17, color=TEXT_CLR, fontweight='bold'
             )
             ax.tick_params(colors=TEXT_CLR, direction='in', which='both', top=True, right=True)
             ax.grid(True, linestyle=':', alpha=0.25, color=GRID_CLR)

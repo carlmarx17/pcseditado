@@ -408,14 +408,17 @@ prt.*.h5                             pfd.*.h5 + pfd_moments.*.h5
    │                                        │
    ├── plot_prt.py                          ├── anisotropy_analysis.py
    │     └── prt_plots/                     │     └── anisotropy_plots/
-   │         ├── vdf_2d.png                 │         └── brazil_plot_anisotropy.png
-   │         ├── kappa_vs_maxwellian.png    │
-   │         ├── goodness_of_fit.png        ├── mirror_physics.py
-   │         ├── vdf_time_snapshots.png     │     └── mirror_plots/
-   │         ├── distribution_evolution.png │
+   │         ├── vdf_2d_ions.png            │         └── brazil_plot_anisotropy.png
+   │         ├── vdf_2d_electrons.png       │
+   │         ├── kappa_comparison_*.png     ├── mirror_physics.py
+   │         ├── goodness_of_fit_*_cdf.png  │     └── mirror_plots/
+   │         ├── vdf_2d_*_step*.png         │
+   │         ├── distribution_evolution_*.png │
    │         ├── brazil_plot.png            ├── diamagnetic_current.py
-   │         ├── vdf_1d_evolution.png       │     └── diamagnetic_plots/
-   │         ├── energy_partition.png       │
+   │         ├── vdf_1d_parallel_evolution.png │     └── diamagnetic_plots/
+   │         ├── vdf_1d_perp_evolution.png  │
+   │         ├── particle_energy_partition.png │
+   │         ├── magnetic_energy_fluctuation.png │
    │         ├── heat_flux_regions.png      ├── fluctuationofmagneticfiel.py
    │         └── heat_flux_timeseries.png   │     └── field_images/
    │                                        │
@@ -530,7 +533,8 @@ línea negra discontinua. Cuantifica la **cola supratermal** como fracción de
 partículas con `|v| > 3 v_th`.
 
 ```
-Salida: prt_plots/vdf_1d_evolution.png
+Salidas: `prt_plots/vdf_1d_parallel_evolution.png` y
+`prt_plots/vdf_1d_perp_evolution.png`.
 ```
 
 **Física:** Permite ver directamente si la distribución kappa mantiene su cola
@@ -550,7 +554,8 @@ de ley de potencia durante la evolución o si la inestabilidad la modifica.
 Todas normalizadas a `E₀` (energía total inicial).
 
 ```
-Salida: prt_plots/energy_partition.png
+Salidas: `prt_plots/particle_energy_partition.png` y
+`prt_plots/magnetic_energy_fluctuation.png`.
 ```
 
 **Física:** Reproduce la metodología de estudios PIC de inestabilidades

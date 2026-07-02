@@ -53,6 +53,16 @@ try:
 except ImportError:
     Image = None
 
+plt.rcParams.update({
+    "font.size": 15,
+    "axes.labelsize": 18,
+    "axes.titlesize": 19,
+    "xtick.labelsize": 15,
+    "ytick.labelsize": 15,
+    "legend.fontsize": 14,
+    "figure.titlesize": 20,
+})
+
 # ── Dark-theme colour palette ────────────────────────────────────────────────
 DARK_BG   = "#0d1117"
 PANEL_BG  = "#161b22"
@@ -212,12 +222,56 @@ class DiamagneticCurrentAnalyzer:
         vmax_e: float | None = None,
         vmax_tot: float | None = None,
     ):
-        """Render a 3-panel figure and save as PNG."""
-        fig = self._make_figure(step, data, vmax_i, vmax_e, vmax_tot)
-        out_file = self.outdir / f"jdia_step{step:06d}.png"
-        fig.savefig(out_file, dpi=160, bbox_inches="tight", facecolor=DARK_BG)
-        plt.close(fig)
-        print(f"  Saved: {out_file}")
+        """Render separated ion/electron/total maps and save as PNG."""
+        Ji = data["Jdia_i"]
+        Je = data["Jdia_e"]
+        Jtot = data["Jdia_total"]
+        Bmod = data["Bmag"]
+
+        vmax_i = vmax_i or np.percentile(np.abs(Ji), 99.5)
+        vmax_e = vmax_e or np.percentile(np.abs(Je), 99.5)
+        vmax_tot = vmax_tot or np.percentile(np.abs(Jtot), 99.5)
+
+        configs = [
+            (Ji, "RdBu_r", vmax_i, r"$J^{(d)}_x$ ions", r"$J_d^{(\rm i)}$ [a.u.]", "ions"),
+            (Je, "PuOr_r", vmax_e, r"$J^{(d)}_x$ electrons", r"$J_d^{(\rm e)}$ [a.u.]", "electrons"),
+            (Jtot, "seismic", vmax_tot, r"$J^{(d)}_x$ total", r"$J_d^{(\rm tot)}$ [a.u.]", "total"),
+        ]
+
+        for field, cmap, vm, title, lbl, slug in configs:
+            fig, ax = plt.subplots(figsize=(8.2, 6.2))
+            fig.patch.set_facecolor(DARK_BG)
+            ax.set_facecolor(PANEL_BG)
+            im = ax.imshow(
+                field.T, origin="lower", cmap=cmap,
+                vmin=-vm, vmax=vm, aspect="auto",
+                extent=[0, DOMAIN_DI_Z, 0, DOMAIN_DI_Y],
+            )
+            vmin_bmod = float(np.percentile(Bmod, 10))
+            vmax_bmod = float(np.percentile(Bmod, 95))
+            if vmax_bmod > vmin_bmod + 1e-8:
+                lvls = np.linspace(vmin_bmod, vmax_bmod, 7)
+                ax.contour(Bmod.T, levels=lvls, colors="white", linewidths=0.5, alpha=0.4,
+                           extent=[0, DOMAIN_DI_Z, 0, DOMAIN_DI_Y])
+            cb = fig.colorbar(im, ax=ax, pad=0.01, aspect=30)
+            cb.set_label(lbl, fontsize=14, color=TEXT_CLR)
+            cb.ax.yaxis.set_tick_params(color=TEXT_CLR, labelsize=13)
+            plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
+            ax.set_xlabel(r"Z  [$d_i$]", fontsize=15, color=TEXT_CLR)
+            ax.set_ylabel(r"Y  [$d_i$]", fontsize=15, color=TEXT_CLR)
+            ax.set_title(
+                rf"{title} - step {step}, $t \approx {step_to_omegaci(step):.2f}\,\Omega_{{ci}}^{{-1}}$",
+                fontsize=16, color=TEXT_CLR, pad=8,
+            )
+            ax.tick_params(colors=TEXT_CLR, direction="in", which="both", top=True, right=True)
+            ax.xaxis.set_minor_locator(AutoMinorLocator())
+            ax.yaxis.set_minor_locator(AutoMinorLocator())
+            for spine in ax.spines.values():
+                spine.set_edgecolor(GRID_CLR)
+            out_file = self.outdir / f"jdia_{slug}_step{step:06d}.png"
+            fig.savefig(out_file, dpi=180, bbox_inches="tight", facecolor=DARK_BG)
+            plt.close(fig)
+            print(f"  Saved: {out_file}")
 
     def _render_frame_to_pil(
         self,
@@ -280,13 +334,13 @@ class DiamagneticCurrentAnalyzer:
                 ax.contour(Bmod.T, levels=lvls, colors="white", linewidths=0.5, alpha=0.4,
                            extent=[0, DOMAIN_DI_Z, 0, DOMAIN_DI_Y])
             cb = fig.colorbar(im, ax=ax, pad=0.01, aspect=30)
-            cb.set_label(lbl, fontsize=10, color=TEXT_CLR)
-            cb.ax.yaxis.set_tick_params(color=TEXT_CLR, labelsize=8)
+            cb.set_label(lbl, fontsize=14, color=TEXT_CLR)
+            cb.ax.yaxis.set_tick_params(color=TEXT_CLR, labelsize=13)
             plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
 
-            ax.set_xlabel(r"Z  [$d_i$]", fontsize=11, color=TEXT_CLR)
-            ax.set_ylabel(r"Y  [$d_i$]", fontsize=11, color=TEXT_CLR)
-            ax.set_title(title, fontsize=13, color=TEXT_CLR, pad=8)
+            ax.set_xlabel(r"Z  [$d_i$]", fontsize=15, color=TEXT_CLR)
+            ax.set_ylabel(r"Y  [$d_i$]", fontsize=15, color=TEXT_CLR)
+            ax.set_title(title, fontsize=16, color=TEXT_CLR, pad=8)
             ax.tick_params(colors=TEXT_CLR, direction="in", which="both", top=True, right=True)
             ax.xaxis.set_minor_locator(AutoMinorLocator())
             ax.yaxis.set_minor_locator(AutoMinorLocator())
@@ -297,7 +351,7 @@ class DiamagneticCurrentAnalyzer:
             rf"Diamagnetic Current  —  $t \approx {step_to_omegaci(step):.2f}\,\Omega_{{ci}}^{{-1}}$  (step {step})"
             "\n"
             rf"Mirror Maxwellian  ($m_i/m_e = {int(MASS_RATIO)}$,  $B_0 = {B0:.4f}$)",
-            fontsize=14, color=TEXT_CLR, y=1.02, fontweight="bold",
+            fontsize=17, color=TEXT_CLR, fontweight="bold",
         )
         return fig
 

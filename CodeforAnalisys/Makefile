@@ -40,8 +40,8 @@ COMPARE_OUT ?= $(RESULTS_ROOT)/comparison_physical
 export MPLCONFIGDIR ?= /tmp/psc-matplotlib
 
 .PHONY: all analysis common manifest F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM \
-	W_S_bM W_M_bM W_W_bM brazil mirror diamagnetic fields spectral validate \
-	particles particles-3d heatflux physics compare-physics report clean help check-fields \
+	W_S_bM W_M_bM W_W_bM brazil mirror diamagnetic fields spectral dispersion validate \
+	particles heatflux physics compare-physics clean help check-fields \
 	check-moments check-particles check-case show-inputs
 
 all: analysis
@@ -131,6 +131,13 @@ spectral: check-case check-fields
 	@echo "Generating spectral plots"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) spectral_analysis.py \
 		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)"
+	$(MAKE) dispersion DATA_DIR="$(DATA_DIR)" CASE="$(CASE)" \
+		RESULTS_ROOT="$(RESULTS_ROOT)"
+
+dispersion: check-case check-fields
+	@echo "Generating frequency--phase-velocity mode-density plot"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) dispersion_analysis.py \
+		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)"
 
 validate: check-case check-particles
 	@echo "Validating moments against $(FIRST_PARTICLE)"
@@ -142,11 +149,6 @@ particles: check-case check-particles
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) plot_prt.py \
 		"$(PARTICLE_PATTERN)" --run-name "$(RUN_NAME)" \
 		--outdir "$(PARTICLES_OUT)"
-
-particles-3d: check-case check-particles
-	@echo "Generating optional qualitative 3D particle plots"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) plot_vdf_3d.py "$(FIRST_PARTICLE)"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) plot_moments_scatter_3d.py "$(FIRST_PARTICLE)"
 
 heatflux: check-case check-fields check-moments
 	@echo "Generating heat-flux plots"
@@ -167,9 +169,6 @@ compare-physics:
 		exit 1; \
 	}
 	$(PYTHON) compare_physical_cases.py $(COMPARE_CASES) --outdir "$(COMPARE_OUT)"
-
-report:
-	$(PYTHON) generar_pdf_reporte.py
 
 clean:
 	@test -n "$(RUN_NAME)" && test "$(OUTPUT_DIR)" != "/" && rm -rf "$(OUTPUT_DIR)"

@@ -14,6 +14,8 @@ import warnings
 import argparse
 import csv
 import re
+import os
+import concurrent.futures
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -32,6 +34,21 @@ from psc_units import (
 
 warnings.filterwarnings("ignore")
 RNG = np.random.default_rng(20260612)
+POSTER_FONT = 15
+POSTER_LABEL = 18
+POSTER_TITLE = 19
+POSTER_TICK = 15
+POSTER_LEGEND = 14
+
+plt.rcParams.update({
+    "font.size": POSTER_FONT,
+    "axes.labelsize": POSTER_LABEL,
+    "axes.titlesize": POSTER_TITLE,
+    "xtick.labelsize": POSTER_TICK,
+    "ytick.labelsize": POSTER_TICK,
+    "legend.fontsize": POSTER_LEGEND,
+    "figure.titlesize": POSTER_TITLE + 1,
+})
 
 # ── Parametros fisicos iniciales ──────────────────────────────────────────────
 N0       = 1.0
@@ -42,7 +59,7 @@ ACTIVE_ANISOTROPY_INITIAL = (
     else BETA_E_PERP_OVER_PAR
 )
 SPECIES_SYMBOL = "i" if DRIVEN_SPECIES == "ion" else "e"
-SPECIES_NAME = "iones" if DRIVEN_SPECIES == "ion" else "electrones"
+SPECIES_NAME = "ions" if DRIVEN_SPECIES == "ion" else "electrons"
 OUTPUT_PREFIX = ""
 
 
@@ -232,12 +249,12 @@ def _draw_thresholds(ax, xmin, xmax, ymin, ymax):
 
 def _style_ax(ax, title=""):
     ax.set_facecolor(PANEL_BG)
-    ax.tick_params(which="both", colors=TEXT_CLR, direction="in", top=True, right=True, labelsize=10)
+    ax.tick_params(which="both", colors=TEXT_CLR, direction="in", top=True, right=True, labelsize=POSTER_TICK)
     for sp in ax.spines.values():
         sp.set_edgecolor(GRID_CLR)
     ax.grid(True, which="both", alpha=0.18, color=GRID_CLR, ls=":")
     if title:
-        ax.set_title(title, fontsize=12, fontweight="bold", color=TEXT_CLR, pad=8)
+        ax.set_title(title, fontsize=POSTER_TITLE, fontweight="bold", color=TEXT_CLR, pad=8)
 
 
 def _robust_plot_ranges(beta, aniso):
@@ -291,7 +308,7 @@ def plot_brazil_accumulated(
                         norm=mcolors.LogNorm(vmin=1, vmax=H.max()),
                         shading="flat", zorder=3)
     cbar = plt.colorbar(pcm, ax=ax, pad=0.02)
-    cbar.set_label("Densidad de puntos [log]", fontsize=11, color=TEXT_CLR)
+    cbar.set_label("Point density [log]", fontsize=POSTER_LABEL - 1, color=TEXT_CLR)
     cbar.ax.yaxis.set_tick_params(color=TEXT_CLR)
     plt.setp(cbar.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
 
@@ -308,10 +325,10 @@ def plot_brazil_accumulated(
 
     ax.set_xscale("log"); ax.set_yscale("log")
     ax.set_xlim(xmin, xmax); ax.set_ylim(ymin, ymax)
-    ax.set_xlabel(rf"$\beta_{{{SPECIES_SYMBOL}\parallel}}$ — presión paralela / presión magnética",
-                  fontsize=12, color=TEXT_CLR, labelpad=8)
+    ax.set_xlabel(rf"$\beta_{{{SPECIES_SYMBOL}\parallel}}$ — parallel pressure / magnetic pressure",
+                  fontsize=POSTER_LABEL, color=TEXT_CLR, labelpad=8)
     ax.set_ylabel(rf"$T_{{{SPECIES_SYMBOL}\perp}}/T_{{{SPECIES_SYMBOL}\parallel}}$",
-                  fontsize=13, color=TEXT_CLR, labelpad=8)
+                  fontsize=POSTER_LABEL, color=TEXT_CLR, labelpad=8)
 
     if snap_stats:
         beta_med = np.array([s["beta_global"] for s in snap_stats])
@@ -321,30 +338,30 @@ def plot_brazil_accumulated(
         ax.scatter(
             beta_med, aniso_med, c=time_med, cmap="cool", s=46,
             edgecolors="white", linewidths=0.4, zorder=11,
-            label="Estado global por snapshot",
+            label="Global state per snapshot",
         )
         ax.scatter(beta_med[0], aniso_med[0], marker="D", s=90,
-                   color="#2ecc71", edgecolor="white", zorder=12, label="Inicio medido")
+                   color="#2ecc71", edgecolor="white", zorder=12, label="Measured start")
         ax.scatter(beta_med[-1], aniso_med[-1], marker="*", s=190,
-                   color="#f1c40f", edgecolor="white", zorder=12, label="Final medido")
+                   color="#f1c40f", edgecolor="white", zorder=12, label="Measured end")
         for idx in np.unique(np.linspace(0, len(beta_med) - 1, min(6, len(beta_med)), dtype=int)):
             ax.annotate(
                 rf"{time_med[idx]:.2f}",
                 (beta_med[idx], aniso_med[idx]),
                 xytext=(5, 5), textcoords="offset points",
-                fontsize=8, color=TEXT_CLR,
+                fontsize=13, color=TEXT_CLR,
             )
 
     _style_ax(ax, rf"Brazil Plot — {PROFILE_LABEL}  ($m_i/m_e={int(MASS_RATIO)}$)")
 
     t_max_oci = step_to_omegaci(steps[-1]) if steps else 0
     ax.text(0.98, 0.02,
-            f"{len(bv):,} puntos  |  {len(steps)} snapshots  |  "
+            f"{len(bv):,} points  |  {len(steps)} snapshots  |  "
             rf"$t_{{max}} = {t_max_oci:.1f}\,\Omega_{{ci}}^{{-1}}$",
             transform=ax.transAxes, ha="right", va="bottom",
-            fontsize=9, color="#8b949e")
+            fontsize=13, color="#8b949e")
 
-    ax.legend(fontsize=10, framealpha=0.55,
+    ax.legend(fontsize=POSTER_LEGEND, framealpha=0.55,
               facecolor="#1c2128", edgecolor="#30363d", labelcolor=TEXT_CLR,
               loc="upper right")
 
@@ -371,11 +388,11 @@ def plot_temporal_evolution(snap_data: list, outdir: Path):
     b_p25 = np.array([s["beta_p25"]  for s in snap_data])
     b_p75 = np.array([s["beta_p75"]  for s in snap_data])
 
-    fig, (ax1, ax_inv, ax2) = plt.subplots(
-        3, 1, figsize=(13, 12), sharex=True,
-        gridspec_kw={"hspace": 0.08},
-    )
-    fig.patch.set_facecolor(DARK_BG)
+    fig_a, ax1 = plt.subplots(figsize=(9.5, 6.0))
+    fig_inv, ax_inv = plt.subplots(figsize=(9.5, 6.0))
+    fig_b, ax2 = plt.subplots(figsize=(9.5, 6.0))
+    for fig in (fig_a, fig_inv, fig_b):
+        fig.patch.set_facecolor(DARK_BG)
 
     # ─ Panel superior: anisotropia ─
     ax1.set_facecolor(PANEL_BG)
@@ -383,28 +400,29 @@ def plot_temporal_evolution(snap_data: list, outdir: Path):
     ax1.plot(toci, a_global, color="#ff6b6b", marker="o", ms=3.5, lw=2.2,
              label=r"global $\langle P_\perp\rangle/\langle P_\parallel\rangle$")
     ax1.plot(toci, a_med, color="#ffb4b4", lw=1.0, alpha=0.75,
-             label="mediana por celda")
-    ax1.axhline(1.0, color=TEXT_CLR, alpha=0.3, lw=0.9, ls="--", label="Isotropía A=1")
+             label="per-cell median")
+    ax1.axhline(1.0, color=TEXT_CLR, alpha=0.3, lw=0.9, ls="--", label="Isotropy A=1")
 
     dynamic_threshold = instability_threshold(b_global)
     if INSTABILITY == "firehose":
-        threshold_label = r"Umbral Firehose $1-2/\beta_\parallel(t)$"
+        threshold_label = r"Firehose threshold $1-2/\beta_\parallel(t)$"
         threshold_color = "#74b9ff"
     elif INSTABILITY == "mirror":
-        threshold_label = r"Umbral Mirror $1+1/\beta_\parallel(t)$"
+        threshold_label = r"Mirror threshold $1+1/\beta_\parallel(t)$"
         threshold_color = "#ff9999"
     else:
-        threshold_label = r"Umbral Whistler $1+0.21/\beta_{e\parallel}^{0.6}$"
+        threshold_label = r"Whistler threshold $1+0.21/\beta_{e\parallel}^{0.6}$"
         threshold_color = "#c084fc"
     ax1.plot(toci, dynamic_threshold, color=threshold_color, alpha=0.9, lw=1.2,
              ls=":", label=threshold_label)
 
-    ax1.set_ylabel(r"$T_\perp / T_\parallel$", fontsize=12, color=TEXT_CLR)
+    ax1.set_ylabel(r"$T_\perp / T_\parallel$", fontsize=POSTER_LABEL, color=TEXT_CLR)
+    ax1.set_xlabel(r"$t\,\Omega_{ci}$", fontsize=POSTER_LABEL, color=TEXT_CLR, labelpad=6)
     finite_a = np.concatenate([a_p25, a_p75, a_global, dynamic_threshold])
     ax1.set_ylim(max(0.05, np.nanpercentile(finite_a, 1) * 0.8),
                  np.nanpercentile(finite_a, 99) * 1.2)
-    _style_ax(ax1, f"Evolución Temporal — {PROFILE_LABEL}")
-    ax1.legend(fontsize=9.5, framealpha=0.5,
+    _style_ax(ax1, f"Temporal Evolution — {PROFILE_LABEL}")
+    ax1.legend(fontsize=POSTER_LEGEND, framealpha=0.5,
                facecolor="#1c2128", edgecolor="#30363d", labelcolor=TEXT_CLR)
 
     # La razón inversa evita ambigüedad en Firehose: T_par/T_perp decrece
@@ -415,9 +433,10 @@ def plot_temporal_evolution(snap_data: list, outdir: Path):
         label=r"global $\langle P_\parallel\rangle/\langle P_\perp\rangle$",
     )
     ax_inv.axhline(1.0, color=TEXT_CLR, alpha=0.3, lw=0.9, ls="--")
-    ax_inv.set_ylabel(r"$T_\parallel/T_\perp$", fontsize=12, color=TEXT_CLR)
+    ax_inv.set_ylabel(r"$T_\parallel/T_\perp$", fontsize=POSTER_LABEL, color=TEXT_CLR)
+    ax_inv.set_xlabel(r"$t\,\Omega_{ci}$", fontsize=POSTER_LABEL, color=TEXT_CLR, labelpad=6)
     _style_ax(ax_inv)
-    ax_inv.legend(fontsize=9.5, framealpha=0.5,
+    ax_inv.legend(fontsize=POSTER_LEGEND, framealpha=0.5,
                   facecolor="#1c2128", edgecolor="#30363d", labelcolor=TEXT_CLR)
 
     # ─ Panel inferior: beta_par ─
@@ -426,12 +445,12 @@ def plot_temporal_evolution(snap_data: list, outdir: Path):
     ax2.plot(toci, b_global, color="#58a6ff", marker="o", ms=3.5, lw=2.2,
              label=r"global $2\langle P_\parallel\rangle/\langle B^2\rangle$")
     ax2.plot(toci, b_med, color="#a8d4ff", lw=1.0, alpha=0.75,
-             label="mediana por celda")
-    ax2.set_ylabel(r"$\beta_{i\parallel}$", fontsize=12, color=TEXT_CLR)
-    ax2.set_xlabel(r"$t\,\Omega_{ci}$", fontsize=12, color=TEXT_CLR, labelpad=6)
+             label="per-cell median")
+    ax2.set_ylabel(r"$\beta_{i\parallel}$", fontsize=POSTER_LABEL, color=TEXT_CLR)
+    ax2.set_xlabel(r"$t\,\Omega_{ci}$", fontsize=POSTER_LABEL, color=TEXT_CLR, labelpad=6)
     ax2.set_yscale("log")
     _style_ax(ax2)
-    ax2.legend(fontsize=9.5, framealpha=0.5,
+    ax2.legend(fontsize=POSTER_LEGEND, framealpha=0.5,
                facecolor="#1c2128", edgecolor="#30363d", labelcolor=TEXT_CLR)
 
     for ax in (ax1, ax_inv, ax2):
@@ -441,10 +460,16 @@ def plot_temporal_evolution(snap_data: list, outdir: Path):
             sp.set_edgecolor(GRID_CLR)
         ax.grid(True, which="both", alpha=0.18, color=GRID_CLR, ls=":")
 
-    out = output_path(outdir, "evolucion_anisotropia")
-    plt.savefig(out, dpi=200, bbox_inches="tight", facecolor=DARK_BG)
-    plt.close()
-    print(f"  Guardado → {out}")
+    outputs = [
+        (fig_a, output_path(outdir, "anisotropy_ratio_vs_time")),
+        (fig_inv, output_path(outdir, "inverse_anisotropy_vs_time")),
+        (fig_b, output_path(outdir, "beta_parallel_vs_time")),
+    ]
+    for fig, out in outputs:
+        fig.tight_layout()
+        fig.savefig(out, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
+        plt.close(fig)
+        print(f"  Guardado → {out}")
 
 
 # ── Plot 3: Grid de Brazil plots por snapshot ─────────────────────────────────
@@ -505,28 +530,28 @@ def plot_brazil_grid(snap_list: list, outdir: Path, b0_ref: float, n_cols=4):
         toci = snap["toci"]
         color = cmap_time(t_norm(toci))
         ax.set_title(rf"$t\,\Omega_{{ci}} = {toci:.2f}$",
-                     fontsize=10, fontweight="bold", color=color, pad=5)
+                     fontsize=14, fontweight="bold", color=color, pad=5)
 
         ax.tick_params(which="both", colors=TEXT_CLR, direction="in",
-                       labelsize=7.5, top=True, right=True)
+                       labelsize=11, top=True, right=True)
         for sp in ax.spines.values():
             sp.set_edgecolor(GRID_CLR)
         ax.grid(True, which="both", alpha=0.15, color=GRID_CLR, ls=":")
 
         if i % n_cols == 0:
             ax.set_ylabel(rf"$T_{{{SPECIES_SYMBOL}\perp}}/T_{{{SPECIES_SYMBOL}\parallel}}$",
-                          fontsize=9, color=TEXT_CLR)
+                          fontsize=13, color=TEXT_CLR)
         if i >= (n_rows - 1) * n_cols:
             ax.set_xlabel(rf"$\beta_{{{SPECIES_SYMBOL}\parallel}}$",
-                          fontsize=9, color=TEXT_CLR)
+                          fontsize=13, color=TEXT_CLR)
 
     # Ocultar ejes sobrantes
     for j in range(n, len(axes_flat)):
         axes_flat[j].set_visible(False)
 
     fig.suptitle(
-        rf"Brazil Plots por Snapshot — {PROFILE_LABEL}  ($m_i/m_e={int(MASS_RATIO)}$)",
-        fontsize=14, fontweight="bold", color=TEXT_CLR, y=1.01
+        rf"Brazil Plots per Snapshot — {PROFILE_LABEL}  ($m_i/m_e={int(MASS_RATIO)}$)",
+        fontsize=POSTER_TITLE + 1, fontweight="bold", color=TEXT_CLR, y=1.01
     )
 
     out = output_path(outdir, "brazil_snapshots")
@@ -575,7 +600,7 @@ def write_summary_csv(snap_stats: list, outdir: Path):
 # ── Analisis principal ────────────────────────────────────────────────────────
 def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
                  outdir: str = "anisotropy_plots", n_grid_snaps: int = 12,
-                 run_name: str = ""):
+                 run_name: str = "", jobs: int = 0):
     global OUTPUT_PREFIX
     clean_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", run_name).strip("_")
     OUTPUT_PREFIX = f"{clean_name}_" if clean_name else ""
@@ -600,12 +625,30 @@ def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
     # Seleccionar ~n_grid_snaps pasos uniformes para el grid
     idx_grid = set(np.linspace(0, len(common) - 1, n_grid_snaps, dtype=int))
 
-    for i, step in enumerate(common):
-        toci = step_to_omegaci(step)
-        print(f"  step {step:6d}  ({i+1}/{len(common)})  "
-              f"t*Oci={toci:.3f}", end="\r")
+    num_workers = jobs if jobs > 0 else os.cpu_count() or 1
+    num_workers = min(num_workers, len(common))
+    print(f"Ejecutando con {num_workers} procesos en paralelo...")
 
-        data = process_snapshot(mom_files[step], bz_files[step], DRIVEN_SPECIES)
+    results = {}
+    with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
+        futures = {
+            executor.submit(process_snapshot, mom_files[step], bz_files[step], DRIVEN_SPECIES): step
+            for step in common
+        }
+        for i, future in enumerate(concurrent.futures.as_completed(futures)):
+            step = futures[future]
+            toci = step_to_omegaci(step)
+            print(f"  Procesado step {step:6d}  ({i+1}/{len(common)})  t*Oci={toci:.3f}", end="\r")
+            try:
+                results[step] = future.result()
+            except Exception as exc:
+                print(f"\n  [ERROR] Excepción procesando step {step}: {exc}")
+                results[step] = None
+    print()
+
+    # Procesar secuencialmente en el orden original para mantener consistencia
+    for i, step in enumerate(common):
+        data = results.get(step)
         if data is None:
             continue
 
@@ -624,7 +667,7 @@ def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
             threshold = float(instability_threshold(data["beta_global"]))
             snap_stats.append({
                 "step":      step,
-                "toci":      toci,
+                "toci":      step_to_omegaci(step),
                 "aniso_global": data["anisotropy_global"],
                 "aniso_med": float(np.median(av)),
                 "aniso_p25": float(np.percentile(av, 25)),
@@ -643,11 +686,10 @@ def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
         # Guardar snapshot completo para el grid
         if i in idx_grid and n_pts > 0:
             grid_snaps.append({
-                "step": step, "toci": toci,
+                "step": step, "toci": step_to_omegaci(step),
                 "anisotropy": av, "beta_par": bv,
             })
 
-    print()  # nueva linea tras \r
     print(f"Puntos acumulados: {len(all_beta):,}")
 
     all_beta  = np.asarray(all_beta)
@@ -688,6 +730,8 @@ if __name__ == "__main__":
                         help="Snapshots en el grid de Brazil plots.")
     parser.add_argument("--run-name", default="",
                         help="Nombre incluido en cada archivo de salida.")
+    parser.add_argument("--jobs", "-j", type=int, default=0,
+                        help="Número de procesos en paralelo (0 = usar todos los cores disponibles).")
     args = parser.parse_args()
 
     if args.data_dir:
@@ -705,4 +749,5 @@ if __name__ == "__main__":
         outdir=args.outdir,
         n_grid_snaps=args.nsnaps,
         run_name=args.run_name,
+        jobs=args.jobs,
     )

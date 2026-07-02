@@ -6,7 +6,8 @@ La guía de ejecución con ADIOS2 en COSMA está en `ADIOS2_COSMA_RUNBOOK.md`.
 ## Estructura del código
 
 Todos los casos comparten `psc_anisotropy_case.hxx`. Cada archivo de caso solo
-define la distribución, el régimen físico y sus parámetros:
+define la etiqueta, la distribución, `PSC_KAPPA` cuando aplica y los parámetros
+físicos del régimen:
 
 ```text
 psc_mirror_bikappa3.cxx
@@ -19,30 +20,29 @@ Los casos bi-Kappa activan `PSC_USE_KAPPA=1` y especifican `PSC_KAPPA`.
 Los bi-Maxwellianos usan el valor por defecto `PSC_USE_KAPPA=0`.
 
 ```
-PSC_CASE_LABEL / PSC_DISTRIBUTION_LABEL / PSC_OUTPUT_BASENAME
-PSC_NMAX_DEFAULT / PSC_CHECKPOINT_EVERY_DEFAULT
-PSC_MASS_RATIO / PSC_LAMBDA0 / PSC_VA_OVER_C
 PSC_BETA_E_PAR / PSC_BETA_I_PAR
 PSC_TI_PERP_OVER_TI_PAR / PSC_TE_PERP_OVER_TE_PAR
-PSC_DOMAIN_DI / PSC_NGRID_DEFAULT / PSC_NICELL_DEFAULT
 PSC_KAPPA
 ```
+
+Los defaults comunes están centralizados para que todos los ejecutables usen la
+misma malla, salidas e intervalos, salvo que se sobreescriban por entorno.
 
 ## Configuración común
 
 | Parámetro | Valor |
 |---|---:|
 | Configuración PSC | `PscConfig1vbecSingle<dim_yz>` |
-| Campo de fondo | `B0 = 0.05` |
-| `vA/c` | 0.05 |
+| Campo de fondo | `B0 = 0.08` |
+| `vA/c` | 0.08 |
 | `mi/me` | 200 |
 | `lambda0` | 20 |
 | Densidad inicial | 1.0 |
 | Dominio | `20 d_i × 20 d_i` |
 | Grilla | `1024×1024` |
-| Resolución | `51.2 celdas/d_i` |
+| Resolución | `51.2 celdas/d_i` (`dx = dz = 0.01953125 d_i`) |
 | Partículas por celda | 1500 (defecto) |
-| Pasos máximos | 1,200,000 |
+| Pasos máximos | Dependen de la saturación (`PSC_NMAX`, defecto 1,200,000) |
 | Fronteras | Periódicas |
 | Campos/momentos | cada 500 pasos |
 | Partículas | cada 10,000 pasos |
@@ -140,12 +140,20 @@ Para otro target:
 sbatch --export=ALL,PSC_TARGET=psc_firehose_bikappa3 src/submit_anisotropy_adios2.slurm
 ```
 
-Los intervalos de control pueden modificarse sin recompilar:
+Los parámetros editables de la simulación pueden modificarse sin recompilar:
 
 ```bash
-sbatch --export=ALL,PSC_TARGET=psc_mirror_bikappa3,PSC_BALANCE_INTERVAL=2500,PSC_CONTINUITY_EVERY=5000,PSC_ENERGIES_EVERY=5000 \
+sbatch --export=ALL,PSC_TARGET=psc_mirror_bikappa3,PSC_NMAX=1200000,PSC_BALANCE_INTERVAL=2500,PSC_CONTINUITY_EVERY=5000,PSC_ENERGIES_EVERY=5000 \
   src/submit_anisotropy_adios2.slurm
 ```
+
+`PSC_NMAX` no se usa para estandarizar la física: es el límite máximo de pasos
+que se ajusta por caso según cuándo se observe saturación.
+
+Overrides disponibles: `PSC_NMAX`, `PSC_NGRID`, `PSC_NP_Y`, `PSC_NP_Z`,
+`PSC_NICELL`, `PSC_CHECKPOINT_EVERY`, `PSC_FIELDS_EVERY`,
+`PSC_PARTICLES_EVERY`, `PSC_BALANCE_INTERVAL`, `PSC_CONTINUITY_EVERY`,
+`PSC_ENERGIES_EVERY` y `PSC_RESTART`.
 
 Los scripts limpian Conda y usan `srun` por defecto para evitar fallos de
 `prted` al arrancar OpenMPI desde Slurm.

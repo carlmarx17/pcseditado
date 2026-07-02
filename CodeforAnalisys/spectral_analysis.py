@@ -42,6 +42,15 @@ from data_reader import PICDataReader
 
 warnings.filterwarnings("ignore")
 plt.switch_backend("Agg")
+plt.rcParams.update({
+    "font.size": 15,
+    "axes.labelsize": 18,
+    "axes.titlesize": 19,
+    "xtick.labelsize": 15,
+    "ytick.labelsize": 15,
+    "legend.fontsize": 14,
+    "figure.titlesize": 20,
+})
 
 
 class SpectralAnalyzer:
@@ -49,13 +58,17 @@ class SpectralAnalyzer:
         self,
         dx: float = 1.0,
         dy: float = 1.0,
+        dz: float | None = None,
         B0_ref: float = 1.0,
         outdir: str = "spectral_plots",
         parallel_axis: str = "z",
         top_modes: int = 8,
     ):
-        self.dx = dx
-        self.dy = dy
+        self.spacing = {
+            "x": float(dx),
+            "y": float(dy),
+            "z": float(dy if dz is None else dz),
+        }
         self.B0_ref = B0_ref
         self.parallel_axis = parallel_axis.lower()
         self.top_modes = top_modes
@@ -63,43 +76,75 @@ class SpectralAnalyzer:
         self.outdir.mkdir(parents=True, exist_ok=True)
         self.summary_rows = []
 
+    @staticmethod
+    def _detect_plane(shape: tuple[int, int, int]) -> str:
+        """Select the physical non-degenerate plane for PSC ordering (Nz, Ny, Nx)."""
+        nz, ny, nx = shape
+        if nx == 1:
+            return "yz"
+        if ny == 1:
+            return "xz"
+        if nz == 1:
+            return "xy"
+        # For full 3D data, use a central yz slice so z remains represented.
+        return "yz"
+
     def _get_plane_slice(self, bx_3d: np.ndarray, by_3d: np.ndarray, bz_3d: np.ndarray, plane: str, slice_idx: int = None):
         """
         PSC stores arrays as (Nz, Ny, Nx).
         Returns two in-plane coordinates plus metadata for physical labeling.
         """
+        if bx_3d.shape != by_3d.shape or bx_3d.shape != bz_3d.shape:
+            raise ValueError(
+                "Magnetic-field components have different shapes: "
+                f"Bx={bx_3d.shape}, By={by_3d.shape}, Bz={bz_3d.shape}"
+            )
+        if bx_3d.ndim != 3:
+            raise ValueError(f"Expected PSC 3D arrays, received shape {bx_3d.shape}")
+
         nz, ny, nx = bx_3d.shape
+        if plane == "auto":
+            plane = self._detect_plane(bx_3d.shape)
 
         if plane == "xy":
             idx = slice_idx if slice_idx is not None else nz // 2
+            if not 0 <= idx < nz:
+                raise IndexError(f"xy slice {idx} is outside z range [0, {nz})")
             return {
                 "bx": bx_3d[idx, :, :].squeeze(),
                 "by": by_3d[idx, :, :].squeeze(),
                 "bz": bz_3d[idx, :, :].squeeze(),
                 "axes": ("y", "x"),
-                "spacing": (self.dy, self.dx),
+                "spacing": (self.spacing["y"], self.spacing["x"]),
+                "plane": plane,
                 "normal_axis": "z",
                 "slice_idx": idx,
             }
         if plane == "xz":
             idx = slice_idx if slice_idx is not None else ny // 2
+            if not 0 <= idx < ny:
+                raise IndexError(f"xz slice {idx} is outside y range [0, {ny})")
             return {
                 "bx": bx_3d[:, idx, :].squeeze(),
                 "by": by_3d[:, idx, :].squeeze(),
                 "bz": bz_3d[:, idx, :].squeeze(),
                 "axes": ("z", "x"),
-                "spacing": (self.dy, self.dx),
+                "spacing": (self.spacing["z"], self.spacing["x"]),
+                "plane": plane,
                 "normal_axis": "y",
                 "slice_idx": idx,
             }
         if plane == "yz":
             idx = slice_idx if slice_idx is not None else nx // 2
+            if not 0 <= idx < nx:
+                raise IndexError(f"yz slice {idx} is outside x range [0, {nx})")
             return {
                 "bx": bx_3d[:, :, idx].squeeze(),
                 "by": by_3d[:, :, idx].squeeze(),
                 "bz": bz_3d[:, :, idx].squeeze(),
                 "axes": ("z", "y"),
-                "spacing": (self.dy, self.dx),
+                "spacing": (self.spacing["z"], self.spacing["y"]),
+                "plane": plane,
                 "normal_axis": "x",
                 "slice_idx": idx,
             }
@@ -115,23 +160,33 @@ class SpectralAnalyzer:
         by_fluct = by - np.mean(by)
         bz_fluct = bz - np.mean(bz)
 
-        components = {
-            "parallel": bz_fluct,
-            "perp": np.sqrt(bx_fluct**2 + by_fluct**2),
-            "total": np.sqrt(bx_fluct**2 + by_fluct**2 + bz_fluct**2),
-        }
         return {
             "bx": bx_fluct,
             "by": by_fluct,
             "bz": bz_fluct,
-            **components,
         }
 
     def _compute_fft_psd(self, field: np.ndarray) -> np.ndarray:
         field_win = self._window_2d(field)
         nx, ny = field_win.shape
         field_k = fftshift(fft2(field_win))
-        return np.abs(field_k) ** 2 / (nx * ny) ** 2
+        window_power = np.sum(np.outer(np.hanning(nx), np.hanning(ny)) ** 2)
+        if window_power == 0:
+            window_power = float(nx * ny)
+        return np.abs(field_k) ** 2 / (window_power * nx * ny)
+
+    def _component_psds(self, fluctuations: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        """Combine vector-component powers without FFTing field magnitudes."""
+        component_psd = {
+            axis: self._compute_fft_psd(fluctuations[f"b{axis}"])
+            for axis in ("x", "y", "z")
+        }
+        perpendicular_axes = [axis for axis in ("x", "y", "z") if axis != self.parallel_axis]
+        return {
+            "parallel": component_psd[self.parallel_axis],
+            "perp": sum(component_psd[axis] for axis in perpendicular_axes),
+            "total": sum(component_psd.values()),
+        }
 
     def _compute_k_grids(self, shape: tuple[int, int], spacing: tuple[float, float], axes: tuple[str, str]) -> dict:
         n0, n1 = shape
@@ -143,10 +198,10 @@ class SpectralAnalyzer:
         axis0, axis1 = axes
         if axis0 == self.parallel_axis:
             k_par = K0
-            k_perp = K1
+            k_perp = np.abs(K1)
         elif axis1 == self.parallel_axis:
             k_par = K1
-            k_perp = K0
+            k_perp = np.abs(K0)
         else:
             k_par = np.zeros_like(K0)
             k_perp = np.sqrt(K0**2 + K1**2)
@@ -207,13 +262,24 @@ class SpectralAnalyzer:
     def _extract_top_modes(self, psd_2d: np.ndarray, k_grids: dict, step: int, component: str) -> list[dict]:
         flat_indices = np.argsort(psd_2d.ravel())[::-1]
         modes = []
+        seen_wavevectors = set()
 
         for flat_idx in flat_indices:
             i, j = np.unravel_index(flat_idx, psd_2d.shape)
+            if not np.isfinite(psd_2d[i, j]) or psd_2d[i, j] <= 0:
+                break
             k0 = k_grids["K0"][i, j]
             k1 = k_grids["K1"][i, j]
             if np.isclose(k0, 0.0) and np.isclose(k1, 0.0):
                 continue
+            wavevector_key = (
+                round(abs(float(k_grids["k_par"][i, j])), 12),
+                round(abs(float(k_grids["k_perp"][i, j])), 12),
+                round(float(k_grids["k_mag"][i, j]), 12),
+            )
+            if wavevector_key in seen_wavevectors:
+                continue
+            seen_wavevectors.add(wavevector_key)
 
             modes.append(
                 {
@@ -233,7 +299,18 @@ class SpectralAnalyzer:
 
         return modes
 
-    def process_snapshot(self, filepath: str, plane: str = "xy", slice_idx: int = None) -> dict | None:
+    @staticmethod
+    def _peak_index(psd_2d: np.ndarray, k_grids: dict) -> tuple[int, int] | None:
+        nonzero = k_grids["k_mag"] > 0
+        if not np.any(nonzero) or not np.any(np.isfinite(psd_2d[nonzero])):
+            return None
+        candidates = np.where(nonzero, psd_2d, -np.inf)
+        peak = np.unravel_index(int(np.argmax(candidates)), psd_2d.shape)
+        if not np.isfinite(psd_2d[peak]) or psd_2d[peak] <= 0:
+            return None
+        return peak
+
+    def process_snapshot(self, filepath: str, plane: str = "auto", slice_idx: int = None) -> dict | None:
         try:
             b_fields = PICDataReader.read_multiple_fields_3d(
                 filepath, "jeh-", ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"]
@@ -253,10 +330,11 @@ class SpectralAnalyzer:
 
         fluctuations = self._component_fluctuations(bx, by, bz)
         k_grids = self._compute_k_grids(bx.shape, plane_data["spacing"], plane_data["axes"])
+        component_psds = self._component_psds(fluctuations)
 
         spectra = {}
         for component in ("total", "parallel", "perp"):
-            psd_2d = self._compute_fft_psd(fluctuations[component])
+            psd_2d = component_psds[component]
             k, e_k = self._radial_spectrum(psd_2d, k_grids["k_mag"])
             spectra[component] = {
                 "psd_2d": psd_2d,
@@ -266,7 +344,9 @@ class SpectralAnalyzer:
             }
 
         return {
+            "plane": plane_data["plane"],
             "axes": plane_data["axes"],
+            "spacing": plane_data["spacing"],
             "normal_axis": plane_data["normal_axis"],
             "slice_idx": plane_data["slice_idx"],
             "k_grids": k_grids,
@@ -276,11 +356,12 @@ class SpectralAnalyzer:
     def analyze_simulation(
         self,
         fields_pattern: str = "pfd.*.h5",
-        plane: str = "xy",
+        plane: str = "auto",
         slice_idx: int = None,
         steps_to_process: list[int] = None,
-    ):
+    ) -> int:
         print("Starting Spectral Analysis...")
+        self.summary_rows = []
         b_files = PICDataReader.find_files(fields_pattern)
         steps = sorted(b_files.keys())
         if steps_to_process:
@@ -288,7 +369,7 @@ class SpectralAnalyzer:
 
         if not steps:
             print("No snapshot files found.")
-            return
+            return 0
 
         print(f"Found {len(steps)} snapshots to process.")
         all_modes = []
@@ -299,36 +380,55 @@ class SpectralAnalyzer:
             if data is None:
                 continue
 
+            resolved_plane = data["plane"]
             axes = data["axes"]
             k_grids = data["k_grids"]
             for component, spec in data["spectra"].items():
-                self.plot_1d_spectrum(spec["k"], spec["E_k"], spec["fit"], step, plane, component)
-                self.plot_2d_spectrum(k_grids, spec["psd_2d"], step, plane, component, axes)
+                self.plot_1d_spectrum(spec["k"], spec["E_k"], spec["fit"], step, resolved_plane, component)
+                self.plot_2d_spectrum(k_grids, spec["psd_2d"], step, resolved_plane, component, axes)
                 all_modes.extend(self._extract_top_modes(spec["psd_2d"], k_grids, step, component))
 
                 fit = spec["fit"]
+                peak = self._peak_index(spec["psd_2d"], k_grids)
+                if peak is None:
+                    peak_power = np.nan
+                    peak_k_parallel = np.nan
+                    peak_k_perp = np.nan
+                else:
+                    peak_i, peak_j = peak
+                    peak_power = float(spec["psd_2d"][peak_i, peak_j])
+                    peak_k_parallel = float(k_grids["k_par"][peak_i, peak_j])
+                    peak_k_perp = float(k_grids["k_perp"][peak_i, peak_j])
                 self.summary_rows.append(
                     {
                         "step": step,
-                        "plane": plane,
+                        "plane": resolved_plane,
                         "component": component,
                         "axis0": axes[0],
                         "axis1": axes[1],
+                        "delta_axis0": data["spacing"][0],
+                        "delta_axis1": data["spacing"][1],
                         "slice_normal": data["normal_axis"],
                         "slice_idx": data["slice_idx"],
-                        "peak_power": float(np.max(spec["psd_2d"])),
-                        "peak_k_parallel": float(k_grids["k_par"].ravel()[np.argmax(spec["psd_2d"])]),
-                        "peak_k_perp": float(k_grids["k_perp"].ravel()[np.argmax(spec["psd_2d"])]),
+                        "peak_power": peak_power,
+                        "peak_k_parallel": peak_k_parallel,
+                        "peak_k_perp": peak_k_perp,
                         "fit_slope": "" if fit is None else fit["slope"],
                         "fit_rvalue": "" if fit is None else fit["rvalue"],
                     }
                 )
 
-        self._write_csv(self.outdir / f"spectral_summary_{plane}.csv", self.summary_rows)
-        self._write_csv(self.outdir / f"dominant_modes_{plane}.csv", all_modes)
+        if not self.summary_rows:
+            print("No snapshots could be analyzed.")
+            return 0
+
+        output_plane = self.summary_rows[0]["plane"]
+        self._write_csv(self.outdir / f"spectral_summary_{output_plane}.csv", self.summary_rows)
+        self._write_csv(self.outdir / f"dominant_modes_{output_plane}.csv", all_modes)
         if all_modes:
-            self.plot_mode_evolution(all_modes, plane)
+            self.plot_mode_evolution(all_modes, output_plane)
         print("Analysis completed.")
+        return len({row["step"] for row in self.summary_rows})
 
     def _write_csv(self, filepath: Path, rows: list[dict]):
         if not rows:
@@ -375,12 +475,12 @@ class SpectralAnalyzer:
     def plot_2d_spectrum(self, k_grids: dict, psd_2d: np.ndarray, step: int, plane: str, component: str, axes: tuple[str, str], save: bool = True):
         plt.figure(figsize=(8, 7))
         psd_log = np.log10(psd_2d + 1e-16)
-        p = plt.pcolormesh(k_grids["K0"], k_grids["K1"], psd_log, shading="auto", cmap="inferno")
+        p = plt.pcolormesh(k_grids["K1"], k_grids["K0"], psd_log, shading="auto", cmap="inferno")
         cb = plt.colorbar(p)
         cb.set_label(r"$\log_{10}$(PSD)")
 
-        plt.xlabel(rf"$k_{{{axes[0]}}}$")
-        plt.ylabel(rf"$k_{{{axes[1]}}}$")
+        plt.xlabel(rf"$k_{{{axes[1]}}}\,d_i$")
+        plt.ylabel(rf"$k_{{{axes[0]}}}\,d_i$")
         plt.title(f"2D PSD - Step {step} ({plane}, {component})")
 
         if save:
@@ -390,12 +490,40 @@ class SpectralAnalyzer:
         plt.close()
 
         plt.figure(figsize=(8, 7))
-        anis_psd = np.log10(psd_2d + 1e-16)
-        p = plt.pcolormesh(k_grids["k_par"], k_grids["k_perp"], anis_psd, shading="auto", cmap="magma")
-        cb = plt.colorbar(p)
-        cb.set_label(r"$\log_{10}$(PSD)")
-        plt.xlabel(r"$k_{\parallel}$")
-        plt.ylabel(r"$k_{\perp}$")
+        if np.any(np.abs(k_grids["k_par"]) > 0):
+            kpar = np.abs(k_grids["k_par"]).ravel()
+            kperp = np.abs(k_grids["k_perp"]).ravel()
+            weights = psd_2d.ravel()
+            npar = max(8, psd_2d.shape[0] // 2)
+            nperp = max(8, psd_2d.shape[1] // 2)
+            hist, par_edges, perp_edges = np.histogram2d(
+                kpar,
+                kperp,
+                bins=(npar, nperp),
+                range=((0, kpar.max()), (0, kperp.max())),
+                weights=weights,
+            )
+            p = plt.pcolormesh(
+                par_edges,
+                perp_edges,
+                np.log10(hist.T + 1e-30),
+                shading="auto",
+                cmap="magma",
+            )
+            cb = plt.colorbar(p)
+            cb.set_label(r"$\log_{10}$(binned PSD)")
+        else:
+            plt.text(
+                0.5,
+                0.5,
+                f"The {plane} plane does not contain the parallel "
+                f"{self.parallel_axis}-axis.",
+                ha="center",
+                va="center",
+                transform=plt.gca().transAxes,
+            )
+        plt.xlabel(r"$|k_{\parallel}|\,d_i$")
+        plt.ylabel(r"$|k_{\perp}|\,d_i$")
         plt.title(f"Anisotropic PSD - Step {step} ({plane}, {component})")
 
         if save:
@@ -405,39 +533,52 @@ class SpectralAnalyzer:
         plt.close()
 
     def plot_mode_evolution(self, modes: list[dict], plane: str):
-        plt.figure(figsize=(10, 6))
-        for component in sorted({mode["component"] for mode in modes}):
+        first_step = min(mode["step"] for mode in modes)
+        components = sorted({mode["component"] for mode in modes})
+        if any(component != "total" for component in components):
+            components = [component for component in components if component != "total"]
+
+        fig, ax = plt.subplots(figsize=(10.5, 6.4))
+        for component in components:
             component_modes = [mode for mode in modes if mode["component"] == component and mode["mode_rank"] == 1]
+            component_modes = [mode for mode in component_modes if mode["step"] != first_step]
             component_modes.sort(key=lambda row: row["step"])
             if not component_modes:
                 continue
-            plt.semilogy(
+            ax.semilogy(
                 [row["step"] for row in component_modes],
                 [row["power"] for row in component_modes],
                 marker="o",
-                linewidth=1.8,
+                linewidth=2.2,
+                markersize=6.5,
                 label=f"{component} dominant mode",
             )
 
-        plt.xlabel("Step")
-        plt.ylabel("Mode Power")
-        plt.title(f"Dominant-Mode Evolution ({plane})")
-        plt.grid(True, which="both", ls="--", alpha=0.4)
-        plt.legend()
+        ax.set_xlabel("Step")
+        ax.set_ylabel("Mode Power")
+        ax.set_title(f"Dominant-Mode Evolution ({plane})")
+        ax.grid(True, which="both", ls="--", alpha=0.4)
+        ax.legend()
         out_file = self.outdir / f"dominant_mode_evolution_{plane}.png"
-        plt.savefig(out_file, dpi=300, bbox_inches="tight")
-        plt.close()
+        fig.savefig(out_file, dpi=300, bbox_inches="tight")
+        plt.close(fig)
         print(f"Saved dominant mode evolution plot: {out_file}")
 
 
 if __name__ == "__main__":
+    try:
+        from psc_units import DX_DI as PROFILE_DX_DI
+    except (ImportError, ValueError):
+        PROFILE_DX_DI = 1.0
+
     parser = argparse.ArgumentParser(description="Spectral analysis of magnetic-field fluctuations.")
     parser.add_argument("--fields", type=str, default="pfd.*.h5", help="Glob pattern for field files.")
-    parser.add_argument("--plane", type=str, default="xy", choices=["xy", "xz", "yz"], help="Plane to extract slice.")
+    parser.add_argument("--plane", type=str, default="auto", choices=["auto", "xy", "xz", "yz"], help="Plane to extract; auto selects the non-degenerate PSC plane.")
     parser.add_argument("--slice", type=int, default=None, help="Fixed slice index along the plane normal.")
     parser.add_argument("--B0", type=float, default=1.0, help="Reference B0 field normalization.")
-    parser.add_argument("--dx", type=float, default=1.0, help="Grid spacing for the second axis in the slice.")
-    parser.add_argument("--dy", type=float, default=1.0, help="Grid spacing for the first axis in the slice.")
+    parser.add_argument("--dx", type=float, default=PROFILE_DX_DI, help="Grid spacing along x in d_i.")
+    parser.add_argument("--dy", type=float, default=PROFILE_DX_DI, help="Grid spacing along y in d_i.")
+    parser.add_argument("--dz", type=float, default=PROFILE_DX_DI, help="Grid spacing along z in d_i.")
     parser.add_argument("--parallel-axis", type=str, default="z", choices=["x", "y", "z"], help="Direction of the guide field / parallel axis.")
     parser.add_argument("--top-modes", type=int, default=8, help="Number of strongest spectral modes to store per snapshot.")
     parser.add_argument("--steps", nargs="*", type=int, default=None, help="Specific steps to process.")
@@ -447,14 +588,17 @@ if __name__ == "__main__":
     analyzer = SpectralAnalyzer(
         dx=args.dx,
         dy=args.dy,
+        dz=args.dz,
         B0_ref=args.B0,
         outdir=args.outdir,
         parallel_axis=args.parallel_axis,
         top_modes=args.top_modes,
     )
-    analyzer.analyze_simulation(
+    processed = analyzer.analyze_simulation(
         fields_pattern=args.fields,
         plane=args.plane,
         slice_idx=args.slice,
         steps_to_process=args.steps,
     )
+    if processed == 0:
+        raise SystemExit(1)

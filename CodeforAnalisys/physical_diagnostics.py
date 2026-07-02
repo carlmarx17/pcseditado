@@ -17,6 +17,8 @@ import argparse
 import csv
 import math
 import re
+import os
+import concurrent.futures
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -65,6 +67,21 @@ PANEL_BG = "#161b22"
 TEXT_CLR = "#e6edf3"
 GRID_CLR = "#30363d"
 RNG = np.random.default_rng(20260623)
+POSTER_FONT = 15
+POSTER_LABEL = 18
+POSTER_TITLE = 19
+POSTER_TICK = 15
+POSTER_LEGEND = 14
+
+plt.rcParams.update({
+    "font.size": POSTER_FONT,
+    "axes.labelsize": POSTER_LABEL,
+    "axes.titlesize": POSTER_TITLE,
+    "xtick.labelsize": POSTER_TICK,
+    "ytick.labelsize": POSTER_TICK,
+    "legend.fontsize": POSTER_LEGEND,
+    "figure.titlesize": POSTER_TITLE + 1,
+})
 
 
 @dataclass
@@ -93,10 +110,47 @@ def _finite(values: Iterable[float]) -> np.ndarray:
 
 def _style_axes(ax):
     ax.set_facecolor(PANEL_BG)
-    ax.tick_params(colors=TEXT_CLR, direction="in", which="both", top=True, right=True)
+    ax.tick_params(
+        colors=TEXT_CLR,
+        direction="in",
+        which="both",
+        top=True,
+        right=True,
+        labelsize=POSTER_TICK,
+    )
     ax.grid(True, color=GRID_CLR, alpha=0.22, linestyle=":")
     for spine in ax.spines.values():
         spine.set_edgecolor(GRID_CLR)
+
+
+def _parallel_workers(requested: int, task_count: int) -> int:
+    if task_count <= 1:
+        return 1
+    available = os.cpu_count() or 1
+    workers = requested if requested > 0 else available
+    return max(1, min(workers, task_count))
+
+
+def _run_step_tasks(worker, tasks: list[tuple], jobs: int, label: str) -> list:
+    if not tasks:
+        return []
+    workers = _parallel_workers(jobs, len(tasks))
+    if workers == 1:
+        return [worker(task) for task in tasks]
+
+    print(f"{label}: {len(tasks)} steps with {workers} processes")
+    results = []
+    with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(worker, task): task[0] for task in tasks}
+        for index, future in enumerate(concurrent.futures.as_completed(futures), start=1):
+            step = futures[future]
+            try:
+                results.append(future.result())
+            except Exception as exc:
+                print(f"\n[ERROR] {label} step {step} failed: {exc}")
+            print(f"  {label} step {step} ({index}/{len(tasks)})", end="\r")
+    print()
+    return sorted(results, key=lambda item: item[0])
 
 
 def _savefig(fig, path: Path):
@@ -575,7 +629,7 @@ def plot_validation(rows: list[dict], outdir: Path):
     colors = ["#58a6ff", "#ff7b72", "#f2cc60", "#d2a8ff", "#56d364"]
     ax.bar(labels, values, color=colors, alpha=0.9)
     ax.axhline(1.0, color=TEXT_CLR, linestyle=":", alpha=0.45)
-    ax.set_title(f"Initial validation - {PROFILE_LABEL}", color=TEXT_CLR, fontsize=13, fontweight="bold")
+    ax.set_title(f"Initial validation - {PROFILE_LABEL}", color=TEXT_CLR, fontsize=15, fontweight="bold")
     ax.set_ylabel("code units / dimensionless", color=TEXT_CLR)
     _savefig(fig, outdir / "A_i_initial_check.png")
 
@@ -619,58 +673,63 @@ def plot_vdf2d(snapshot: ParticleSnapshot, outdir: Path, species: str = "ion") -
         return None
     vx, vy, vz = snapshot.px[mask], snapshot.py[mask], snapshot.pz[mask]
     weights = snapshot.w[mask]
-    vpar = vz - _weighted_mean(vz, weights)
-    vperp = np.sqrt((vx - _weighted_mean(vx, weights)) ** 2 + (vy - _weighted_mean(vy, weights)) ** 2)
-    par_abs = np.nanpercentile(np.abs(vpar), 99.5)
-    perp_hi = np.nanpercentile(vperp, 99.5)
+    vpar = (vz - _weighted_mean(vz, weights)) / VA
+    vx_centered = (vx - _weighted_mean(vx, weights)) / VA
+    vy_centered = (vy - _weighted_mean(vy, weights)) / VA
+    vperp = np.sqrt(vx_centered**2 + vy_centered**2)
+    par_abs = np.nanpercentile(np.abs(vpar), 99.7)
+    perp_hi = np.nanpercentile(vperp, 99.7)
     if par_abs <= 0 or perp_hi <= 0:
         return None
     hist, xedges, yedges = np.histogram2d(
-        vpar, vperp, bins=(180, 120), weights=weights,
+        vpar, vperp, bins=(220, 150), weights=weights,
         range=((-par_abs, par_abs), (0.0, perp_hi)), density=True,
     )
-    hist = np.where(hist > 0, hist, np.nan)
+    if gaussian_filter is not None:
+        hist = gaussian_filter(hist.astype(float), sigma=0.8)
 
-    fig, ax = plt.subplots(figsize=(8, 6))
-    fig.patch.set_facecolor(DARK_BG)
-    _style_axes(ax)
     finite_hist = hist[np.isfinite(hist) & (hist > 0)]
     if finite_hist.size == 0:
         return None
+    vmin = max(np.nanpercentile(finite_hist, 1.0), np.nanmax(finite_hist) * 1e-5)
+    vmax = np.nanmax(finite_hist)
+    fig, ax = plt.subplots(figsize=(6.8, 5.4))
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+    ax.tick_params(which="both", direction="in", top=True, right=True, labelsize=13)
+    ax.minorticks_on()
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.0)
     pcm = ax.pcolormesh(
-        xedges, yedges, hist.T, cmap="viridis",
-        norm=LogNorm(vmin=np.nanpercentile(finite_hist, 5), vmax=np.nanmax(finite_hist)),
+        xedges, yedges, hist.T, cmap="magma",
+        norm=LogNorm(vmin=vmin, vmax=vmax),
         shading="auto",
     )
+    levels = vmax * np.array([1e-4, 1e-3, 1e-2, 1e-1])
+    levels = levels[(levels > vmin) & (levels < vmax)]
+    if levels.size:
+        ax.contour(
+            0.5 * (xedges[:-1] + xedges[1:]),
+            0.5 * (yedges[:-1] + yedges[1:]),
+            hist.T,
+            levels=levels,
+            colors="white",
+            linewidths=0.65,
+            alpha=0.75,
+        )
     cb = fig.colorbar(pcm, ax=ax, pad=0.02)
-    cb.set_label(r"$f(v_\perp,v_\parallel)$", color=TEXT_CLR)
-    cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
-    plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
-    ax.set_xlabel(r"$v_\parallel$", color=TEXT_CLR)
-    ax.set_ylabel(r"$v_\perp$", color=TEXT_CLR)
+    cb.set_label(r"$f(v_\parallel,v_\perp)$ [PDF]", fontsize=13)
+    cb.ax.tick_params(which="both", direction="in", labelsize=12)
+    ax.axvline(0.0, color="white", lw=0.8, ls=":", alpha=0.8)
+    ax.set_xlabel(r"$(v_\parallel-\langle v_\parallel\rangle)/v_A$", fontsize=14)
+    ax.set_ylabel(r"$v_\perp/v_A$", fontsize=14)
     ax.set_title(
-        rf"2D VDF {species} - step {snapshot.step}, $t\Omega_{{ci}}={snapshot.time:.2f}$",
-        color=TEXT_CLR, fontweight="bold",
+        rf"{species.capitalize()} VDF, step {snapshot.step}, $t\Omega_{{ci}}={snapshot.time:.2f}$",
+        fontsize=14, fontweight="bold",
     )
     path = outdir / f"vdf_2d_step_{snapshot.step}.png"
     _savefig(fig, path)
     return path
-
-
-def plot_vdf_evolution(paths: list[Path], outdir: Path):
-    # The individual VDF PNGs are the primary output. This compact figure records
-    # which steps were sampled without reading images back into memory.
-    if not paths:
-        return
-    steps = [int(re.search(r"step_(\d+)", path.name).group(1)) for path in paths]
-    fig, ax = plt.subplots(figsize=(8, 2.8))
-    fig.patch.set_facecolor(DARK_BG)
-    _style_axes(ax)
-    ax.scatter([step_to_omegaci(s) for s in steps], np.zeros(len(steps)), s=80, color="#58a6ff")
-    ax.set_yticks([])
-    ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
-    ax.set_title("2D VDF snapshots generated", color=TEXT_CLR, fontweight="bold")
-    _savefig(fig, outdir / "vdf_2d_evolution.png")
 
 
 def plot_fit_metrics(rows: list[dict], outdir: Path):
@@ -1011,6 +1070,135 @@ def plot_scatter(x, y, path: Path, xlabel: str, ylabel: str, title: str):
     ax.set_title(title, color=TEXT_CLR, fontweight="bold")
     _savefig(fig, path)
 
+def _process_particle_step_worker(args):
+    """Worker function for run_particles to process a single step in parallel."""
+    step, filepath, max_particles, outdir = args
+    try:
+        snap = _read_particle_snapshot(filepath, max_particles)
+        if snap is None:
+            return step, None, None, None
+        
+        ion = particle_temperatures(snap, "ion")
+        elec = particle_temperatures(snap, "electron")
+        
+        row = None
+        if ion:
+            beta_par = 2.0 * ion["T_parallel"] / (B0**2 + 1e-30)
+            row = {
+                "step": step,
+                "omega_ci_t": snap.time,
+                "T_parallel_i": ion["T_parallel"],
+                "T_perp_i": ion["T_perp"],
+                "A_i": ion["A"],
+                "R_i": ion["R"],
+                "beta_parallel_i": beta_par,
+                "ion_count": ion["count"],
+                "T_parallel_e": elec.get("T_parallel", np.nan),
+                "T_perp_e": elec.get("T_perp", np.nan),
+                "A_e": elec.get("A", np.nan),
+            }
+            row.update(particle_heat_flux(snap, "ion"))
+            row.update(particle_energy(snap, "ion"))
+
+        path = plot_vdf2d(snap, outdir, "ion")
+        fit = fit_distribution(snap, "ion")
+        
+        return step, row, path, fit
+    except Exception as exc:
+        print(f"\n[ERROR] Step {step} processing failed: {exc}")
+        return step, None, None, None
+
+
+def _field_metrics_worker(args):
+    step, field_file, b0 = args
+    metrics = field_metrics(field_file, b0)
+    return step, {
+        "step": step,
+        "omega_ci_t": step_to_omegaci(step),
+        **{k: v for k, v in metrics.items() if np.isscalar(v)},
+    }
+
+
+def _magnetic_spectrum_worker(args):
+    step, field_file, outdir = args
+    spectrum = magnetic_perpendicular_spectrum(field_file)
+    plot_magnetic_spectrum(spectrum, step, outdir)
+    fit = spectrum["fit"]
+    return step, {
+        "step": step,
+        "omega_ci_t": step_to_omegaci(step),
+        "plane": spectrum["plane"],
+        "axis0": spectrum["axes"][0],
+        "axis1": spectrum["axes"][1],
+        "delta_axis0": spectrum["spacing"][0],
+        "delta_axis1": spectrum["spacing"][1],
+        "peak_k": spectrum["peak_k"],
+        "peak_power": spectrum["peak_power"],
+        "power_law_slope": np.nan if fit is None else fit["slope"],
+        "power_law_rvalue": np.nan if fit is None else fit["rvalue"],
+    }
+
+
+def _moment_stats_worker(args):
+    step, moment_file, field_file, species = args
+    maps = moment_thermal_maps(moment_file, field_file, species)
+    a = maps["A"]
+    b = maps["beta_parallel"]
+    return step, {
+        "step": step,
+        "omega_ci_t": step_to_omegaci(step),
+        "A_mean": float(np.nanmean(a)),
+        "A_median": float(np.nanmedian(a)),
+        "A_p10": float(np.nanpercentile(a, 10)),
+        "A_p90": float(np.nanpercentile(a, 90)),
+        "T_parallel_mean": float(np.nanmean(maps["T_parallel"])),
+        "T_perp_mean": float(np.nanmean(maps["T_perp"])),
+        "beta_parallel_mean": float(np.nanmean(b)),
+        "beta_parallel_median": float(np.nanmedian(b)),
+    }
+
+
+def _moment_correlation_worker(args):
+    step, moment_file, field_file, species = args
+    maps = moment_thermal_maps(moment_file, field_file, species)
+    fmet = field_metrics(field_file, B0)
+    jdia = compute_jdia(moment_file, field_file)
+    heat_flux = moment_heat_flux_maps(moment_file, field_file)
+    return step, correlations(
+        maps["A"],
+        PICDataReader.flatten_2d_slice(fmet["delta_B"]),
+        PICDataReader.flatten_2d_slice(fmet["B_magnitude"]),
+        jdia["J_dia_total"],
+        maps["n"],
+        step,
+    ), localized_heat_flux_rows(heat_flux, step)
+
+
+def _field_map_worker(args):
+    step, field_file, outdir = args
+    metrics = field_metrics(field_file, B0)
+    plot_map(PICDataReader.flatten_2d_slice(metrics["delta_B_over_B0"]),
+             outdir / f"deltaB_map_step_{step}.png",
+             rf"$\delta B/B_0$ - step {step}", r"$\delta B/B_0$",
+             cmap="RdBu_r", symmetric=True)
+    plot_map(PICDataReader.flatten_2d_slice(metrics["B_magnitude"]),
+             outdir / f"mirror_holes_map_step_{step}.png",
+             rf"$|B|$ mirror structures - step {step}", r"$|B|$",
+             cmap="magma")
+    return step, True
+
+
+def _thermal_map_worker(args):
+    step, moment_file, field_file, species, outdir = args
+    maps = moment_thermal_maps(moment_file, field_file, species)
+    plot_map(maps["T_parallel"], outdir / f"T_parallel_map_step_{step}.png",
+             rf"$T_{{\parallel i}}$ - step {step}", r"$T_{\parallel i}$", cmap="plasma")
+    plot_map(maps["T_perp"], outdir / f"T_perp_map_step_{step}.png",
+             rf"$T_{{\perp i}}$ - step {step}", r"$T_{\perp i}$", cmap="plasma")
+    plot_map(maps["A"], outdir / f"A_i_map_step_{step}.png",
+             rf"$A_i=T_\perp/T_\parallel$ - step {step}", r"$A_i$", cmap="RdYlBu_r")
+    return step, True
+
 
 class PhysicalDiagnostics:
     def __init__(
@@ -1024,6 +1212,7 @@ class PhysicalDiagnostics:
         max_particle_steps: int,
         max_map_steps: int,
         selected_steps: list[int] | None,
+        jobs: int = 0,
     ):
         self.data_dir = Path(data_dir).expanduser().resolve()
         self.outdir = Path(outdir)
@@ -1031,6 +1220,7 @@ class PhysicalDiagnostics:
         self.max_particle_steps = max_particle_steps
         self.max_map_steps = max_map_steps
         self.selected_steps = selected_steps
+        self.jobs = jobs
         discovered = PICDataReader.discover_outputs(str(self.data_dir))
         if particle_pattern:
             self.particle_files = PICDataReader.find_files(particle_pattern)
@@ -1078,35 +1268,18 @@ class PhysicalDiagnostics:
         vdf_paths = []
         first_fit = None
 
-        for step in selected:
-            print(f"Particle diagnostics step {step}")
-            snap = _read_particle_snapshot(self.particle_files[step], self.max_particles)
-            ion = particle_temperatures(snap, "ion")
-            elec = particle_temperatures(snap, "electron")
-            if ion:
-                beta_par = 2.0 * ion["T_parallel"] / (B0**2 + 1e-30)
-                row = {
-                    "step": step,
-                    "omega_ci_t": snap.time,
-                    "T_parallel_i": ion["T_parallel"],
-                    "T_perp_i": ion["T_perp"],
-                    "A_i": ion["A"],
-                    "R_i": ion["R"],
-                    "beta_parallel_i": beta_par,
-                    "ion_count": ion["count"],
-                    "T_parallel_e": elec.get("T_parallel", np.nan),
-                    "T_perp_e": elec.get("T_perp", np.nan),
-                    "A_e": elec.get("A", np.nan),
-                }
-                row.update(particle_heat_flux(snap, "ion"))
-                row.update(particle_energy(snap, "ion"))
+        tasks = [
+            (step, self.particle_files[step], self.max_particles, self.outdir)
+            for step in selected
+        ]
+        results = _run_step_tasks(
+            _process_particle_step_worker, tasks, self.jobs, "Particle diagnostics"
+        )
+        for step, row, path, fit in results:
+            if row:
                 rows.append(row)
-
-            path = plot_vdf2d(snap, self.outdir, "ion")
             if path:
                 vdf_paths.append(path)
-
-            fit = fit_distribution(snap, "ion")
             if fit:
                 if first_fit is None:
                     first_fit = fit
@@ -1125,10 +1298,8 @@ class PhysicalDiagnostics:
         self.write_validation_summary(rows)
         plot_validation(rows, self.outdir)
         plot_time_series(rows, self.outdir)
-        plot_vdf_evolution(vdf_paths, self.outdir)
         plot_fit_metrics(fit_rows, self.outdir)
         plot_distribution_fit(first_fit, self.outdir)
-        self.plot_heat_flux_particle(rows)
         return rows
 
     def write_validation_summary(self, rows: list[dict]):
@@ -1160,43 +1331,14 @@ class PhysicalDiagnostics:
         ]
         (self.outdir / "validation_summary.txt").write_text("\n".join(text) + "\n", encoding="utf-8")
 
-    def plot_heat_flux_particle(self, rows: list[dict]):
-        if not rows or "q_parallel_particle" not in rows[0]:
-            return
-        t = np.array([r["omega_ci_t"] for r in rows])
-        qpar = np.array([r["q_parallel_particle"] for r in rows])
-        qperp = np.array([r["q_perp_particle"] for r in rows])
-        fig, ax = plt.subplots(figsize=(8.5, 5.2))
-        fig.patch.set_facecolor(DARK_BG)
-        _style_axes(ax)
-        ax.plot(t, qpar, "o-", color="#ff7b72", label=r"$q_\parallel$")
-        ax.plot(t, qperp, "s-", color="#58a6ff", label=r"$q_\perp$")
-        ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
-        ax.set_ylabel("particle heat flux proxy", color=TEXT_CLR)
-        ax.set_title("Particle heat flux", color=TEXT_CLR, fontweight="bold")
-        ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
-        _savefig_many(
-            fig,
-            [
-                self.outdir / "heat_flux_parallel_vs_time.png",
-                self.outdir / "heat_flux_perp_vs_time.png",
-            ],
-        )
-
     def run_fields(self) -> list[dict]:
         if not self.field_files:
             print("[INFO] No field files found; skipping magnetic diagnostics.")
             return []
-        rows = []
         steps = sorted(self.field_files)
-        for step in steps:
-            print(f"Field diagnostics step {step}")
-            metrics = field_metrics(self.field_files[step], B0)
-            rows.append({
-                "step": step,
-                "omega_ci_t": step_to_omegaci(step),
-                **{k: v for k, v in metrics.items() if np.isscalar(v)},
-            })
+        tasks = [(step, self.field_files[step], B0) for step in steps]
+        results = _run_step_tasks(_field_metrics_worker, tasks, self.jobs, "Field diagnostics")
+        rows = [row for _, row in results]
         _write_csv(self.outdir / "field_fluctuation_table.csv", rows)
         plot_field_time(rows, self.outdir)
         growth = growth_rate(
@@ -1220,38 +1362,17 @@ class PhysicalDiagnostics:
             sorted(self.field_files), self.selected_steps, self.max_map_steps
         )
         rows = []
-        for step in steps:
-            print(f"Magnetic spectrum step {step}")
-            spectrum = magnetic_perpendicular_spectrum(self.field_files[step])
-            plot_magnetic_spectrum(spectrum, step, self.outdir)
-            fit = spectrum["fit"]
-            rows.append({
-                "step": step,
-                "omega_ci_t": step_to_omegaci(step),
-                "plane": spectrum["plane"],
-                "axis0": spectrum["axes"][0],
-                "axis1": spectrum["axes"][1],
-                "delta_axis0": spectrum["spacing"][0],
-                "delta_axis1": spectrum["spacing"][1],
-                "peak_k": spectrum["peak_k"],
-                "peak_power": spectrum["peak_power"],
-                "power_law_slope": np.nan if fit is None else fit["slope"],
-                "power_law_rvalue": np.nan if fit is None else fit["rvalue"],
-            })
+        tasks = [(step, self.field_files[step], self.outdir) for step in steps]
+        results = _run_step_tasks(
+            _magnetic_spectrum_worker, tasks, self.jobs, "Magnetic spectrum"
+        )
+        rows = [row for _, row in results]
         _write_csv(self.outdir / "magnetic_spectrum_table.csv", rows)
 
     def plot_field_maps(self):
         steps = _select_steps(sorted(self.field_files), self.selected_steps, self.max_map_steps)
-        for step in steps:
-            metrics = field_metrics(self.field_files[step], B0)
-            plot_map(PICDataReader.flatten_2d_slice(metrics["delta_B_over_B0"]),
-                     self.outdir / f"deltaB_map_step_{step}.png",
-                     rf"$\delta B/B_0$ - step {step}", r"$\delta B/B_0$",
-                     cmap="RdBu_r", symmetric=True)
-            plot_map(PICDataReader.flatten_2d_slice(metrics["B_magnitude"]),
-                     self.outdir / f"mirror_holes_map_step_{step}.png",
-                     rf"$|B|$ mirror structures - step {step}", r"$|B|$",
-                     cmap="magma")
+        tasks = [(step, self.field_files[step], self.outdir) for step in steps]
+        _run_step_tasks(_field_map_worker, tasks, self.jobs, "Field maps")
 
     def run_moments_and_correlations(self) -> list[dict]:
         if not self.moment_files:
@@ -1264,81 +1385,69 @@ class PhysicalDiagnostics:
         steps_for_maps = _select_steps(sorted(self.moment_files), self.selected_steps, self.max_map_steps)
         species = "ion"
 
-        for step in sorted(self.moment_files):
-            field_file = self.field_files.get(step)
-            maps = moment_thermal_maps(self.moment_files[step], field_file, species)
-            a = maps["A"]
-            b = maps["beta_parallel"]
-            rows.append({
-                "step": step,
-                "omega_ci_t": step_to_omegaci(step),
-                "A_mean": float(np.nanmean(a)),
-                "A_median": float(np.nanmedian(a)),
-                "A_p10": float(np.nanpercentile(a, 10)),
-                "A_p90": float(np.nanpercentile(a, 90)),
-                "T_parallel_mean": float(np.nanmean(maps["T_parallel"])),
-                "T_perp_mean": float(np.nanmean(maps["T_perp"])),
-                "beta_parallel_mean": float(np.nanmean(b)),
-                "beta_parallel_median": float(np.nanmedian(b)),
-            })
+        stats_tasks = [
+            (step, self.moment_files[step], self.field_files.get(step), species)
+            for step in sorted(self.moment_files)
+        ]
+        stats_results = _run_step_tasks(
+            _moment_stats_worker, stats_tasks, self.jobs, "Moment statistics"
+        )
+        rows = [row for _, row in stats_results]
 
-        for step in steps_for_maps:
-            field_file = self.field_files.get(step)
-            maps = moment_thermal_maps(self.moment_files[step], field_file, species)
-            plot_map(maps["T_parallel"], self.outdir / f"T_parallel_map_step_{step}.png",
-                     rf"$T_{{\parallel i}}$ - step {step}", r"$T_{\parallel i}$", cmap="plasma")
-            plot_map(maps["T_perp"], self.outdir / f"T_perp_map_step_{step}.png",
-                     rf"$T_{{\perp i}}$ - step {step}", r"$T_{\perp i}$", cmap="plasma")
-            plot_map(maps["A"], self.outdir / f"A_i_map_step_{step}.png",
-                     rf"$A_i=T_\perp/T_\parallel$ - step {step}", r"$A_i$", cmap="RdYlBu_r")
+        map_tasks = [
+            (step, self.moment_files[step], self.field_files.get(step), species, self.outdir)
+            for step in steps_for_maps
+        ]
+        _run_step_tasks(_thermal_map_worker, map_tasks, self.jobs, "Thermal maps")
 
-        for step in common:
+        corr_tasks = [
+            (step, self.moment_files[step], self.field_files[step], species)
+            for step in common
+        ]
+        corr_results = _run_step_tasks(
+            _moment_correlation_worker, corr_tasks, self.jobs, "Moment correlations"
+        )
+        for step, corr_row, heat_rows in corr_results:
+            corr_rows.append(corr_row)
+            heat_flux_rows.extend(heat_rows)
+
+        for step in [s for s in steps_for_maps if s in common]:
             maps = moment_thermal_maps(self.moment_files[step], self.field_files[step], species)
             fmet = field_metrics(self.field_files[step], B0)
             jdia = compute_jdia(self.moment_files[step], self.field_files[step])
             heat_flux = moment_heat_flux_maps(
                 self.moment_files[step], self.field_files[step]
             )
-            heat_flux_rows.extend(localized_heat_flux_rows(heat_flux, step))
-            corr_rows.append(correlations(
-                maps["A"],
-                PICDataReader.flatten_2d_slice(fmet["delta_B"]),
-                PICDataReader.flatten_2d_slice(fmet["B_magnitude"]),
-                jdia["J_dia_total"],
-                maps["n"],
-                step,
-            ))
-            if step in steps_for_maps:
-                plot_map(jdia["J_dia_i"], self.outdir / f"J_dia_i_map_step_{step}.png",
-                         rf"$J_{{dia,i}}$ - step {step}", r"$J_{dia,i}$", cmap="RdBu_r", symmetric=True)
-                plot_map(jdia["J_dia_e"], self.outdir / f"J_dia_e_map_step_{step}.png",
-                         rf"$J_{{dia,e}}$ - step {step}", r"$J_{dia,e}$", cmap="RdBu_r", symmetric=True)
-                plot_map(jdia["J_dia_total"], self.outdir / f"J_dia_total_map_step_{step}.png",
-                         rf"$J_{{dia,total}}$ - step {step}", r"$J_{dia,total}$", cmap="RdBu_r", symmetric=True)
-                plot_map(
-                    heat_flux["q_parallel"],
-                    self.outdir / f"q_parallel_map_step_{step}.png",
-                    rf"$q_{{\parallel,i}}$ - step {step}",
-                    r"$q_{\parallel,i}$",
-                    cmap="RdBu_r",
-                    symmetric=True,
-                )
-                plot_map(
-                    heat_flux["q_perp"],
-                    self.outdir / f"q_perp_map_step_{step}.png",
-                    rf"$q_{{\perp,i}}$ - step {step}",
-                    r"$q_{\perp,i}$",
-                    cmap="inferno",
-                )
-                plot_scatter(maps["A"], PICDataReader.flatten_2d_slice(fmet["delta_B"]),
-                             self.outdir / "A_vs_deltaB_scatter.png", r"$A_i$", r"$\delta B$",
-                             "Spatial correlation: anisotropy vs delta B")
-                plot_scatter(maps["A"], PICDataReader.flatten_2d_slice(fmet["B_magnitude"]),
-                             self.outdir / "A_vs_B_scatter.png", r"$A_i$", r"$|B|$",
-                             "Spatial correlation: anisotropy vs |B|")
-                plot_scatter(maps["A"], jdia["J_dia_total"],
-                             self.outdir / "A_vs_Jdia_scatter.png", r"$A_i$", r"$J_{dia}$",
-                             "Spatial correlation: anisotropy vs Jdia")
+            plot_map(jdia["J_dia_i"], self.outdir / f"J_dia_i_map_step_{step}.png",
+                     rf"$J_{{dia,i}}$ - step {step}", r"$J_{dia,i}$", cmap="RdBu_r", symmetric=True)
+            plot_map(jdia["J_dia_e"], self.outdir / f"J_dia_e_map_step_{step}.png",
+                     rf"$J_{{dia,e}}$ - step {step}", r"$J_{dia,e}$", cmap="RdBu_r", symmetric=True)
+            plot_map(jdia["J_dia_total"], self.outdir / f"J_dia_total_map_step_{step}.png",
+                     rf"$J_{{dia,total}}$ - step {step}", r"$J_{dia,total}$", cmap="RdBu_r", symmetric=True)
+            plot_map(
+                heat_flux["q_parallel"],
+                self.outdir / f"q_parallel_map_step_{step}.png",
+                rf"$q_{{\parallel,i}}$ - step {step}",
+                r"$q_{\parallel,i}$",
+                cmap="RdBu_r",
+                symmetric=True,
+            )
+            plot_map(
+                heat_flux["q_perp"],
+                self.outdir / f"q_perp_map_step_{step}.png",
+                rf"$q_{{\perp,i}}$ - step {step}",
+                r"$q_{\perp,i}$",
+                cmap="inferno",
+            )
+            plot_scatter(maps["A"], PICDataReader.flatten_2d_slice(fmet["delta_B"]),
+                         self.outdir / "A_vs_deltaB_scatter.png", r"$A_i$", r"$\delta B$",
+                         "Spatial correlation: anisotropy vs delta B")
+            plot_scatter(maps["A"], PICDataReader.flatten_2d_slice(fmet["B_magnitude"]),
+                         self.outdir / "A_vs_B_scatter.png", r"$A_i$", r"$|B|$",
+                         "Spatial correlation: anisotropy vs |B|")
+            plot_scatter(maps["A"], jdia["J_dia_total"],
+                         self.outdir / "A_vs_Jdia_scatter.png", r"$A_i$", r"$J_{dia}$",
+                         "Spatial correlation: anisotropy vs Jdia")
 
         _write_csv(self.outdir / "anisotropy_spatial_stats.csv", rows)
         _write_csv(self.outdir / "spatial_correlations.csv", corr_rows)
@@ -1391,7 +1500,9 @@ class PhysicalDiagnostics:
             e_bulk = r.get("E_kin_bulk", np.nan)
             e_th = r.get("E_kin_thermal", np.nan)
             e_b = r.get("magnetic_energy_fluct", np.nan)
-            total = np.nansum([e_bulk, e_th, e_b])
+            if not np.all(np.isfinite([e_bulk, e_th, e_b])):
+                continue
+            total = e_bulk + e_th + e_b
             rows.append({
                 "step": step,
                 "omega_ci_t": step_to_omegaci(step),
@@ -1469,6 +1580,8 @@ def parse_args():
     parser.add_argument("--max-map-steps", type=int, default=5,
                         help="Maximum spatial-map snapshots to render.")
     parser.add_argument("--steps", nargs="*", type=int, help="Optional explicit steps.")
+    parser.add_argument("--jobs", "-j", type=int, default=0,
+                        help="Number of parallel processes to use (default: 0 = use all CPUs).")
     return parser.parse_args()
 
 
@@ -1484,6 +1597,7 @@ def main():
         max_particle_steps=args.max_particle_steps,
         max_map_steps=args.max_map_steps,
         selected_steps=args.steps,
+        jobs=args.jobs,
     ).run()
 
 

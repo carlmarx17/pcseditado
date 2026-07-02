@@ -17,6 +17,15 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+plt.rcParams.update({
+    "font.size": 15,
+    "axes.labelsize": 18,
+    "axes.titlesize": 19,
+    "xtick.labelsize": 15,
+    "ytick.labelsize": 15,
+    "legend.fontsize": 14,
+    "figure.titlesize": 20,
+})
 
 DARK_BG = "#0d1117"
 PANEL_BG = "#161b22"
@@ -135,7 +144,7 @@ def plot_timeseries(cases: list[dict], ykeys: list[str], labels: list[str], path
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
     ax.set_ylabel(", ".join(labels), color=TEXT_CLR)
     ax.set_title(title, color=TEXT_CLR, fontweight="bold")
-    ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR, fontsize=8.5)
+    ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
     _save(fig, path)
 
 

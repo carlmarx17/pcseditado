@@ -13,7 +13,7 @@ set -euo pipefail
 
 BASE=/cosma7/data/dp433/dc-mart18
 REPO="$BASE/pcseditado"
-BUILD_DIR="$REPO/build-adios2-nohdf5"
+BUILD_DIR="${BUILD_DIR:-$REPO/build-adios2-nohdf5}"
 RUN_ROOT="$BASE/anisotropy_adios2"
 PSC_TARGET="${PSC_TARGET:-psc_mirror_bikappa3}"
 RUN_DIR="$RUN_ROOT/${PSC_TARGET}_${SLURM_JOB_ID}"

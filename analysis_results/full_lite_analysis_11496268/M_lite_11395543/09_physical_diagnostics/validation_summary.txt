@@ -1,0 +1,11 @@
+Profile: Mirror Lite
+Instability: mirror
+Initial step: 0
+T_parallel_i = 0.0062494195
+T_perp_i     = 0.018788326
+A_i          = 3.0064115
+R_i          = 0.33262247
+beta_parallel_i = 4.9995356
+
+mirror: expected A_i > 1 and T_perp_i > T_parallel_i
+Initial check: PASS

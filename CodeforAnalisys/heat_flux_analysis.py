@@ -67,6 +67,15 @@ from psc_units import (
 )
 
 plt.switch_backend("Agg")
+plt.rcParams.update({
+    "font.size": 15,
+    "axes.labelsize": 18,
+    "axes.titlesize": 19,
+    "xtick.labelsize": 15,
+    "ytick.labelsize": 15,
+    "legend.fontsize": 14,
+    "figure.titlesize": 20,
+})
 
 # ── Dark-theme colour palette ────────────────────────────────────────────────
 DARK_BG  = "#0c0e14"
@@ -268,16 +277,25 @@ class HeatFluxAnalyzer:
     def _plot_time_evolution(
         self, times, q_par, q_perp, aniso, beta_par, T_par, T_perp
     ):
-        """Generate a 4-panel time evolution figure."""
-        fig, axes = plt.subplots(4, 1, figsize=(12, 18), sharex=True)
-        fig.patch.set_facecolor(DARK_BG)
-
-        for ax in axes:
+        """Generate separated time-evolution figures."""
+        def new_axis(title: str):
+            fig, ax = plt.subplots(figsize=(9.0, 5.6))
+            fig.patch.set_facecolor(DARK_BG)
             ax.set_facecolor(PANEL_BG)
             ax.tick_params(colors=TEXT_CLR, direction="in", which="both", top=True, right=True)
             ax.grid(True, alpha=0.18, color=GRID_CLR, linestyle=":")
             for spine in ax.spines.values():
                 spine.set_edgecolor(GRID_CLR)
+            ax.set_title(title, fontsize=17, fontweight="bold", color=TEXT_CLR, pad=10)
+            ax.set_xlabel(r"Time $[\Omega_{ci}^{-1}]$", color=TEXT_CLR, fontsize=16)
+            return fig, ax
+
+        def save(fig, filename: str):
+            out_file = self.outdir / filename
+            fig.tight_layout()
+            fig.savefig(out_file, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
+            plt.close(fig)
+            print(f"Saved time evolution → {out_file}")
 
         t_arr = np.asarray(times)
 
@@ -293,83 +311,74 @@ class HeatFluxAnalyzer:
         else:
             threshold = 1.0 + 0.21 / beta_arr**0.6
             threshold_label = r"Whistler threshold $1+0.21/\beta_\parallel^{0.6}$"
-        axes[0].plot(t_arr, aniso, color="#ff6666", linewidth=1.8,
+        fig, ax = new_axis(f"Ion anisotropy evolution — {PROFILE_LABEL}")
+        ax.plot(t_arr, aniso, color="#ff6666", linewidth=1.8,
                      label=r"$\langle P_\perp\rangle/\langle P_\parallel\rangle_i$")
-        axes[0].plot(t_arr, threshold, color="#ff9999", linewidth=1.0,
+        ax.plot(t_arr, threshold, color="#ff9999", linewidth=1.0,
                      linestyle="--", alpha=0.7, label=threshold_label)
-        axes[0].axhline(1.0, color=TEXT_CLR, alpha=0.3, linestyle=":", linewidth=0.8)
-        axes[0].axhline(A0, color="#ffd700", alpha=0.45, linestyle="--", linewidth=1.0,
+        ax.axhline(1.0, color=TEXT_CLR, alpha=0.3, linestyle=":", linewidth=0.8)
+        ax.axhline(A0, color="#ffd700", alpha=0.45, linestyle="--", linewidth=1.0,
                         label=rf"$A_0 = {A0:.1f}$")
-        axes[0].set_ylabel(r"$\langle T_\perp / T_\parallel \rangle_i$", color=TEXT_CLR, fontsize=12)
+        ax.set_ylabel(r"$\langle T_\perp / T_\parallel \rangle_i$", color=TEXT_CLR, fontsize=15)
         finite_a = np.concatenate([
             np.asarray(aniso, dtype=float),
             np.asarray(threshold, dtype=float),
             np.array([1.0, A0]),
         ])
         finite_a = finite_a[np.isfinite(finite_a)]
-        axes[0].set_ylim(
+        ax.set_ylim(
             max(0.02, float(np.min(finite_a)) * 0.85),
             max(1.1, float(np.max(finite_a)) * 1.15),
         )
-        axes[0].legend(fontsize=9, facecolor="#1a1f30", edgecolor="#3a3f55",
+        ax.legend(fontsize=12, facecolor="#1a1f30", edgecolor="#3a3f55",
                        labelcolor=TEXT_CLR, loc="upper right", ncol=2)
-        axes[0].set_title(
-            f"Ion Heat Flux & Anisotropy Evolution — {PROFILE_LABEL}\n"
-            rf"PSC ($m_i/m_e = {int(MASS_RATIO)}$"
-            + (rf", $\kappa = {KAPPA}$" if KAPPA is not None else ", Maxwellian")
-            + ")",
-            fontsize=14, fontweight="bold", color=TEXT_CLR, pad=10,
-        )
+        save(fig, "heatflux_anisotropy_vs_time.png")
 
         # ── Panel 2: Temperature normalized to T₀ ───────────────────────────
         # Normalize by initial temperature for clearer display
         T_par_norm  = np.asarray(T_par)  / TI_PAR
         T_perp_norm = np.asarray(T_perp) / TI_PERP
-        axes[1].plot(t_arr, T_par_norm,  color="#66aaff", linewidth=1.8,
+        fig, ax = new_axis("Ion temperature evolution")
+        ax.plot(t_arr, T_par_norm,  color="#66aaff", linewidth=1.8,
                      label=r"$\langle T_\parallel \rangle_i / T_{\parallel,0}$")
-        axes[1].plot(t_arr, T_perp_norm, color="#ff6666", linewidth=1.8,
+        ax.plot(t_arr, T_perp_norm, color="#ff6666", linewidth=1.8,
                      label=r"$\langle T_\perp \rangle_i / T_{\perp,0}$")
-        axes[1].axhline(1.0, color=TEXT_CLR, alpha=0.25, linestyle=":", linewidth=0.8)
-        axes[1].set_ylabel(r"$T_i / T_{i,0}$ (normalized)", color=TEXT_CLR, fontsize=12)
-        axes[1].legend(fontsize=10, facecolor="#1a1f30", edgecolor="#3a3f55", labelcolor=TEXT_CLR)
+        ax.axhline(1.0, color=TEXT_CLR, alpha=0.25, linestyle=":", linewidth=0.8)
+        ax.set_ylabel(r"$T_i / T_{i,0}$ (normalized)", color=TEXT_CLR, fontsize=15)
+        ax.legend(fontsize=13, facecolor="#1a1f30", edgecolor="#3a3f55", labelcolor=TEXT_CLR)
         # Annotate heating rate
         if len(T_par_norm) > 2:
-            axes[1].text(0.01, 0.92, rf"Heating: $T_\parallel/T_{{\parallel,0}}$ grows {T_par_norm[-1]:.0f}×",
-                         transform=axes[1].transAxes, fontsize=9, color="#aab0cc")
+            ax.text(0.01, 0.92, rf"Heating: $T_\parallel/T_{{\parallel,0}}$ grows {T_par_norm[-1]:.0f}x",
+                    transform=ax.transAxes, fontsize=12, color="#aab0cc")
+        save(fig, "heatflux_temperature_vs_time.png")
 
         # ── Panel 3: Parallel beta (log scale) ────────────────────────────
-        axes[2].plot(t_arr, beta_par, color="#44ffaa", linewidth=1.8,
+        fig, ax = new_axis("Ion parallel beta evolution")
+        ax.plot(t_arr, beta_par, color="#44ffaa", linewidth=1.8,
                      label=r"$\langle \beta_\parallel \rangle_i$")
         # Mirror threshold: beta needs to stay < A-1 for stability
-        axes[2].axhline(float(BETA_I_PAR := TI_PAR * 2 / B0**2),
+        ax.axhline(float(BETA_I_PAR := TI_PAR * 2 / B0**2),
                         color="#ffd700", linestyle="--", alpha=0.4, linewidth=1.0,
                         label=rf"$\beta_{{\parallel,0}} = {TI_PAR*2/B0**2:.0f}$")
-        axes[2].set_ylabel(r"$\langle \beta_{\parallel,i} \rangle$", color=TEXT_CLR, fontsize=12)
-        axes[2].set_yscale("log")
-        axes[2].legend(fontsize=10, facecolor="#1a1f30", edgecolor="#3a3f55", labelcolor=TEXT_CLR)
+        ax.set_ylabel(r"$\langle \beta_{\parallel,i} \rangle$", color=TEXT_CLR, fontsize=15)
+        ax.set_yscale("log")
+        ax.legend(fontsize=13, facecolor="#1a1f30", edgecolor="#3a3f55", labelcolor=TEXT_CLR)
+        save(fig, "heatflux_beta_parallel_vs_time.png")
 
         # ── Panel 4: Heat flux (log scale) ──────────────────────────────
-        axes[3].plot(t_arr, q_par,  color="#ff8844", linewidth=1.8,
+        fig, ax = new_axis("Ion heat-flux proxy evolution")
+        ax.plot(t_arr, q_par,  color="#ff8844", linewidth=1.8,
                      label=r"$\langle |q_\parallel| \rangle_i$")
-        axes[3].plot(t_arr, q_perp, color="#8866ff", linewidth=1.8,
+        ax.plot(t_arr, q_perp, color="#8866ff", linewidth=1.8,
                      label=r"$\langle |q_\perp| \rangle_i$")
-        axes[3].set_ylabel(r"Heat flux proxy [code]" , color=TEXT_CLR, fontsize=12)
-        axes[3].set_xlabel(r"Time $[\Omega_{ci}^{-1}]$", color=TEXT_CLR, fontsize=13)
-        axes[3].legend(fontsize=10, facecolor="#1a1f30", edgecolor="#3a3f55", labelcolor=TEXT_CLR)
-        axes[3].set_yscale("log")
-
-        fig.subplots_adjust(hspace=0.08)
-        out_file = self.outdir / "heatflux_anisotropy_evolution.png"
-        fig.savefig(out_file, dpi=200, bbox_inches="tight", facecolor=DARK_BG)
-        plt.close(fig)
-        print(f"Saved time evolution → {out_file}")
+        ax.set_ylabel(r"Heat flux proxy [code]" , color=TEXT_CLR, fontsize=15)
+        ax.legend(fontsize=13, facecolor="#1a1f30", edgecolor="#3a3f55", labelcolor=TEXT_CLR)
+        ax.set_yscale("log")
+        save(fig, "heatflux_proxy_vs_time.png")
 
     def plot_snapshot_maps(self, step: int, mom_file: str, fld_file: str):
         """Generate 2D maps of heat flux and anisotropy for a single snapshot."""
         data = self.compute_heat_flux(mom_file, fld_file)
-
-        fig, axes = plt.subplots(2, 2, figsize=(16, 14))
-        fig.patch.set_facecolor(DARK_BG)
 
         t_omega = step_to_omegaci(step)
         extent = [0, DOMAIN_DI_Z, 0, DOMAIN_DI_Y]
@@ -380,13 +389,15 @@ class HeatFluxAnalyzer:
         beta_map = np.clip(data["beta_par"], 0.5, np.nanpercentile(data["beta_par"], 99))
 
         configs = [
-            (aniso_map, "RdYlBu_r",  r"$T_\perp / T_\parallel$ (ions)",   axes[0, 0], None),
-            (beta_map,  "plasma",     r"$\beta_{\parallel,i}$",              axes[0, 1], None),
-            (data["q_par"],  "seismic", r"$q_\parallel$ [code units]",       axes[1, 0], "sym"),
-            (data["q_perp"], "inferno", r"$|q_\perp|$ [code units]",         axes[1, 1], None),
+            (aniso_map, "RdYlBu_r",  r"$T_\perp / T_\parallel$ (ions)", None, "anisotropy"),
+            (beta_map,  "plasma",    r"$\beta_{\parallel,i}$", None, "beta_parallel"),
+            (data["q_par"],  "seismic", r"$q_\parallel$ [code units]", "sym", "q_parallel"),
+            (data["q_perp"], "inferno", r"$|q_\perp|$ [code units]", None, "q_perp"),
         ]
 
-        for field, cmap, label, ax, norm_type in configs:
+        for field, cmap, label, norm_type, slug in configs:
+            fig, ax = plt.subplots(figsize=(8.2, 6.4))
+            fig.patch.set_facecolor(DARK_BG)
             ax.set_facecolor(PANEL_BG)
 
             if norm_type == "sym":
@@ -403,30 +414,25 @@ class HeatFluxAnalyzer:
                 norm=norm, aspect="auto", extent=extent,
             )
             cb = fig.colorbar(im, ax=ax, pad=0.02)
-            cb.set_label(label, fontsize=11, color=TEXT_CLR)
-            cb.ax.yaxis.set_tick_params(color=TEXT_CLR, labelsize=9)
+            cb.set_label(label, fontsize=14, color=TEXT_CLR)
+            cb.ax.yaxis.set_tick_params(color=TEXT_CLR, labelsize=12)
             plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
 
-            ax.set_xlabel(r"Z [$d_i$]", fontsize=11, color=TEXT_CLR)
-            ax.set_ylabel(r"Y [$d_i$]", fontsize=11, color=TEXT_CLR)
+            ax.set_xlabel(r"Z [$d_i$]", fontsize=14, color=TEXT_CLR)
+            ax.set_ylabel(r"Y [$d_i$]", fontsize=14, color=TEXT_CLR)
             ax.tick_params(colors=TEXT_CLR, direction="in", which="both")
             for spine in ax.spines.values():
                 spine.set_edgecolor(GRID_CLR)
 
-        fig.suptitle(
-            rf"Ion Heat Flux & Anisotropy — $t \approx {t_omega:.2f}\,\Omega_{{ci}}^{{-1}}$ (step {step})"
-            "\n"
-            rf"PSC ($m_i/m_e = {int(MASS_RATIO)}$"
-            + (rf", $\kappa = {KAPPA}$" if KAPPA is not None else ", Maxwellian")
-            + ")",
-            fontsize=14, color=TEXT_CLR, fontweight="bold", y=1.01,
-        )
-
-        plt.tight_layout()
-        out_file = self.outdir / f"heatflux_maps_step{step:06d}.png"
-        fig.savefig(out_file, dpi=180, bbox_inches="tight", facecolor=DARK_BG)
-        plt.close(fig)
-        print(f"  Saved: {out_file}")
+            ax.set_title(
+                rf"{label} - step {step}, $t \approx {t_omega:.2f}\,\Omega_{{ci}}^{{-1}}$",
+                fontsize=16, color=TEXT_CLR, fontweight="bold",
+            )
+            fig.tight_layout()
+            out_file = self.outdir / f"heatflux_{slug}_step{step:06d}.png"
+            fig.savefig(out_file, dpi=200, bbox_inches="tight", facecolor=DARK_BG)
+            plt.close(fig)
+            print(f"  Saved: {out_file}")
 
 
     def run(self, steps: list[int] | None = None, time_evolution: bool = True):

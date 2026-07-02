@@ -23,6 +23,16 @@ from psc_units import (
     FIELD_FILE_PATTERN, MASS_RATIO, step_to_omegaci,
 )
 
+plt.rcParams.update({
+    "font.size": 15,
+    "axes.labelsize": 18,
+    "axes.titlesize": 19,
+    "xtick.labelsize": 15,
+    "ytick.labelsize": 15,
+    "legend.fontsize": 14,
+    "figure.titlesize": 20,
+})
+
 # ── Paleta oscura ─────────────────────────────────────────────────────────────
 DARK_BG  = "#0d1117"
 PANEL_BG = "#161b22"
@@ -83,13 +93,12 @@ class MirrorPhysicsPlotter:
         self._generate_plot(bz2d, jx2d, step)
 
     def _generate_plot(self, bz2d: np.ndarray, jx2d: np.ndarray, step: int):
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7), constrained_layout=True)
-        fig.patch.set_facecolor(DARK_BG)
-
         ext = [0, DOMAIN_DI_Z, 0, DOMAIN_DI_Y]
         toci = step_to_omegaci(step)
 
         # ── Bz / B0 ──────────────────────────────────────────────────────────
+        fig, ax1 = plt.subplots(figsize=(8.2, 6.2))
+        fig.patch.set_facecolor(DARK_BG)
         ax1.set_facecolor(PANEL_BG)
         bz_p5  = float(np.percentile(bz2d, 5))
         bz_p95 = float(np.percentile(bz2d, 95))
@@ -97,46 +106,49 @@ class MirrorPhysicsPlotter:
         vmax_b = min(2.5, bz_p95 + 0.1)
         im1 = ax1.imshow(bz2d.T, origin="lower", cmap="viridis",
                          vmin=vmin_b, vmax=vmax_b, aspect="auto", extent=ext)
-        ax1.set_title(r"$B_z / B_0$  (Mirror Holes)", fontsize=13,
-                      color=TEXT_CLR, pad=8)
-        ax1.set_xlabel(r"Z  [$d_i$]", fontsize=11, color=TEXT_CLR)
-        ax1.set_ylabel(r"Y  [$d_i$]", fontsize=11, color=TEXT_CLR)
+        ax1.set_xlabel(r"Z  [$d_i$]", fontsize=15, color=TEXT_CLR)
+        ax1.set_ylabel(r"Y  [$d_i$]", fontsize=15, color=TEXT_CLR)
         cb1 = fig.colorbar(im1, ax=ax1, pad=0.01, aspect=30)
-        cb1.set_label(r"$B_z / B_0$", fontsize=10, color=TEXT_CLR)
-        cb1.ax.yaxis.set_tick_params(color=TEXT_CLR, labelsize=8)
+        cb1.set_label(r"$B_z / B_0$", fontsize=14, color=TEXT_CLR)
+        cb1.ax.yaxis.set_tick_params(color=TEXT_CLR, labelsize=13)
         plt.setp(cb1.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
+        ax1.tick_params(colors=TEXT_CLR, direction="in", which="both",
+                        top=True, right=True)
+        for sp in ax1.spines.values():
+            sp.set_edgecolor(GRID_CLR)
+        ax1.set_title(
+            rf"$B_z/B_0$ mirror structures - step {step}, $t \approx {toci:.2f}\,\Omega_{{ci}}^{{-1}}$",
+            fontsize=16, color=TEXT_CLR, pad=8,
+        )
+        outname = self.output_dir / f"mirror_bz_step{step:06d}.png"
+        fig.savefig(outname, dpi=200, bbox_inches="tight", facecolor=DARK_BG)
+        plt.close(fig)
+        print(f"  Saved: {outname}")
 
         # ── Jx ────────────────────────────────────────────────────────────────
+        fig, ax2 = plt.subplots(figsize=(8.2, 6.2))
+        fig.patch.set_facecolor(DARK_BG)
         ax2.set_facecolor(PANEL_BG)
         jlim = float(np.percentile(np.abs(jx2d), 99))
         jlim = jlim if jlim > 0 else 1e-5
         im2 = ax2.imshow(jx2d.T, origin="lower", cmap="seismic",
                          vmin=-jlim, vmax=jlim, aspect="auto", extent=ext)
-        ax2.set_title(r"$J_x$  (Current Density)", fontsize=13,
-                      color=TEXT_CLR, pad=8)
-        ax2.set_xlabel(r"Z  [$d_i$]", fontsize=11, color=TEXT_CLR)
-        ax2.set_ylabel(r"Y  [$d_i$]", fontsize=11, color=TEXT_CLR)
+        ax2.set_xlabel(r"Z  [$d_i$]", fontsize=15, color=TEXT_CLR)
+        ax2.set_ylabel(r"Y  [$d_i$]", fontsize=15, color=TEXT_CLR)
         cb2 = fig.colorbar(im2, ax=ax2, pad=0.01, aspect=30)
-        cb2.set_label(r"$J_x$", fontsize=10, color=TEXT_CLR)
-        cb2.ax.yaxis.set_tick_params(color=TEXT_CLR, labelsize=8)
+        cb2.set_label(r"$J_x$", fontsize=14, color=TEXT_CLR)
+        cb2.ax.yaxis.set_tick_params(color=TEXT_CLR, labelsize=13)
         plt.setp(cb2.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
-
-        for ax in (ax1, ax2):
-            ax.tick_params(colors=TEXT_CLR, direction="in", which="both",
-                           top=True, right=True)
-            for sp in ax.spines.values():
-                sp.set_edgecolor(GRID_CLR)
-
-        fig.suptitle(
-            rf"Mirror structures  |  step {step}  |  "
-            rf"$t \approx {toci:.2f}\,\Omega_{{ci}}^{{-1}}$"
-            "\n"
-            rf"Mirror Maxwellian  ($m_i/m_e = {int(MASS_RATIO)}$)",
-            fontsize=14, fontweight="bold", color=TEXT_CLR, y=1.02,
+        ax2.tick_params(colors=TEXT_CLR, direction="in", which="both",
+                        top=True, right=True)
+        for sp in ax2.spines.values():
+            sp.set_edgecolor(GRID_CLR)
+        ax2.set_title(
+            rf"$J_x$ current density - step {step}, $t \approx {toci:.2f}\,\Omega_{{ci}}^{{-1}}$",
+            fontsize=16, color=TEXT_CLR, pad=8,
         )
-
-        outname = self.output_dir / f"mirror_physics_step{step:06d}.png"
-        fig.savefig(outname, dpi=180, bbox_inches="tight", facecolor=DARK_BG)
+        outname = self.output_dir / f"mirror_jx_step{step:06d}.png"
+        fig.savefig(outname, dpi=200, bbox_inches="tight", facecolor=DARK_BG)
         plt.close(fig)
         print(f"  Saved: {outname}")
 

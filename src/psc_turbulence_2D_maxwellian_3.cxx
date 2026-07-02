@@ -114,7 +114,7 @@ void setupParameters()
 
   // General Parameters
   g.omegape_Omegae = 2.;
-  g.vA_over_c = 0.05;//(1/g.omegape_Omegae)/g.mass_ratio; //This is to make sure there are no relativistic signals
+  g.vA_over_c = 0.08;//(1/g.omegape_Omegae)/g.mass_ratio; //This is to make sure there are no relativistic signals
   g.beta_e_par = 1.0;
   g.beta_i_par = 1.0; //considering hotter ions than electrons
   g.Ti_perp_over_Ti_par = 1.0;

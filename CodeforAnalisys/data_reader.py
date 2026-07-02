@@ -82,6 +82,15 @@ class PICDataReader:
         """Generate the equivalent HDF5/BP patterns used by PSC."""
         alternatives = [pattern]
         if pattern.endswith(".h5"):
+            path = Path(pattern)
+            if (
+                "_p" not in path.name
+                and (
+                    path.name.startswith("pfd.")
+                    or path.name.startswith("pfd_moments.")
+                )
+            ):
+                alternatives.append(str(path.with_name(path.stem + "_p*.h5")))
             bp_pattern = pattern[:-3] + ".bp"
             alternatives.append(bp_pattern)
             alternatives.append(re.sub(r"_p\*\.bp$", ".bp", bp_pattern))

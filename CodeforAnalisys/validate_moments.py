@@ -28,6 +28,16 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch
 
+plt.rcParams.update({
+    "font.size": 15,
+    "axes.labelsize": 18,
+    "axes.titlesize": 19,
+    "xtick.labelsize": 15,
+    "ytick.labelsize": 15,
+    "legend.fontsize": 14,
+    "figure.titlesize": 20,
+})
+
 # ═══════════════════════════════════════════════════════════════════════
 # 1. EXPECTED VALUES — from psc_units (single source of truth)
 # ═══════════════════════════════════════════════════════════════════════
@@ -394,18 +404,18 @@ def plot_validation_summary(ion_res, elec_res, outdir, run_name=""):
     fig.text(0.5, 0.97,
              f'Validation Report — PSC  (mi/me={int(MASS_RATIO)}, '
              f'kappa={KAPPA}, beta_i||={BETA_I_PAR:.1f}, T_perp/T_par={TI_PERP_OVER_TI_PAR})',
-             ha='center', va='top', fontsize=14, fontweight='bold', color='black')
+             ha='center', va='top', fontsize=16, fontweight='bold', color='black')
     fig.text(0.5, 0.93,
              f'd_i={DI:.1f} cells  |  w_ci={OMEGA_CI:.5f} rad/t  |  '
              f'vA={VA:.3f}  |  Grid: {N_GRID_Y/DI:.0f}x{N_GRID_Z/DI:.0f} d_i',
-             ha='center', va='top', fontsize=10, color='#444444')
+             ha='center', va='top', fontsize=12.5, color='#444444')
 
     col_x = [0.01, 0.26, 0.40, 0.51, 0.63, 0.74, 0.86]
     hdrs  = ['Parameter','Expected','Ions','Err% (i)','Electrons','Err% (e)','Status']
     hy    = 0.88
     for cx, h in zip(col_x, hdrs):
         fig.text(cx, hy, h, transform=fig.transFigure,
-                 fontsize=10.5, fontweight='bold', color='#111111', va='top')
+                 fontsize=13, fontweight='bold', color='#111111', va='top')
     fig.add_artist(plt.Line2D([0.01,0.99],[hy-0.026, hy-0.026],
                                transform=fig.transFigure, color='#cccccc', lw=1.0))
 
@@ -453,13 +463,13 @@ def plot_validation_summary(ion_res, elec_res, outdir, run_name=""):
         ]
         for cx, txt, col in cells:
             fig.text(cx, y, txt, transform=fig.transFigure,
-                     fontsize=9.5, color=col, va='center')
+                     fontsize=12, color=col, va='center')
 
     for xl, col, lbl in [(0.01,'#27ae60','PASS (<2%)'),
                           (0.18,'#e67e22','WARN (2–6%)'),
                           (0.35,'#c0392b','FAIL (>6%)')]:
         fig.text(xl, 0.025, lbl, transform=fig.transFigure,
-                 fontsize=9.5, color=col, fontweight='bold', va='bottom')
+                 fontsize=12, color=col, fontweight='bold', va='bottom')
 
     clean_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", run_name).strip("_")
     prefix = f"{clean_name}_" if clean_name else ""
