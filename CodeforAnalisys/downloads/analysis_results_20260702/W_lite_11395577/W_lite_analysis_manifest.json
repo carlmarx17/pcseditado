@@ -1,12 +1,12 @@
 {
-  "generated_utc": "2026-07-02T06:38:41.892891+00:00",
+  "generated_utc": "2026-07-02T21:45:17.797989+00:00",
   "case": "W_lite",
   "profile": "W_lite",
   "label": "Whistler Lite",
   "instability": "whistler",
   "driven_species": "electron",
   "input_directory": "/cosma7/data/dp433/dc-mart18/lite_runs/W_lite_11395577",
-  "output_directory": "/cosma7/data/dp433/dc-mart18/lite_runs/full_lite_analysis_11552839/W_lite_11395577",
+  "output_directory": "/cosma7/data/dp433/dc-mart18/analysis_results_20260702/W_lite_11395577",
   "expected_patterns": {
     "fields": "pfd.<step>_p<rank>.h5",
     "moments": "pfd_moments.<step>_p<rank>.h5",

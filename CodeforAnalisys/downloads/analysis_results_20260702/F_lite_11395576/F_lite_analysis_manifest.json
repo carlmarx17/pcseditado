@@ -1,12 +1,12 @@
 {
-  "generated_utc": "2026-07-02T05:48:27.915627+00:00",
+  "generated_utc": "2026-07-02T20:41:17.859478+00:00",
   "case": "F_lite",
   "profile": "F_lite",
   "label": "Firehose Lite",
   "instability": "firehose",
   "driven_species": "ion",
   "input_directory": "/cosma7/data/dp433/dc-mart18/lite_runs/F_lite_11395576",
-  "output_directory": "/cosma7/data/dp433/dc-mart18/lite_runs/full_lite_analysis_11552839/F_lite_11395576",
+  "output_directory": "/cosma7/data/dp433/dc-mart18/analysis_results_20260702/F_lite_11395576",
   "expected_patterns": {
     "fields": "pfd.<step>_p<rank>.h5",
     "moments": "pfd_moments.<step>_p<rank>.h5",

@@ -60,11 +60,11 @@
 #endif
 
 #ifndef PSC_NP_Y_DEFAULT
-#define PSC_NP_Y_DEFAULT 64
+#define PSC_NP_Y_DEFAULT 32
 #endif
 
 #ifndef PSC_NP_Z_DEFAULT
-#define PSC_NP_Z_DEFAULT 16
+#define PSC_NP_Z_DEFAULT 32
 #endif
 
 #ifndef PSC_NICELL_DEFAULT
@@ -88,7 +88,7 @@
 #endif
 
 #ifndef PSC_ENERGIES_EVERY_DEFAULT
-#define PSC_ENERGIES_EVERY_DEFAULT 5000
+#define PSC_ENERGIES_EVERY_DEFAULT 0
 #endif
 
 // ======================================================================

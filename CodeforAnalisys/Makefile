@@ -16,7 +16,7 @@ RUN_NAME ?= $(if $(CASE),$(CASE),$(notdir $(abspath $(DATA_DIR))))
 RESULTS_ROOT ?= ../analysis_results
 OUTPUT_DIR ?= $(RESULTS_ROOT)/$(RUN_NAME)
 
-B0_REF ?= 0.05
+B0_REF ?= 0.08
 PSC_PROFILE ?= $(CASE)
 PARTICLE_BASENAME ?= $(if $(CASE),prt_$(CASE),)
 
@@ -175,13 +175,17 @@ clean:
 
 help:
 	@echo "Usage:"
-	@echo "  make analysis DATA_DIR=../path/to/F_M_bM CASE=F_M_bM"
-	@echo "  make F_M_bM DATA_DIR=../path/to/F_M_bM"
-	@echo "  make brazil DATA_DIR=../path/to/F_M_bM CASE=F_M_bM"
-	@echo "  make particles DATA_DIR=../path/to/F_M_bM CASE=F_M_bM"
+	@echo "  make analysis DATA_DIR=../path/to/run CASE=mirror_bimaxwellian_moderate"
+	@echo "  make brazil DATA_DIR=../path/to/run CASE=mirror_bimaxwellian_moderate"
+	@echo "  make particles DATA_DIR=../path/to/run CASE=mirror_bikappa3"
+	@echo "  make F_M_bM DATA_DIR=../path/to/F_M_bM      # legacy profile"
 	@echo "  make compare-physics COMPARE_CASES='maxwellian=../analysis_results/mirror_maxwellian/09_physical_diagnostics kappa=../analysis_results/mirror_kappa/09_physical_diagnostics'"
 	@echo ""
-	@echo "Cases: F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM W_S_bM W_M_bM W_W_bM"
+	@echo "Current cases: mirror_bimaxwellian_strong mirror_bimaxwellian_moderate mirror_bimaxwellian_weak"
+	@echo "               firehose_bimaxwellian_strong firehose_bimaxwellian_moderate firehose_bimaxwellian_weak"
+	@echo "               whistler_bimaxwellian_strong whistler_bimaxwellian_moderate whistler_bimaxwellian_weak"
+	@echo "               mirror_bikappa3 mirror_bikappa5 firehose_bikappa3 firehose_bikappa5"
+	@echo "Legacy cases:  F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM W_S_bM W_M_bM W_W_bM"
 	@echo "Main targets: analysis brazil particles fields spectral diamagnetic heatflux validate physics compare-physics"
 	@echo "Utility target: show-inputs"
 	@echo "Results default to ../analysis_results/<RUN_NAME>/"

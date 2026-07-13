@@ -1,12 +1,12 @@
 {
-  "generated_utc": "2026-07-02T06:13:35.891817+00:00",
+  "generated_utc": "2026-07-02T21:13:10.873728+00:00",
   "case": "M_lite",
   "profile": "M_lite",
   "label": "Mirror Lite",
   "instability": "mirror",
   "driven_species": "ion",
   "input_directory": "/cosma7/data/dp433/dc-mart18/lite_runs/M_lite_11395575",
-  "output_directory": "/cosma7/data/dp433/dc-mart18/lite_runs/full_lite_analysis_11552839/M_lite_11395575",
+  "output_directory": "/cosma7/data/dp433/dc-mart18/analysis_results_20260702/M_lite_11395575",
   "expected_patterns": {
     "fields": "pfd.<step>_p<rank>.h5",
     "moments": "pfd_moments.<step>_p<rank>.h5",
