@@ -55,8 +55,13 @@
 #define PSC_DOMAIN_DI 20.0
 #endif
 
+// NGRID=576 da dx/d_i=0.0347 (~28.8 celdas/d_i) y dx/lambda_De~3.78 con
+// mass_ratio=200: resuelve la escala ionica sin sub-resolver Debye mas alla
+// del limite citado en la literatura PIC (~3.4-5). Acordado tras revisar
+// costo computacional (~8.4x mas barato que 1024/1500) vs riesgo de
+// calentamiento numerico de grilla finita.
 #ifndef PSC_NGRID_DEFAULT
-#define PSC_NGRID_DEFAULT 1024
+#define PSC_NGRID_DEFAULT 576
 #endif
 
 #ifndef PSC_NP_Y_DEFAULT
@@ -68,7 +73,7 @@
 #endif
 
 #ifndef PSC_NICELL_DEFAULT
-#define PSC_NICELL_DEFAULT 1500
+#define PSC_NICELL_DEFAULT 1000
 #endif
 
 #ifndef PSC_BALANCE_INTERVAL

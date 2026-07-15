@@ -18,13 +18,14 @@ RUN_ROOT="$BASE/anisotropy_adios2"
 PSC_TARGET="${PSC_TARGET:-psc_mirror_bimaxwellian_moderate}"
 RUN_DIR="$RUN_ROOT/${PSC_TARGET}_${SLURM_JOB_ID}"
 
-PSC_NGRID="${PSC_NGRID:-1024}"
+PSC_NGRID="${PSC_NGRID:-576}"
+PSC_NICELL="${PSC_NICELL:-1000}"
 PSC_NP_Y="${PSC_NP_Y:-32}"
 PSC_NP_Z="${PSC_NP_Z:-32}"
 PSC_CHECKPOINT_EVERY="${PSC_CHECKPOINT_EVERY:-150000}"
 PSC_ENERGIES_EVERY="${PSC_ENERGIES_EVERY:-0}"
 PSC_LAUNCHER="${PSC_LAUNCHER:-mpirun}"
-export PSC_NGRID PSC_NP_Y PSC_NP_Z PSC_CHECKPOINT_EVERY PSC_ENERGIES_EVERY PSC_LAUNCHER
+export PSC_NGRID PSC_NICELL PSC_NP_Y PSC_NP_Z PSC_CHECKPOINT_EVERY PSC_ENERGIES_EVERY PSC_LAUNCHER
 
 # shellcheck source=src/cosma_adios2_env.sh
 source "$REPO/src/cosma_adios2_env.sh"
@@ -45,6 +46,7 @@ echo "job=$SLURM_JOB_ID"
 echo "nodes=$SLURM_JOB_NODELIST"
 echo "ntasks=$SLURM_NTASKS"
 echo "ngrid=$PSC_NGRID"
+echo "nicell=$PSC_NICELL"
 echo "np=1x${PSC_NP_Y}x${PSC_NP_Z}"
 echo "energies_every=$PSC_ENERGIES_EVERY"
 echo "run_dir=$RUN_DIR"

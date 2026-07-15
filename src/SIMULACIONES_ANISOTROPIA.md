@@ -39,9 +39,9 @@ misma malla, salidas e intervalos, salvo que se sobreescriban por entorno.
 | `lambda0` | 20 |
 | Densidad inicial | 1.0 |
 | Dominio | `20 d_i × 20 d_i` |
-| Grilla | `1024×1024` |
-| Resolución | `51.2 celdas/d_i` (`dx = dz = 0.01953125 d_i`) |
-| Partículas por celda | 1500 (defecto) |
+| Grilla | `576×576` |
+| Resolución | `28.8 celdas/d_i` (`dx = dz = 0.034722 d_i` ≈ `0.491 d_e`, `dx/λ_De ≈ 3.78`) |
+| Partículas por celda | 1000 (defecto) |
 | Pasos máximos | Dependen de la saturación (`PSC_NMAX`, defecto 1,200,000) |
 | Fronteras | Periódicas |
 | Campos/momentos | cada 500 pasos |
@@ -65,9 +65,9 @@ Criterio: `beta_i_parallel * (A_i - 1) > 1`
 
 | Ejecutable | Archivo | Régimen | beta_i_par | A_i | beta_e_par | A_e | Grilla |
 |---|---|---|---:|---:|---:|---:|---:|
-| `psc_mirror_bimaxwellian_strong` | `psc_mirror_bimaxwellian_strong.cxx` | Strong | 5.0 | 3.0 | 1.0 | 1.0 | 1024×1024 |
-| `psc_mirror_bimaxwellian_moderate` | `psc_mirror_bimaxwellian_moderate.cxx` | Moderate | 5.0 | 2.0 | 1.0 | 1.0 | 1024×1024 |
-| `psc_mirror_bimaxwellian_weak` | `psc_mirror_bimaxwellian_weak.cxx` | Weak | 6.0 | 1.5 | 1.0 | 1.0 | 1024×1024 |
+| `psc_mirror_bimaxwellian_strong` | `psc_mirror_bimaxwellian_strong.cxx` | Strong | 5.0 | 3.0 | 1.0 | 1.0 | 576×576 |
+| `psc_mirror_bimaxwellian_moderate` | `psc_mirror_bimaxwellian_moderate.cxx` | Moderate | 5.0 | 2.0 | 1.0 | 1.0 | 576×576 |
+| `psc_mirror_bimaxwellian_weak` | `psc_mirror_bimaxwellian_weak.cxx` | Weak | 6.0 | 1.5 | 1.0 | 1.0 | 576×576 |
 
 ## Firehose
 
@@ -76,9 +76,9 @@ Criterio: `beta_i_parallel * (1 - A_i) > 2`
 
 | Ejecutable | Archivo | Régimen | beta_i_par | A_i | beta_e_par | A_e | Grilla |
 |---|---|---|---:|---:|---:|---:|---:|
-| `psc_firehose_bimaxwellian_strong` | `psc_firehose_bimaxwellian_strong.cxx` | Strong | 10.0 | 0.1 | 1.0 | 1.0 | 1024×1024 |
-| `psc_firehose_bimaxwellian_moderate` | `psc_firehose_bimaxwellian_moderate.cxx` | Moderate | 6.0 | 0.3 | 1.0 | 1.0 | 1024×1024 |
-| `psc_firehose_bimaxwellian_weak` | `psc_firehose_bimaxwellian_weak.cxx` | Weak | 3.0 | 0.6 | 1.0 | 1.0 | 1024×1024 |
+| `psc_firehose_bimaxwellian_strong` | `psc_firehose_bimaxwellian_strong.cxx` | Strong | 10.0 | 0.1 | 1.0 | 1.0 | 576×576 |
+| `psc_firehose_bimaxwellian_moderate` | `psc_firehose_bimaxwellian_moderate.cxx` | Moderate | 6.0 | 0.3 | 1.0 | 1.0 | 576×576 |
+| `psc_firehose_bimaxwellian_weak` | `psc_firehose_bimaxwellian_weak.cxx` | Weak | 3.0 | 0.6 | 1.0 | 1.0 | 576×576 |
 
 ## Whistler
 
@@ -87,18 +87,18 @@ Criterio: `A_e > 1 + 0.21 / beta_e_parallel^0.6`
 
 | Ejecutable | Archivo | Régimen | beta_i_par | A_i | beta_e_par | A_e | Grilla |
 |---|---|---|---:|---:|---:|---:|---:|
-| `psc_whistler_bimaxwellian_strong` | `psc_whistler_bimaxwellian_strong.cxx` | Strong | 1.0 | 1.0 | 0.5 | 3.0 | 1024×1024 |
-| `psc_whistler_bimaxwellian_moderate` | `psc_whistler_bimaxwellian_moderate.cxx` | Moderate | 1.0 | 1.0 | 0.5 | 2.0 | 1024×1024 |
-| `psc_whistler_bimaxwellian_weak` | `psc_whistler_bimaxwellian_weak.cxx` | Weak | 1.0 | 1.0 | 0.5 | 1.5 | 1024×1024 |
+| `psc_whistler_bimaxwellian_strong` | `psc_whistler_bimaxwellian_strong.cxx` | Strong | 1.0 | 1.0 | 0.5 | 3.0 | 576×576 |
+| `psc_whistler_bimaxwellian_moderate` | `psc_whistler_bimaxwellian_moderate.cxx` | Moderate | 1.0 | 1.0 | 0.5 | 2.0 | 576×576 |
+| `psc_whistler_bimaxwellian_weak` | `psc_whistler_bimaxwellian_weak.cxx` | Weak | 1.0 | 1.0 | 0.5 | 1.5 | 576×576 |
 
 ## Bi-Kappa
 
 | Ejecutable | Archivo | κ | beta_i_par | A_i | beta_e_par | A_e | Grilla |
 |---|---|---|---:|---:|---:|---:|---:|
-| `psc_mirror_bikappa3` | `psc_mirror_bikappa3.cxx` | 3 | 5.0 | 3.0 | 1.0 | 1.0 | 1024×1024 |
-| `psc_mirror_bikappa5` | `psc_mirror_bikappa5.cxx` | 5 | 5.0 | 3.0 | 1.0 | 1.0 | 1024×1024 |
-| `psc_firehose_bikappa3` | `psc_firehose_bikappa3.cxx` | 3 | 10.0 | 0.1 | 1.0 | 1.0 | 1024×1024 |
-| `psc_firehose_bikappa5` | `psc_firehose_bikappa5.cxx` | 5 | 10.0 | 0.1 | 1.0 | 1.0 | 1024×1024 |
+| `psc_mirror_bikappa3` | `psc_mirror_bikappa3.cxx` | 3 | 5.0 | 3.0 | 1.0 | 1.0 | 576×576 |
+| `psc_mirror_bikappa5` | `psc_mirror_bikappa5.cxx` | 5 | 5.0 | 3.0 | 1.0 | 1.0 | 576×576 |
+| `psc_firehose_bikappa3` | `psc_firehose_bikappa3.cxx` | 3 | 10.0 | 0.1 | 1.0 | 1.0 | 576×576 |
+| `psc_firehose_bikappa5` | `psc_firehose_bikappa5.cxx` | 5 | 10.0 | 0.1 | 1.0 | 1.0 | 576×576 |
 
 ## Salidas
 
