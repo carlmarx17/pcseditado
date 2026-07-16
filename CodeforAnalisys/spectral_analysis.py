@@ -42,7 +42,7 @@ except ImportError:  # NumPy fallback keeps spectra available without SciPy.
         )()
 
 from data_reader import PICDataReader
-from psc_units import DX_DI, step_to_omegaci
+from psc_units import DX_DI, DI, DOMAIN_DI, RHO_I, step_to_omegaci
 
 warnings.filterwarnings("ignore")
 plt.switch_backend("Agg")
@@ -92,6 +92,38 @@ def _fit_growth_rate(time: np.ndarray, amplitude: np.ndarray) -> dict:
         "rvalue": rvalue,
         "n_points": int(len(t[fit_slice])),
     }
+
+
+def report_box_resolution(k_ratio_range: tuple[float, float] = (0.3, 0.5)) -> str:
+    """L_box/rho_i for the active PSC_PROFILE, and whether the box's longest
+    mode (k_min) is long enough to contain the fastest-growing mirror
+    wavelength (k*rho_i ~ 0.3-0.5, Hellinger et al. 2006). A box with only a
+    few rho_i per side cannot fit that wavelength even once."""
+    rho_i_di = RHO_I / DI
+    l_over_rho = DOMAIN_DI / rho_i_di
+    k_min_di = 2.0 * np.pi / DOMAIN_DI
+    k_min_rho = k_min_di * rho_i_di
+    lo, hi = k_ratio_range
+    lines = [
+        f"L_box = {DOMAIN_DI:.1f} d_i = {l_over_rho:.2f} rho_i "
+        f"(rho_i = {rho_i_di:.3f} d_i)",
+        f"Box fundamental mode: k_min d_i = {k_min_di:.3f}, "
+        f"k_min rho_i = {k_min_rho:.3f}",
+    ]
+    if l_over_rho < 20.0:
+        lines.append(
+            f"[WARN] L_box/rho_i = {l_over_rho:.1f} is below the ~20-40 rho_i "
+            "per side usually needed to resolve mirror; the most unstable "
+            f"wavelength (k rho_i ~ {lo}-{hi}) needs L_box >= "
+            f"{2.0 * np.pi / hi:.1f} rho_i just to fit once."
+        )
+    if k_min_rho > hi:
+        lines.append(
+            f"[WARN] k_min rho_i = {k_min_rho:.3f} is already above the "
+            f"peak-growth range (k rho_i ~ {lo}-{hi}); the box may be too "
+            "small to contain the fastest-growing mirror mode at all."
+        )
+    return "\n".join(lines)
 
 
 class SpectralAnalyzer:
@@ -283,12 +315,16 @@ class SpectralAnalyzer:
         return k_centers[valid], e_k[valid]
 
     @staticmethod
-    def _radial_bin_edges(k_mag: np.ndarray, num_bins: int) -> np.ndarray:
-        """Fixed bin edges, computed once so every snapshot bins onto the same k axis."""
+    def _radial_bin_edges(k_mag: np.ndarray, num_bins: int, k_max_di: float | None = None) -> np.ndarray:
+        """Fixed, log-spaced bin edges computed once so every snapshot bins onto
+        the same k axis; capped at ``k_max_di`` to keep resolution on the
+        physically relevant scales instead of wasting bins on grid noise."""
         positive_k = k_mag[k_mag > 0]
         k_min = float(np.min(positive_k))
         k_max = float(np.max(k_mag))
-        return np.linspace(k_min, k_max, num_bins + 1)
+        if k_max_di is not None:
+            k_max = min(k_max, k_max_di)
+        return np.geomspace(k_min, k_max, num_bins + 1)
 
     @staticmethod
     def _bin_radial_sum(values: np.ndarray, k_mag: np.ndarray, bin_edges: np.ndarray) -> np.ndarray:
@@ -387,21 +423,28 @@ class SpectralAnalyzer:
         plane: str = "auto",
         slice_idx: int = None,
         steps_to_process: list[int] = None,
+        k_max_di: float = 2.0,
     ) -> int:
         """Mode-resolved growth rate gamma(k): accumulate E(k, Omega_ci t) across
         every snapshot and fit a log-linear growth rate per k-shell, instead of
         rendering one static P(k) image per snapshot."""
         print("Starting spectral growth-rate analysis...")
+        print(report_box_resolution())
         b_files = PICDataReader.find_files(fields_pattern)
         steps = sorted(b_files.keys())
         if steps_to_process:
             steps = [step for step in steps if step in steps_to_process]
 
+        # The first snapshot's "fluctuation" is delta = field - mean(field) on a
+        # single, barely-relaxed quiet-start snapshot; it is not a meaningful
+        # sample of the growing mode and would bias the t=0 end of every fit.
+        steps = steps[1:]
+
         if len(steps) < 4:
-            print(f"Need at least four snapshots for a growth-rate fit; found {len(steps)}.")
+            print(f"Need at least four snapshots (after dropping the first) for a growth-rate fit; found {len(steps)}.")
             return 0
 
-        print(f"Found {len(steps)} snapshots to process.")
+        print(f"Found {len(steps)} snapshots to process (first snapshot dropped).")
         times = np.array([step_to_omegaci(step) for step in steps], dtype=float)
         perpendicular_axes = [axis for axis in ("x", "y", "z") if axis != self.parallel_axis]
 
@@ -422,8 +465,15 @@ class SpectralAnalyzer:
             k_mag = data["k_grids"]["k_mag"]
             if bin_edges is None:
                 resolved_plane = data["plane"]
+                if self.parallel_axis == data["normal_axis"]:
+                    print(
+                        f"[WARN] parallel_axis='{self.parallel_axis}' is the plane's "
+                        f"collapsed axis ('{data['normal_axis']}'): B0 would be "
+                        f"perpendicular to the analyzed {resolved_plane} plane, so no "
+                        "oblique/mirror mode can be represented here by construction."
+                    )
                 num_bins = max(int(min(k_mag.shape) // 2), 10)
-                bin_edges = self._radial_bin_edges(k_mag, num_bins)
+                bin_edges = self._radial_bin_edges(k_mag, num_bins, k_max_di=k_max_di)
 
             energy_perp_rows.append(
                 self._bin_radial_sum(data["spectra"]["perp"]["psd_2d"], k_mag, bin_edges)
@@ -447,7 +497,7 @@ class SpectralAnalyzer:
             return 0
 
         valid_times = np.asarray(valid_times, dtype=float)
-        k_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+        k_centers = np.sqrt(bin_edges[:-1] * bin_edges[1:])  # geometric center of log-spaced bins
         energy_perp = np.asarray(energy_perp_rows).T  # (n_k, n_t)
         energy_par = np.asarray(energy_par_rows).T
         helicity_den = np.asarray(helicity_den_rows).T
@@ -550,6 +600,7 @@ class SpectralAnalyzer:
         mesh = ax.pcolormesh(times, k_centers, log_energy, shading="auto", cmap="inferno")
         cb = fig.colorbar(mesh, ax=ax)
         cb.set_label(r"$\log_{10} E(k,t)$")
+        ax.set_yscale("log")
         ax.set_xlabel(r"$\Omega_{ci} t$")
         ax.set_ylabel(r"$k\,d_i$")
         ax.set_title(f"Mode energy evolution E(k,t) — {component} ({plane})")
@@ -566,11 +617,12 @@ class SpectralAnalyzer:
         fig, ax = plt.subplots(figsize=(9, 6))
         ax.axhline(0.0, color="0.6", lw=1.0)
         ax.plot(k, gamma_perp, "o-", markersize=4, label=r"$\gamma_\perp(k)$ (transverse, EMIC/firehose-like)")
-        ax.plot(k, gamma_par, "s-", markersize=4, label=r"$\gamma_\parallel(k)$ (compressive, mirror-like)")
+        ax.plot(k, gamma_par, "s-", markersize=4, label=r"$\gamma_\parallel(k)$ (compressive, mirror — primary indicator)")
+        ax.set_xscale("log")
         ax.set_xlabel(r"$k\,d_i$")
         ax.set_ylabel(r"$\gamma\ [\Omega_{ci}]$")
         ax.set_title(f"Mode-resolved growth rate ({plane})")
-        ax.grid(alpha=0.3)
+        ax.grid(alpha=0.3, which="both")
         ax.legend()
         out_file = self.outdir / f"growth_rate_vs_k_{plane}.png"
         fig.savefig(out_file, dpi=220, bbox_inches="tight")
@@ -597,11 +649,12 @@ class SpectralAnalyzer:
         fig, ax = plt.subplots(figsize=(9, 5.2))
         ax.axhline(0.0, color="0.6", lw=1.0)
         ax.plot(k, sigma_m, "o-", markersize=4, color="teal")
+        ax.set_xscale("log")
         ax.set_ylim(-1.05, 1.05)
         ax.set_xlabel(r"$k\,d_i$")
         ax.set_ylabel(r"$\sigma_m(k)$")
         ax.set_title(f"Reduced magnetic helicity ({plane})")
-        ax.grid(alpha=0.3)
+        ax.grid(alpha=0.3, which="both")
         out_file = self.outdir / f"helicity_vs_k_{plane}.png"
         fig.savefig(out_file, dpi=220, bbox_inches="tight")
         plt.close(fig)
@@ -618,6 +671,7 @@ if __name__ == "__main__":
     parser.add_argument("--dy", type=float, default=DX_DI, help="Grid spacing along y in d_i.")
     parser.add_argument("--dz", type=float, default=DX_DI, help="Grid spacing along z in d_i.")
     parser.add_argument("--parallel-axis", type=str, default="z", choices=["x", "y", "z"], help="Direction of the guide field / parallel axis.")
+    parser.add_argument("--k-max-di", type=float, default=2.0, help="Upper bound k*d_i for the gamma(k) reconstruction; higher bins are grid noise, not physical modes.")
     parser.add_argument("--steps", nargs="*", type=int, default=None, help="Specific steps to process.")
     parser.add_argument("--outdir", type=str, default="spectral_plots", help="Directory for spectral plots and CSV outputs.")
     args = parser.parse_args()
@@ -635,6 +689,7 @@ if __name__ == "__main__":
         plane=args.plane,
         slice_idx=args.slice,
         steps_to_process=args.steps,
+        k_max_di=args.k_max_di,
     )
     if processed == 0:
         raise SystemExit(1)
