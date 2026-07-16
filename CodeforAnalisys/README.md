@@ -40,7 +40,14 @@ make spectral DATA_DIR=/ruta/a/run CASE=F_S_bM_local
 
 El script detecta automáticamente el plano físico no degenerado (`xy`, `xz`
 o `yz`) y toma el espaciado en unidades de \(d_i\) del perfil seleccionado
-mediante `PSC_PROFILE`. El mismo target genera
+mediante `PSC_PROFILE`. En vez de un espectro 1D/2D estático por snapshot,
+`spectral_analysis.py` acumula \(E(k,\Omega_{ci}t)\) sobre todos los
+snapshots y ajusta un \(\gamma(k)\) log-lineal por cada capa de \(k\)
+(`growth_rate_by_k_<plano>.csv`, `growth_rate_vs_k_<plano>.png`,
+`energy_kt_{perp,parallel}_<plano>.png`), además de la helicidad magnética
+reducida \(\sigma_m(k)\) y la compresibilidad \(\delta B_\parallel^2/(\delta
+B_\parallel^2+\delta B_\perp^2)\) — la técnica de discriminación mirror /
+EMIC / firehose del Bloque 1.3-1.4. El mismo target genera además
 `dispersion_density_<plano>_perp_absolute.png`, un mapa de densidad modal
 \(\omega/\Omega_{ci}\) frente a \(|v_{\rm ph}|/v_A\), y superpone con puntos
 negros las crestas de mayor potencia.
@@ -94,7 +101,7 @@ Subcarpetas principales:
 01_anisotropy/     evolución de A, beta y trayectoria Brazil
 02_fields/         mapas de campos y fluctuaciones
 03_particles/      VDF y momentos de partículas
-04_spectra/        espectros y modos dominantes
+04_spectra/        gamma(k) resuelto por modo, mapa E(k,t), helicidad y compresibilidad
 05_diamagnetic/    corrientes diamagnéticas
 06_heat_flux/      flujo de calor y regiones espaciales
 07_mirror_structures/ depresiones locales de |B| para mirror
@@ -478,6 +485,37 @@ $$
 7. \(k_\parallel,k_\perp\): componentes respecto al campo guía, tomado en
    \(z\).
 
+#### 7.4. Tasa de crecimiento resuelta por modo, helicidad y compresibilidad
+
+En vez de un \(E(k)\) estático por snapshot, se acumula \(E(k,t)\) sobre toda
+la corrida y se ajusta un \(\gamma(k)\) log-lineal en la fase de crecimiento
+de cada anillo de \(k\), igual que en la fig. \(\delta B(t,k)\) de Hellinger
+et al. (2018):
+
+$$
+E(k,t)\propto e^{2\gamma(k)t},
+\qquad
+\gamma(k)=\tfrac12\,\frac{d}{dt}\ln E(k,t).
+$$
+
+La helicidad magnética reducida y la compresibilidad usan las dos componentes
+perpendiculares al campo guía (\(\perp_1,\perp_2\)) y la paralela:
+
+$$
+\sigma_m(k)=\frac{\operatorname{Im}\big(\widetilde B_{\perp_1}^*(k)\,
+\widetilde B_{\perp_2}(k)\big)}{|\widetilde B_{\perp_1}(k)|^2+|\widetilde
+B_{\perp_2}(k)|^2},
+\qquad
+\text{compresibilidad}(t)=\frac{E_\parallel(t)}{E_\parallel(t)+E_\perp(t)}.
+$$
+
+\(\gamma_\perp(k)>0\) con \(\gamma_\parallel(k)\approx0\) apunta a EMIC o
+firehose paralela (transversal); \(\gamma_\parallel(k)>0\) con
+compresibilidad alta apunta a mirror. Un ajuste con \(r\)-valor alto pero
+potencia final insignificante frente al resto de \(k\) es fuga espectral
+(leakage), no un modo físico — `spectral_analysis.py` descarta esos bins al
+reportar el \(k\) dominante.
+
 ### 8. Distribuciones de velocidad y ajuste Maxwelliano/Kappa
 
 #### 8.1. Razón física
@@ -766,8 +804,10 @@ $$
    magnéticas normalizadas.
 3. `mirror_physics.py`: secciones 5 y 9; visualiza estructuras magnéticas
    Mirror y corriente asociada.
-4. `spectral_analysis.py`: sección 7; calcula FFT, PSD, espectro radial,
-   pendiente y modos dominantes.
+4. `spectral_analysis.py`: sección 7; calcula FFT, PSD, espectro radial y
+   pendiente (reutilizado por `physical_diagnostics.py`), y el `gamma(k)`
+   resuelto por modo, la helicidad \(\sigma_m(k)\) y la compresibilidad
+   descritos en 7.4.
 5. `plot_prt.py`: sección 8; construye VDF 2D, evolución de distribuciones y
    comparación Maxwelliana/Kappa. Las visualizaciones 3D cualitativas quedan en
    `legacy/` y no forman parte del flujo mantenido.

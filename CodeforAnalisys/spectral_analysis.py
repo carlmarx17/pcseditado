@@ -6,11 +6,14 @@ Spectral analysis of magnetic-field fluctuations for PSC outputs.
 
 Features:
   - Correct 2D slice extraction for PSC ordering (Nz, Ny, Nx)
-  - Spectra of deltaB, deltaB_parallel, deltaB_perp
-  - 2D anisotropic PSD in physical axes
-  - 1D isotropic E(k)
-  - Automatic power-law fit on the 1D spectrum
-  - Tracking of dominant modes across snapshots
+  - 2D anisotropic PSD in physical axes (perp/parallel/total), reused by
+    physical_diagnostics.py for the single-snapshot P(k) diagnostic
+  - Mode-resolved growth rate gamma(k): E(k, Omega_ci t) is accumulated over
+    every snapshot and each k-shell is fit with a log-linear growth rate,
+    following the gamma(k) technique described for PIC instability studies
+    (e.g. Hellinger et al. 2018) instead of one static spectrum per snapshot.
+  - Reduced magnetic helicity sigma_m(k) and parallel/perpendicular
+    compressibility, used to discriminate mirror/EMIC/firehose branches.
 """
 
 import argparse
@@ -39,6 +42,7 @@ except ImportError:  # NumPy fallback keeps spectra available without SciPy.
         )()
 
 from data_reader import PICDataReader
+from psc_units import DX_DI, step_to_omegaci
 
 warnings.filterwarnings("ignore")
 plt.switch_backend("Agg")
@@ -53,6 +57,43 @@ plt.rcParams.update({
 })
 
 
+def _fit_growth_rate(time: np.ndarray, amplitude: np.ndarray) -> dict:
+    """Log-linear growth rate of a mode amplitude ~ exp(gamma * t).
+
+    Mirrors the linear-phase window selection used for the box-integrated
+    delta_B_rms(t) fit, applied here per k-shell so every mode gets its own
+    gamma instead of a single global number.
+    """
+    valid = np.isfinite(time) & np.isfinite(amplitude) & (amplitude > 0)
+    if np.count_nonzero(valid) < 4:
+        return {"gamma": np.nan, "rvalue": np.nan, "n_points": int(np.count_nonzero(valid))}
+
+    t = time[valid]
+    y = np.log(amplitude[valid])
+    slope_local = np.gradient(y, t)
+    positive = slope_local > 0
+    if np.count_nonzero(positive) >= 3:
+        idx_valid = np.where(positive)[0]
+        lo = idx_valid[max(0, int(0.15 * len(idx_valid)))]
+        hi = idx_valid[min(len(idx_valid) - 1, int(0.85 * len(idx_valid)))]
+        fit_slice = slice(lo, hi + 1)
+    else:
+        fit_slice = slice(1, -1)
+    if len(t[fit_slice]) < 3:
+        fit_slice = slice(None)
+
+    coeff = np.polyfit(t[fit_slice], y[fit_slice], 1)
+    fitted = np.polyval(coeff, t[fit_slice])
+    ss_res = float(np.sum((y[fit_slice] - fitted) ** 2))
+    ss_tot = float(np.sum((y[fit_slice] - np.mean(y[fit_slice])) ** 2))
+    rvalue = float(np.sqrt(max(0.0, 1.0 - ss_res / ss_tot))) if ss_tot > 0 else np.nan
+    return {
+        "gamma": float(coeff[0]),
+        "rvalue": rvalue,
+        "n_points": int(len(t[fit_slice])),
+    }
+
+
 class SpectralAnalyzer:
     def __init__(
         self,
@@ -62,7 +103,6 @@ class SpectralAnalyzer:
         B0_ref: float = 1.0,
         outdir: str = "spectral_plots",
         parallel_axis: str = "z",
-        top_modes: int = 8,
     ):
         self.spacing = {
             "x": float(dx),
@@ -71,10 +111,8 @@ class SpectralAnalyzer:
         }
         self.B0_ref = B0_ref
         self.parallel_axis = parallel_axis.lower()
-        self.top_modes = top_modes
         self.outdir = Path(outdir)
         self.outdir.mkdir(parents=True, exist_ok=True)
-        self.summary_rows = []
 
     @staticmethod
     def _detect_plane(shape: tuple[int, int, int]) -> str:
@@ -166,10 +204,13 @@ class SpectralAnalyzer:
             "bz": bz_fluct,
         }
 
-    def _compute_fft_psd(self, field: np.ndarray) -> np.ndarray:
+    def _compute_fft_complex(self, field: np.ndarray) -> np.ndarray:
         field_win = self._window_2d(field)
-        nx, ny = field_win.shape
-        field_k = fftshift(fft2(field_win))
+        return fftshift(fft2(field_win))
+
+    def _compute_fft_psd(self, field: np.ndarray) -> np.ndarray:
+        nx, ny = field.shape
+        field_k = self._compute_fft_complex(field)
         window_power = np.sum(np.outer(np.hanning(nx), np.hanning(ny)) ** 2)
         if window_power == 0:
             window_power = float(nx * ny)
@@ -217,6 +258,7 @@ class SpectralAnalyzer:
         }
 
     def _radial_spectrum(self, psd_2d: np.ndarray, k_mag: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Single-snapshot isotropic E(k), kept for physical_diagnostics.py's P(k) plot."""
         positive_k = np.unique(np.sort(k_mag[k_mag > 0]))
         if positive_k.size == 0:
             return np.array([]), np.array([])
@@ -240,6 +282,24 @@ class SpectralAnalyzer:
         valid = e_k > 0
         return k_centers[valid], e_k[valid]
 
+    @staticmethod
+    def _radial_bin_edges(k_mag: np.ndarray, num_bins: int) -> np.ndarray:
+        """Fixed bin edges, computed once so every snapshot bins onto the same k axis."""
+        positive_k = k_mag[k_mag > 0]
+        k_min = float(np.min(positive_k))
+        k_max = float(np.max(k_mag))
+        return np.linspace(k_min, k_max, num_bins + 1)
+
+    @staticmethod
+    def _bin_radial_sum(values: np.ndarray, k_mag: np.ndarray, bin_edges: np.ndarray) -> np.ndarray:
+        """Sum ``values`` on fixed k-shells; unlike _radial_spectrum this keeps a
+        constant-length output (including empty/negative shells) so it can be
+        stacked across snapshots into an E(k, t) matrix."""
+        sums, _ = np.histogram(
+            k_mag.ravel(), bins=bin_edges, weights=np.asarray(values, dtype=float).ravel()
+        )
+        return sums
+
     def _fit_power_law(self, k: np.ndarray, e_k: np.ndarray) -> dict | None:
         if len(k) < 6:
             return None
@@ -258,46 +318,6 @@ class SpectralAnalyzer:
             "rvalue": result.rvalue,
             "k_fit": k_fit[valid],
         }
-
-    def _extract_top_modes(self, psd_2d: np.ndarray, k_grids: dict, step: int, component: str) -> list[dict]:
-        flat_indices = np.argsort(psd_2d.ravel())[::-1]
-        modes = []
-        seen_wavevectors = set()
-
-        for flat_idx in flat_indices:
-            i, j = np.unravel_index(flat_idx, psd_2d.shape)
-            if not np.isfinite(psd_2d[i, j]) or psd_2d[i, j] <= 0:
-                break
-            k0 = k_grids["K0"][i, j]
-            k1 = k_grids["K1"][i, j]
-            if np.isclose(k0, 0.0) and np.isclose(k1, 0.0):
-                continue
-            wavevector_key = (
-                round(abs(float(k_grids["k_par"][i, j])), 12),
-                round(abs(float(k_grids["k_perp"][i, j])), 12),
-                round(float(k_grids["k_mag"][i, j]), 12),
-            )
-            if wavevector_key in seen_wavevectors:
-                continue
-            seen_wavevectors.add(wavevector_key)
-
-            modes.append(
-                {
-                    "step": step,
-                    "component": component,
-                    "mode_rank": len(modes) + 1,
-                    "k_axis0": k0,
-                    "k_axis1": k1,
-                    "k_parallel": k_grids["k_par"][i, j],
-                    "k_perp": k_grids["k_perp"][i, j],
-                    "k_mag": k_grids["k_mag"][i, j],
-                    "power": psd_2d[i, j],
-                }
-            )
-            if len(modes) >= self.top_modes:
-                break
-
-        return modes
 
     @staticmethod
     def _peak_index(psd_2d: np.ndarray, k_grids: dict) -> tuple[int, int] | None:
@@ -331,6 +351,13 @@ class SpectralAnalyzer:
         fluctuations = self._component_fluctuations(bx, by, bz)
         k_grids = self._compute_k_grids(bx.shape, plane_data["spacing"], plane_data["axes"])
         component_psds = self._component_psds(fluctuations)
+        # Complex spectra (phase kept) of the raw component fluctuations, used to
+        # build the reduced magnetic helicity sigma_m(k) between the two axes
+        # perpendicular to the guide field.
+        component_ffts = {
+            axis: self._compute_fft_complex(fluctuations[f"b{axis}"])
+            for axis in ("x", "y", "z")
+        }
 
         spectra = {}
         for component in ("total", "parallel", "perp"):
@@ -351,6 +378,7 @@ class SpectralAnalyzer:
             "slice_idx": plane_data["slice_idx"],
             "k_grids": k_grids,
             "spectra": spectra,
+            "component_ffts": component_ffts,
         }
 
     def analyze_simulation(
@@ -360,75 +388,151 @@ class SpectralAnalyzer:
         slice_idx: int = None,
         steps_to_process: list[int] = None,
     ) -> int:
-        print("Starting Spectral Analysis...")
-        self.summary_rows = []
+        """Mode-resolved growth rate gamma(k): accumulate E(k, Omega_ci t) across
+        every snapshot and fit a log-linear growth rate per k-shell, instead of
+        rendering one static P(k) image per snapshot."""
+        print("Starting spectral growth-rate analysis...")
         b_files = PICDataReader.find_files(fields_pattern)
         steps = sorted(b_files.keys())
         if steps_to_process:
             steps = [step for step in steps if step in steps_to_process]
 
-        if not steps:
-            print("No snapshot files found.")
+        if len(steps) < 4:
+            print(f"Need at least four snapshots for a growth-rate fit; found {len(steps)}.")
             return 0
 
         print(f"Found {len(steps)} snapshots to process.")
-        all_modes = []
+        times = np.array([step_to_omegaci(step) for step in steps], dtype=float)
+        perpendicular_axes = [axis for axis in ("x", "y", "z") if axis != self.parallel_axis]
 
-        for step in steps:
+        bin_edges = None
+        resolved_plane = None
+        energy_perp_rows = []
+        energy_par_rows = []
+        helicity_num_rows = []
+        helicity_den_rows = []
+        valid_times = []
+
+        for step, t in zip(steps, times):
             print(f"Processing snapshot step {step}...")
             data = self.process_snapshot(b_files[step], plane=plane, slice_idx=slice_idx)
             if data is None:
                 continue
 
-            resolved_plane = data["plane"]
-            axes = data["axes"]
-            k_grids = data["k_grids"]
-            for component, spec in data["spectra"].items():
-                self.plot_1d_spectrum(spec["k"], spec["E_k"], spec["fit"], step, resolved_plane, component)
-                self.plot_2d_spectrum(k_grids, spec["psd_2d"], step, resolved_plane, component, axes)
-                all_modes.extend(self._extract_top_modes(spec["psd_2d"], k_grids, step, component))
+            k_mag = data["k_grids"]["k_mag"]
+            if bin_edges is None:
+                resolved_plane = data["plane"]
+                num_bins = max(int(min(k_mag.shape) // 2), 10)
+                bin_edges = self._radial_bin_edges(k_mag, num_bins)
 
-                fit = spec["fit"]
-                peak = self._peak_index(spec["psd_2d"], k_grids)
-                if peak is None:
-                    peak_power = np.nan
-                    peak_k_parallel = np.nan
-                    peak_k_perp = np.nan
-                else:
-                    peak_i, peak_j = peak
-                    peak_power = float(spec["psd_2d"][peak_i, peak_j])
-                    peak_k_parallel = float(k_grids["k_par"][peak_i, peak_j])
-                    peak_k_perp = float(k_grids["k_perp"][peak_i, peak_j])
-                self.summary_rows.append(
-                    {
-                        "step": step,
-                        "plane": resolved_plane,
-                        "component": component,
-                        "axis0": axes[0],
-                        "axis1": axes[1],
-                        "delta_axis0": data["spacing"][0],
-                        "delta_axis1": data["spacing"][1],
-                        "slice_normal": data["normal_axis"],
-                        "slice_idx": data["slice_idx"],
-                        "peak_power": peak_power,
-                        "peak_k_parallel": peak_k_parallel,
-                        "peak_k_perp": peak_k_perp,
-                        "fit_slope": "" if fit is None else fit["slope"],
-                        "fit_rvalue": "" if fit is None else fit["rvalue"],
-                    }
-                )
+            energy_perp_rows.append(
+                self._bin_radial_sum(data["spectra"]["perp"]["psd_2d"], k_mag, bin_edges)
+            )
+            energy_par_rows.append(
+                self._bin_radial_sum(data["spectra"]["parallel"]["psd_2d"], k_mag, bin_edges)
+            )
 
-        if not self.summary_rows:
+            b1 = data["component_ffts"][perpendicular_axes[0]]
+            b2 = data["component_ffts"][perpendicular_axes[1]]
+            helicity_num_rows.append(
+                self._bin_radial_sum(np.imag(np.conj(b1) * b2), k_mag, bin_edges)
+            )
+            helicity_den_rows.append(
+                self._bin_radial_sum(np.abs(b1) ** 2 + np.abs(b2) ** 2, k_mag, bin_edges)
+            )
+            valid_times.append(t)
+
+        if bin_edges is None or len(valid_times) < 4:
             print("No snapshots could be analyzed.")
             return 0
 
-        output_plane = self.summary_rows[0]["plane"]
-        self._write_csv(self.outdir / f"spectral_summary_{output_plane}.csv", self.summary_rows)
-        self._write_csv(self.outdir / f"dominant_modes_{output_plane}.csv", all_modes)
-        if all_modes:
-            self.plot_mode_evolution(all_modes, output_plane)
+        valid_times = np.asarray(valid_times, dtype=float)
+        k_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+        energy_perp = np.asarray(energy_perp_rows).T  # (n_k, n_t)
+        energy_par = np.asarray(energy_par_rows).T
+        helicity_den = np.asarray(helicity_den_rows).T
+        helicity_num = np.asarray(helicity_num_rows).T
+
+        growth_rows = []
+        for i, k in enumerate(k_centers):
+            fit_perp = _fit_growth_rate(valid_times, np.sqrt(np.clip(energy_perp[i], 0, None)))
+            fit_par = _fit_growth_rate(valid_times, np.sqrt(np.clip(energy_par[i], 0, None)))
+            weight = helicity_den[i]
+            sigma_m_k = (
+                float(np.sum(helicity_num[i] * weight) / np.sum(weight))
+                if np.sum(weight) > 0 else np.nan
+            )
+            growth_rows.append({
+                "k": float(k),
+                "gamma_perp": fit_perp["gamma"],
+                "gamma_perp_rvalue": fit_perp["rvalue"],
+                "gamma_perp_npoints": fit_perp["n_points"],
+                "gamma_parallel": fit_par["gamma"],
+                "gamma_parallel_rvalue": fit_par["rvalue"],
+                "gamma_parallel_npoints": fit_par["n_points"],
+                "sigma_m": sigma_m_k,
+                "final_energy_perp": float(energy_perp[i, -1]),
+                "final_energy_parallel": float(energy_par[i, -1]),
+            })
+
+        total_par = energy_par.sum(axis=0)
+        total_perp = energy_perp.sum(axis=0)
+        compressibility = np.divide(
+            total_par, total_par + total_perp,
+            out=np.full_like(total_par, np.nan), where=(total_par + total_perp) > 0,
+        )
+        compressibility_rows = [
+            {"step": step, "omega_ci_t": float(t), "compressibility": float(c)}
+            for step, t, c in zip(steps, valid_times, compressibility)
+        ]
+
+        energy_kt_rows = [
+            {
+                "step": step, "omega_ci_t": float(t), "k": float(k),
+                "E_perp": float(energy_perp[i, j]), "E_parallel": float(energy_par[i, j]),
+            }
+            for j, (step, t) in enumerate(zip(steps, valid_times))
+            for i, k in enumerate(k_centers)
+        ]
+
+        self._write_csv(self.outdir / f"growth_rate_by_k_{resolved_plane}.csv", growth_rows)
+        self._write_csv(self.outdir / f"compressibility_vs_time_{resolved_plane}.csv", compressibility_rows)
+        self._write_csv(self.outdir / f"field_energy_kt_{resolved_plane}.csv", energy_kt_rows)
+
+        self.plot_energy_kt(k_centers, valid_times, energy_perp, "perp", resolved_plane)
+        self.plot_energy_kt(k_centers, valid_times, energy_par, "parallel", resolved_plane)
+        self.plot_growth_rate_vs_k(growth_rows, resolved_plane)
+        self.plot_compressibility(valid_times, compressibility, resolved_plane)
+        self.plot_helicity_vs_k(growth_rows, resolved_plane)
+
+        # Weak-power bins can still fit a clean exponential (spectral leakage
+        # tracks whatever mode dominates the box), so the headline peak is
+        # restricted to shells carrying a non-negligible share of the energy
+        # to avoid reporting a numerical-noise/leakage bin as "the" mode.
+        max_final_perp = max((row["final_energy_perp"] for row in growth_rows), default=0.0)
+        max_final_par = max((row["final_energy_parallel"] for row in growth_rows), default=0.0)
+        significant_perp = [
+            row for row in growth_rows
+            if np.isfinite(row["gamma_perp"]) and row["final_energy_perp"] >= 1e-3 * max_final_perp
+        ]
+        significant_par = [
+            row for row in growth_rows
+            if np.isfinite(row["gamma_parallel"]) and row["final_energy_parallel"] >= 1e-3 * max_final_par
+        ]
+        if significant_perp:
+            peak = max(significant_perp, key=lambda row: row["gamma_perp"])
+            print(
+                f"  Max gamma_perp = {peak['gamma_perp']:.4g} Omega_ci at "
+                f"k d_i = {peak['k']:.3g} (r={peak['gamma_perp_rvalue']:.2f})"
+            )
+        if significant_par:
+            peak = max(significant_par, key=lambda row: row["gamma_parallel"])
+            print(
+                f"  Max gamma_parallel = {peak['gamma_parallel']:.4g} Omega_ci at "
+                f"k d_i = {peak['k']:.3g} (r={peak['gamma_parallel_rvalue']:.2f})"
+            )
         print("Analysis completed.")
-        return len({row["step"] for row in self.summary_rows})
+        return len(valid_times)
 
     def _write_csv(self, filepath: Path, rows: list[dict]):
         if not rows:
@@ -440,147 +544,80 @@ class SpectralAnalyzer:
             writer.writerows(rows)
         print(f"Saved data table: {filepath}")
 
-    def plot_1d_spectrum(self, k: np.ndarray, e_k: np.ndarray, fit: dict | None, step: int, plane: str, component: str, save: bool = True):
-        plt.figure(figsize=(8, 6))
-        plt.loglog(k, e_k, linewidth=2, label=f"{component} $E(k)$")
-
-        if fit is not None and len(fit["k_fit"]) >= 3:
-            e_ref = 10 ** (fit["intercept"] + fit["slope"] * np.log10(fit["k_fit"]))
-            plt.loglog(
-                fit["k_fit"],
-                e_ref,
-                "k--",
-                linewidth=1.5,
-                label=fr"fit slope = {fit['slope']:.2f}",
-            )
-
-        if len(k) > 10:
-            k_ref = k[len(k) // 4 : 3 * len(k) // 4]
-            if len(k_ref) > 1:
-                e_ref = e_k[len(k) // 4] * (k_ref / k_ref[0]) ** (-5 / 3)
-                plt.loglog(k_ref, e_ref, "r:", label="-5/3 ref")
-
-        plt.xlabel(r"Wavenumber $k$")
-        plt.ylabel(r"Energy Spectrum $E(k)$")
-        plt.title(f"1D Magnetic Spectrum - Step {step} ({plane}, {component})")
-        plt.grid(True, which="both", ls="--", alpha=0.4)
-        plt.legend()
-
-        if save:
-            out_file = self.outdir / f"spectrum_1d_step{step}_{plane}_{component}.png"
-            plt.savefig(out_file, dpi=300, bbox_inches="tight")
-            print(f"Saved 1D Spectrum Plot: {out_file}")
-        plt.close()
-
-    def plot_2d_spectrum(self, k_grids: dict, psd_2d: np.ndarray, step: int, plane: str, component: str, axes: tuple[str, str], save: bool = True):
-        plt.figure(figsize=(8, 7))
-        psd_log = np.log10(psd_2d + 1e-16)
-        p = plt.pcolormesh(k_grids["K1"], k_grids["K0"], psd_log, shading="auto", cmap="inferno")
-        cb = plt.colorbar(p)
-        cb.set_label(r"$\log_{10}$(PSD)")
-
-        plt.xlabel(rf"$k_{{{axes[1]}}}\,d_i$")
-        plt.ylabel(rf"$k_{{{axes[0]}}}\,d_i$")
-        plt.title(f"2D PSD - Step {step} ({plane}, {component})")
-
-        if save:
-            out_file = self.outdir / f"spectrum_2d_step{step}_{plane}_{component}.png"
-            plt.savefig(out_file, dpi=300, bbox_inches="tight")
-            print(f"Saved 2D Spectrum Plot: {out_file}")
-        plt.close()
-
-        plt.figure(figsize=(8, 7))
-        if np.any(np.abs(k_grids["k_par"]) > 0):
-            kpar = np.abs(k_grids["k_par"]).ravel()
-            kperp = np.abs(k_grids["k_perp"]).ravel()
-            weights = psd_2d.ravel()
-            npar = max(8, psd_2d.shape[0] // 2)
-            nperp = max(8, psd_2d.shape[1] // 2)
-            hist, par_edges, perp_edges = np.histogram2d(
-                kpar,
-                kperp,
-                bins=(npar, nperp),
-                range=((0, kpar.max()), (0, kperp.max())),
-                weights=weights,
-            )
-            p = plt.pcolormesh(
-                par_edges,
-                perp_edges,
-                np.log10(hist.T + 1e-30),
-                shading="auto",
-                cmap="magma",
-            )
-            cb = plt.colorbar(p)
-            cb.set_label(r"$\log_{10}$(binned PSD)")
-        else:
-            plt.text(
-                0.5,
-                0.5,
-                f"The {plane} plane does not contain the parallel "
-                f"{self.parallel_axis}-axis.",
-                ha="center",
-                va="center",
-                transform=plt.gca().transAxes,
-            )
-        plt.xlabel(r"$|k_{\parallel}|\,d_i$")
-        plt.ylabel(r"$|k_{\perp}|\,d_i$")
-        plt.title(f"Anisotropic PSD - Step {step} ({plane}, {component})")
-
-        if save:
-            out_file = self.outdir / f"spectrum_anisotropic_step{step}_{plane}_{component}.png"
-            plt.savefig(out_file, dpi=300, bbox_inches="tight")
-            print(f"Saved anisotropic PSD Plot: {out_file}")
-        plt.close()
-
-    def plot_mode_evolution(self, modes: list[dict], plane: str):
-        first_step = min(mode["step"] for mode in modes)
-        components = sorted({mode["component"] for mode in modes})
-        if any(component != "total" for component in components):
-            components = [component for component in components if component != "total"]
-
-        fig, ax = plt.subplots(figsize=(10.5, 6.4))
-        for component in components:
-            component_modes = [mode for mode in modes if mode["component"] == component and mode["mode_rank"] == 1]
-            component_modes = [mode for mode in component_modes if mode["step"] != first_step]
-            component_modes.sort(key=lambda row: row["step"])
-            if not component_modes:
-                continue
-            ax.semilogy(
-                [row["step"] for row in component_modes],
-                [row["power"] for row in component_modes],
-                marker="o",
-                linewidth=2.2,
-                markersize=6.5,
-                label=f"{component} dominant mode",
-            )
-
-        ax.set_xlabel("Step")
-        ax.set_ylabel("Mode Power")
-        ax.set_title(f"Dominant-Mode Evolution ({plane})")
-        ax.grid(True, which="both", ls="--", alpha=0.4)
-        ax.legend()
-        out_file = self.outdir / f"dominant_mode_evolution_{plane}.png"
-        fig.savefig(out_file, dpi=300, bbox_inches="tight")
+    def plot_energy_kt(self, k_centers: np.ndarray, times: np.ndarray, energy: np.ndarray, component: str, plane: str):
+        fig, ax = plt.subplots(figsize=(9.5, 6.5))
+        log_energy = np.log10(np.clip(energy, np.finfo(float).tiny, None))
+        mesh = ax.pcolormesh(times, k_centers, log_energy, shading="auto", cmap="inferno")
+        cb = fig.colorbar(mesh, ax=ax)
+        cb.set_label(r"$\log_{10} E(k,t)$")
+        ax.set_xlabel(r"$\Omega_{ci} t$")
+        ax.set_ylabel(r"$k\,d_i$")
+        ax.set_title(f"Mode energy evolution E(k,t) — {component} ({plane})")
+        out_file = self.outdir / f"energy_kt_{component}_{plane}.png"
+        fig.savefig(out_file, dpi=220, bbox_inches="tight")
         plt.close(fig)
-        print(f"Saved dominant mode evolution plot: {out_file}")
+        print(f"Saved E(k,t) map: {out_file}")
+
+    def plot_growth_rate_vs_k(self, growth_rows: list[dict], plane: str):
+        k = np.array([row["k"] for row in growth_rows])
+        gamma_perp = np.array([row["gamma_perp"] for row in growth_rows])
+        gamma_par = np.array([row["gamma_parallel"] for row in growth_rows])
+
+        fig, ax = plt.subplots(figsize=(9, 6))
+        ax.axhline(0.0, color="0.6", lw=1.0)
+        ax.plot(k, gamma_perp, "o-", markersize=4, label=r"$\gamma_\perp(k)$ (transverse, EMIC/firehose-like)")
+        ax.plot(k, gamma_par, "s-", markersize=4, label=r"$\gamma_\parallel(k)$ (compressive, mirror-like)")
+        ax.set_xlabel(r"$k\,d_i$")
+        ax.set_ylabel(r"$\gamma\ [\Omega_{ci}]$")
+        ax.set_title(f"Mode-resolved growth rate ({plane})")
+        ax.grid(alpha=0.3)
+        ax.legend()
+        out_file = self.outdir / f"growth_rate_vs_k_{plane}.png"
+        fig.savefig(out_file, dpi=220, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Saved growth rate plot: {out_file}")
+
+    def plot_compressibility(self, times: np.ndarray, compressibility: np.ndarray, plane: str):
+        fig, ax = plt.subplots(figsize=(9, 5.2))
+        ax.plot(times, compressibility, lw=2.0, color="firebrick")
+        ax.set_ylim(0.0, 1.0)
+        ax.set_xlabel(r"$\Omega_{ci} t$")
+        ax.set_ylabel(r"$\delta B_\parallel^2 / (\delta B_\parallel^2+\delta B_\perp^2)$")
+        ax.set_title(f"Magnetic compressibility ({plane})")
+        ax.grid(alpha=0.3)
+        out_file = self.outdir / f"compressibility_vs_time_{plane}.png"
+        fig.savefig(out_file, dpi=220, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Saved compressibility plot: {out_file}")
+
+    def plot_helicity_vs_k(self, growth_rows: list[dict], plane: str):
+        k = np.array([row["k"] for row in growth_rows])
+        sigma_m = np.array([row["sigma_m"] for row in growth_rows])
+
+        fig, ax = plt.subplots(figsize=(9, 5.2))
+        ax.axhline(0.0, color="0.6", lw=1.0)
+        ax.plot(k, sigma_m, "o-", markersize=4, color="teal")
+        ax.set_ylim(-1.05, 1.05)
+        ax.set_xlabel(r"$k\,d_i$")
+        ax.set_ylabel(r"$\sigma_m(k)$")
+        ax.set_title(f"Reduced magnetic helicity ({plane})")
+        ax.grid(alpha=0.3)
+        out_file = self.outdir / f"helicity_vs_k_{plane}.png"
+        fig.savefig(out_file, dpi=220, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Saved helicity plot: {out_file}")
 
 
 if __name__ == "__main__":
-    try:
-        from psc_units import DX_DI as PROFILE_DX_DI
-    except (ImportError, ValueError):
-        PROFILE_DX_DI = 1.0
-
-    parser = argparse.ArgumentParser(description="Spectral analysis of magnetic-field fluctuations.")
+    parser = argparse.ArgumentParser(description="Mode-resolved growth rate gamma(k) from magnetic-field fluctuations.")
     parser.add_argument("--fields", type=str, default="pfd.*.h5", help="Glob pattern for field files.")
     parser.add_argument("--plane", type=str, default="auto", choices=["auto", "xy", "xz", "yz"], help="Plane to extract; auto selects the non-degenerate PSC plane.")
     parser.add_argument("--slice", type=int, default=None, help="Fixed slice index along the plane normal.")
     parser.add_argument("--B0", type=float, default=1.0, help="Reference B0 field normalization.")
-    parser.add_argument("--dx", type=float, default=PROFILE_DX_DI, help="Grid spacing along x in d_i.")
-    parser.add_argument("--dy", type=float, default=PROFILE_DX_DI, help="Grid spacing along y in d_i.")
-    parser.add_argument("--dz", type=float, default=PROFILE_DX_DI, help="Grid spacing along z in d_i.")
+    parser.add_argument("--dx", type=float, default=DX_DI, help="Grid spacing along x in d_i.")
+    parser.add_argument("--dy", type=float, default=DX_DI, help="Grid spacing along y in d_i.")
+    parser.add_argument("--dz", type=float, default=DX_DI, help="Grid spacing along z in d_i.")
     parser.add_argument("--parallel-axis", type=str, default="z", choices=["x", "y", "z"], help="Direction of the guide field / parallel axis.")
-    parser.add_argument("--top-modes", type=int, default=8, help="Number of strongest spectral modes to store per snapshot.")
     parser.add_argument("--steps", nargs="*", type=int, default=None, help="Specific steps to process.")
     parser.add_argument("--outdir", type=str, default="spectral_plots", help="Directory for spectral plots and CSV outputs.")
     args = parser.parse_args()
@@ -592,7 +629,6 @@ if __name__ == "__main__":
         B0_ref=args.B0,
         outdir=args.outdir,
         parallel_axis=args.parallel_axis,
-        top_modes=args.top_modes,
     )
     processed = analyzer.analyze_simulation(
         fields_pattern=args.fields,
