@@ -368,6 +368,13 @@ class SpectralAnalyzer:
         k_max = float(np.max(k_mag))
         if k_max_di is not None:
             k_max = min(k_max, k_max_di)
+            # num_bins is normally sized for the full Nyquist range; cutting
+            # k_max down to the physically relevant range leaves far fewer
+            # distinct k-shells available (e.g. only ~20 below k d_i = 2 on a
+            # 1024^2 grid). Sizing bins for the full range here would make
+            # almost every one empty (NaN growth rate, gaps in the plots).
+            available = np.unique(positive_k[positive_k <= k_max])
+            num_bins = int(np.clip(available.size // 2, 4, num_bins))
         return np.geomspace(k_min, k_max, num_bins + 1)
 
     @staticmethod
