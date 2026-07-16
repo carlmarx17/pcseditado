@@ -42,7 +42,7 @@ except ImportError:  # NumPy fallback keeps spectra available without SciPy.
         )()
 
 from data_reader import PICDataReader
-from psc_units import DX_DI, DI, DOMAIN_DI, RHO_I, step_to_omegaci
+from psc_units import DX_DI, DI, DOMAIN_DI, RHO_I, INSTABILITY, PROFILE_LABEL, step_to_omegaci
 
 warnings.filterwarnings("ignore")
 plt.switch_backend("Agg")
@@ -56,6 +56,45 @@ plt.rcParams.update({
     "figure.titlesize": 20,
 })
 
+# Same dark poster style used across anisotropy_analysis.py / physical_diagnostics.py,
+# so plots from every stage of the pipeline (mirror, firehose, whistler, any
+# strength) look like one system instead of one-off matplotlib defaults.
+DARK_BG = "#0d1117"
+PANEL_BG = "#161b22"
+TEXT_CLR = "#e6edf3"
+GRID_CLR = "#30363d"
+POSTER_TITLE = 19
+POSTER_TICK = 15
+POSTER_LEGEND = 14
+
+# Which channel carries the instability's growth signature depends on which
+# case is active: mirror/oblique-firehose are compressive (parallel channel),
+# EMIC/parallel-firehose/whistler are transverse (perp channel). Never assume
+# "mirror" — this module runs unmodified for every reference case.
+_CHANNEL_HINT = {
+    "mirror": {"perp": "transverse", "parallel": "compressive — mirror signature"},
+    "firehose": {"perp": "transverse — parallel-firehose/EMIC signature", "parallel": "compressive — oblique-firehose signature"},
+    "whistler": {"perp": "transverse — whistler signature", "parallel": "compressive"},
+}.get(INSTABILITY, {"perp": "transverse", "parallel": "compressive"})
+
+
+def _style_axes(ax):
+    ax.set_facecolor(PANEL_BG)
+    ax.tick_params(colors=TEXT_CLR, direction="in", which="both", top=True, right=True, labelsize=POSTER_TICK)
+    ax.grid(True, color=GRID_CLR, alpha=0.25, linestyle=":")
+    for spine in ax.spines.values():
+        spine.set_edgecolor(GRID_CLR)
+    ax.xaxis.label.set_color(TEXT_CLR)
+    ax.yaxis.label.set_color(TEXT_CLR)
+    ax.title.set_color(TEXT_CLR)
+
+
+def _new_dark_fig(figsize):
+    fig, ax = plt.subplots(figsize=figsize)
+    fig.patch.set_facecolor(DARK_BG)
+    _style_axes(ax)
+    return fig, ax
+
 
 def _fit_growth_rate(time: np.ndarray, amplitude: np.ndarray) -> dict:
     """Log-linear growth rate of a mode amplitude ~ exp(gamma * t).
@@ -66,7 +105,10 @@ def _fit_growth_rate(time: np.ndarray, amplitude: np.ndarray) -> dict:
     """
     valid = np.isfinite(time) & np.isfinite(amplitude) & (amplitude > 0)
     if np.count_nonzero(valid) < 4:
-        return {"gamma": np.nan, "rvalue": np.nan, "n_points": int(np.count_nonzero(valid))}
+        return {
+            "gamma": np.nan, "intercept": np.nan, "rvalue": np.nan,
+            "n_points": int(np.count_nonzero(valid)), "fit_time_range": None,
+        }
 
     t = time[valid]
     y = np.log(amplitude[valid])
@@ -89,8 +131,10 @@ def _fit_growth_rate(time: np.ndarray, amplitude: np.ndarray) -> dict:
     rvalue = float(np.sqrt(max(0.0, 1.0 - ss_res / ss_tot))) if ss_tot > 0 else np.nan
     return {
         "gamma": float(coeff[0]),
+        "intercept": float(coeff[1]),
         "rvalue": rvalue,
         "n_points": int(len(t[fit_slice])),
+        "fit_time_range": (float(t[fit_slice][0]), float(t[fit_slice][-1])),
     }
 
 
@@ -562,25 +606,41 @@ class SpectralAnalyzer:
         max_final_perp = max((row["final_energy_perp"] for row in growth_rows), default=0.0)
         max_final_par = max((row["final_energy_parallel"] for row in growth_rows), default=0.0)
         significant_perp = [
-            row for row in growth_rows
+            i for i, row in enumerate(growth_rows)
             if np.isfinite(row["gamma_perp"]) and row["final_energy_perp"] >= 1e-3 * max_final_perp
         ]
         significant_par = [
-            row for row in growth_rows
+            i for i, row in enumerate(growth_rows)
             if np.isfinite(row["gamma_parallel"]) and row["final_energy_parallel"] >= 1e-3 * max_final_par
         ]
+        # Fall back to the loudest bin (even a decaying/flat one) so every case
+        # still gets a growth-curve plot instead of silently skipping it.
+        peak_perp_idx = max(significant_perp, key=lambda i: growth_rows[i]["gamma_perp"]) \
+            if significant_perp else int(np.argmax(energy_perp[:, -1]))
+        peak_par_idx = max(significant_par, key=lambda i: growth_rows[i]["gamma_parallel"]) \
+            if significant_par else int(np.argmax(energy_par[:, -1]))
+
         if significant_perp:
-            peak = max(significant_perp, key=lambda row: row["gamma_perp"])
+            row = growth_rows[peak_perp_idx]
             print(
-                f"  Max gamma_perp = {peak['gamma_perp']:.4g} Omega_ci at "
-                f"k d_i = {peak['k']:.3g} (r={peak['gamma_perp_rvalue']:.2f})"
+                f"  Max gamma_perp = {row['gamma_perp']:.4g} Omega_ci at "
+                f"k d_i = {row['k']:.3g} (r={row['gamma_perp_rvalue']:.2f})"
             )
         if significant_par:
-            peak = max(significant_par, key=lambda row: row["gamma_parallel"])
+            row = growth_rows[peak_par_idx]
             print(
-                f"  Max gamma_parallel = {peak['gamma_parallel']:.4g} Omega_ci at "
-                f"k d_i = {peak['k']:.3g} (r={peak['gamma_parallel_rvalue']:.2f})"
+                f"  Max gamma_parallel = {row['gamma_parallel']:.4g} Omega_ci at "
+                f"k d_i = {row['k']:.3g} (r={row['gamma_parallel_rvalue']:.2f})"
             )
+
+        self.plot_growth_curve(
+            valid_times, energy_perp[peak_perp_idx], k_centers[peak_perp_idx],
+            "perp", resolved_plane,
+        )
+        self.plot_growth_curve(
+            valid_times, energy_par[peak_par_idx], k_centers[peak_par_idx],
+            "parallel", resolved_plane,
+        )
         print("Analysis completed.")
         return len(valid_times)
 
@@ -595,68 +655,122 @@ class SpectralAnalyzer:
         print(f"Saved data table: {filepath}")
 
     def plot_energy_kt(self, k_centers: np.ndarray, times: np.ndarray, energy: np.ndarray, component: str, plane: str):
-        fig, ax = plt.subplots(figsize=(9.5, 6.5))
-        log_energy = np.log10(np.clip(energy, np.finfo(float).tiny, None))
-        mesh = ax.pcolormesh(times, k_centers, log_energy, shading="auto", cmap="inferno")
+        fig, ax = _new_dark_fig((9.5, 6.5))
+        # Relative log scale (like dispersion_analysis.py's density map): E(k,t)
+        # spans many decades from noise floor to saturation, so an absolute
+        # log10 colormap is dominated by the emptiest cells and reads as a
+        # blank/"null" plot. Normalizing by the run's own peak and clipping the
+        # bottom six decades keeps the growing region visible.
+        peak = float(np.max(energy)) if np.any(np.isfinite(energy)) and np.max(energy) > 0 else 1.0
+        log_rel = np.log10(np.clip(energy / peak, 1e-6, None))
+        mesh = ax.pcolormesh(times, k_centers, log_rel, shading="auto", cmap="inferno", vmin=-6, vmax=0)
         cb = fig.colorbar(mesh, ax=ax)
-        cb.set_label(r"$\log_{10} E(k,t)$")
+        cb.set_label(r"$\log_{10}[E(k,t)/E_{\max}]$", color=TEXT_CLR)
+        cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
+        plt.setp(plt.getp(cb.ax, "yticklabels"), color=TEXT_CLR)
         ax.set_yscale("log")
         ax.set_xlabel(r"$\Omega_{ci} t$")
         ax.set_ylabel(r"$k\,d_i$")
-        ax.set_title(f"Mode energy evolution E(k,t) — {component} ({plane})")
+        ax.set_title(f"E(k,t) — {component} ({_CHANNEL_HINT[component]}, {PROFILE_LABEL}, {plane})", fontsize=POSTER_TITLE)
         out_file = self.outdir / f"energy_kt_{component}_{plane}.png"
-        fig.savefig(out_file, dpi=220, bbox_inches="tight")
+        fig.savefig(out_file, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
         plt.close(fig)
         print(f"Saved E(k,t) map: {out_file}")
+
+    def plot_growth_curve(self, times: np.ndarray, energy_k: np.ndarray, k: float, component: str, plane: str):
+        """The classic growth-rate check plot: amplitude of a single k-shell vs
+        time on a log axis, with the fitted exponential overlaid, so growth
+        (or its absence) is visible directly instead of only as a derived
+        gamma(k) number."""
+        amplitude = np.sqrt(np.clip(energy_k, 0, None))
+        fit = _fit_growth_rate(times, amplitude)
+
+        fig, ax = _new_dark_fig((8.5, 5.5))
+        ax.set_xlim(float(np.min(times)), float(np.max(times)))
+        valid = amplitude > 0
+        if np.count_nonzero(valid) < 2:
+            # This channel never rose above zero/floating-point noise (e.g. a
+            # non-fluctuating parallel field): say so instead of leaving a
+            # blank plot with an arbitrary autoscaled axis.
+            ax.text(
+                0.5, 0.5, "no measurable amplitude in this channel\n(at or below numerical noise floor)",
+                transform=ax.transAxes, ha="center", va="center", color=TEXT_CLR, fontsize=13,
+            )
+        else:
+            ax.semilogy(times[valid], amplitude[valid], "o", color="#58a6ff", markersize=5, label="measured")
+            if np.isfinite(fit["gamma"]):
+                lo, hi = fit["fit_time_range"]
+                ax.axvspan(lo, hi, color=GRID_CLR, alpha=0.4, label="fit window")
+                fitted = np.exp(np.polyval([fit["gamma"], fit["intercept"]], times))
+                ax.semilogy(times, fitted, "--", color="#f0883e", lw=2.0,
+                            label=fr"fit $\gamma={fit['gamma']:.3g}\,\Omega_{{ci}}$ (r={fit['rvalue']:.2f})")
+        ax.set_xlabel(r"$\Omega_{ci} t$")
+        ax.set_ylabel(r"$\sqrt{E(k,t)}$  (field amplitude, a.u.)")
+        ax.set_title(
+            f"Growth curve — {component} ({_CHANNEL_HINT[component]}), "
+            f"$k\\,d_i={k:.3g}$, {PROFILE_LABEL} ({plane})",
+            fontsize=POSTER_TITLE - 2,
+        )
+        if ax.get_legend_handles_labels()[0]:
+            ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
+        out_file = self.outdir / f"growth_curve_{component}_{plane}.png"
+        fig.savefig(out_file, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
+        plt.close(fig)
+        print(f"Saved growth curve: {out_file}")
 
     def plot_growth_rate_vs_k(self, growth_rows: list[dict], plane: str):
         k = np.array([row["k"] for row in growth_rows])
         gamma_perp = np.array([row["gamma_perp"] for row in growth_rows])
         gamma_par = np.array([row["gamma_parallel"] for row in growth_rows])
 
-        fig, ax = plt.subplots(figsize=(9, 6))
-        ax.axhline(0.0, color="0.6", lw=1.0)
-        ax.plot(k, gamma_perp, "o-", markersize=4, label=r"$\gamma_\perp(k)$ (transverse, EMIC/firehose-like)")
-        ax.plot(k, gamma_par, "s-", markersize=4, label=r"$\gamma_\parallel(k)$ (compressive, mirror — primary indicator)")
+        fig, ax = _new_dark_fig((9, 6))
+        ax.axhline(0.0, color=GRID_CLR, lw=1.2)
+        ax.plot(k, gamma_perp, "o-", markersize=4, color="#58a6ff",
+                label=fr"$\gamma_\perp(k)$ ({_CHANNEL_HINT['perp']})")
+        ax.plot(k, gamma_par, "s-", markersize=4, color="#f0883e",
+                label=fr"$\gamma_\parallel(k)$ ({_CHANNEL_HINT['parallel']})")
         ax.set_xscale("log")
         ax.set_xlabel(r"$k\,d_i$")
         ax.set_ylabel(r"$\gamma\ [\Omega_{ci}]$")
-        ax.set_title(f"Mode-resolved growth rate ({plane})")
-        ax.grid(alpha=0.3, which="both")
-        ax.legend()
+        ax.set_title(f"Mode-resolved growth rate — {PROFILE_LABEL} ({plane})", fontsize=POSTER_TITLE)
+        ax.legend(fontsize=POSTER_LEGEND, facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
         out_file = self.outdir / f"growth_rate_vs_k_{plane}.png"
-        fig.savefig(out_file, dpi=220, bbox_inches="tight")
+        fig.savefig(out_file, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
         plt.close(fig)
         print(f"Saved growth rate plot: {out_file}")
 
     def plot_compressibility(self, times: np.ndarray, compressibility: np.ndarray, plane: str):
-        fig, ax = plt.subplots(figsize=(9, 5.2))
-        ax.plot(times, compressibility, lw=2.0, color="firebrick")
+        fig, ax = _new_dark_fig((9, 5.2))
+        ax.plot(times, compressibility, lw=2.2, color="#f85149")
         ax.set_ylim(0.0, 1.0)
         ax.set_xlabel(r"$\Omega_{ci} t$")
         ax.set_ylabel(r"$\delta B_\parallel^2 / (\delta B_\parallel^2+\delta B_\perp^2)$")
-        ax.set_title(f"Magnetic compressibility ({plane})")
-        ax.grid(alpha=0.3)
+        ax.set_title(f"Magnetic compressibility — {PROFILE_LABEL} ({plane})", fontsize=POSTER_TITLE)
         out_file = self.outdir / f"compressibility_vs_time_{plane}.png"
-        fig.savefig(out_file, dpi=220, bbox_inches="tight")
+        fig.savefig(out_file, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
         plt.close(fig)
         print(f"Saved compressibility plot: {out_file}")
 
     def plot_helicity_vs_k(self, growth_rows: list[dict], plane: str):
         k = np.array([row["k"] for row in growth_rows])
         sigma_m = np.array([row["sigma_m"] for row in growth_rows])
+        finite = np.isfinite(sigma_m)
 
-        fig, ax = plt.subplots(figsize=(9, 5.2))
-        ax.axhline(0.0, color="0.6", lw=1.0)
-        ax.plot(k, sigma_m, "o-", markersize=4, color="teal")
+        fig, ax = _new_dark_fig((9, 5.2))
+        ax.set_xlim(float(np.min(k)), float(np.max(k)))
+        ax.axhline(0.0, color=GRID_CLR, lw=1.2)
+        if np.any(finite):
+            ax.plot(k[finite], sigma_m[finite], "o-", markersize=4, color="#3fb950")
+        else:
+            ax.text(0.5, 0.5, "no measurable helicity (zero power in both transverse components)",
+                    transform=ax.transAxes, ha="center", va="center", color=TEXT_CLR, fontsize=13)
         ax.set_xscale("log")
         ax.set_ylim(-1.05, 1.05)
         ax.set_xlabel(r"$k\,d_i$")
         ax.set_ylabel(r"$\sigma_m(k)$")
-        ax.set_title(f"Reduced magnetic helicity ({plane})")
-        ax.grid(alpha=0.3, which="both")
+        ax.set_title(f"Reduced magnetic helicity — {PROFILE_LABEL} ({plane})", fontsize=POSTER_TITLE)
         out_file = self.outdir / f"helicity_vs_k_{plane}.png"
-        fig.savefig(out_file, dpi=220, bbox_inches="tight")
+        fig.savefig(out_file, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
         plt.close(fig)
         print(f"Saved helicity plot: {out_file}")
 
