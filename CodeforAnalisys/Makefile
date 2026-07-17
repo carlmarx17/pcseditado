@@ -90,12 +90,12 @@ check-case:
 	fi
 
 check-fields:
-	@test -n "$(wildcard $(FIELD_PATTERN))" || { \
+	@test -n "$(firstword $(wildcard $(FIELD_PATTERN)))" || { \
 		echo "ERROR: no field files matched $(FIELD_PATTERN)"; exit 1; \
 	}
 
 check-moments:
-	@test -n "$(wildcard $(MOMENT_PATTERN))" || { \
+	@test -n "$(firstword $(wildcard $(MOMENT_PATTERN)))" || { \
 		echo "ERROR: no moment files matched $(MOMENT_PATTERN)"; exit 1; \
 	}
 
