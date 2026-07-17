@@ -36,13 +36,14 @@ VALIDATION_OUT = $(OUTPUT_DIR)/08_validation
 PHYSICS_OUT = $(OUTPUT_DIR)/09_physical_diagnostics
 COMPARE_CASES ?=
 COMPARE_OUT ?= $(RESULTS_ROOT)/comparison_physical
+THEORY_CSV ?=
 
 export MPLCONFIGDIR ?= /tmp/psc-matplotlib
 
 .PHONY: all analysis common manifest F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM \
-	W_S_bM W_M_bM W_W_bM brazil mirror diamagnetic fields spectral dispersion validate \
-	particles heatflux physics compare-physics clean help check-fields \
-	check-moments check-particles check-case check-resolution show-inputs
+	W_S_bM W_M_bM W_W_bM brazil mirror diamagnetic fields spectral dispersion \
+	polarization validate particles heatflux physics compare-physics clean help \
+	check-fields check-moments check-particles check-case check-resolution show-inputs
 
 all: analysis
 
@@ -142,11 +143,23 @@ spectral: check-case check-fields check-resolution
 		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)"
 	$(MAKE) dispersion DATA_DIR="$(DATA_DIR)" CASE="$(CASE)" \
 		RESULTS_ROOT="$(RESULTS_ROOT)"
+	$(MAKE) polarization DATA_DIR="$(DATA_DIR)" CASE="$(CASE)" \
+		RESULTS_ROOT="$(RESULTS_ROOT)" THEORY_CSV="$(THEORY_CSV)"
 
 dispersion: check-case check-fields check-resolution
 	@echo "Generating frequency--phase-velocity mode-density plot"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) dispersion_analysis.py \
 		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)"
+
+# omega-k_parallel maps (P+, P-, sigma_m) via the circular polarization
+# psi_pm = (dBx +- i dBy)/B0, plus per-mode growth curves with a theory
+# overlay (THEORY_CSV: kdi,omega_r_over_Omegai,gamma_over_Omegai), and the
+# mirror delta_Bz(k_perp,k_parallel) oblique spectrum for mirror cases.
+polarization: check-case check-fields check-resolution
+	@echo "Generating polarized omega-k dispersion maps and mode-growth curves"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) polarization_dispersion.py \
+		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)" \
+		$(if $(THEORY_CSV),--theory-csv "$(THEORY_CSV)",)
 
 validate: check-case check-particles
 	@echo "Validating moments against $(FIRST_PARTICLE)"
@@ -195,6 +208,7 @@ help:
 	@echo "               whistler_bimaxwellian_strong whistler_bimaxwellian_moderate whistler_bimaxwellian_weak"
 	@echo "               mirror_bikappa3 mirror_bikappa5 firehose_bikappa3 firehose_bikappa5"
 	@echo "Legacy cases:  F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM W_S_bM W_M_bM W_W_bM"
-	@echo "Main targets: analysis brazil particles fields spectral diamagnetic heatflux validate physics compare-physics"
+	@echo "Main targets: analysis brazil particles fields spectral polarization diamagnetic heatflux validate physics compare-physics"
+	@echo "  make polarization DATA_DIR=... CASE=... THEORY_CSV=theory.csv  # omega-k dispersion (psi_pm), mode growth, mirror oblique spectrum"
 	@echo "Utility target: show-inputs"
 	@echo "Results default to ../analysis_results/<RUN_NAME>/"
