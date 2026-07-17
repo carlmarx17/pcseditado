@@ -42,7 +42,7 @@ export MPLCONFIGDIR ?= /tmp/psc-matplotlib
 .PHONY: all analysis common manifest F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM \
 	W_S_bM W_M_bM W_W_bM brazil mirror diamagnetic fields spectral dispersion validate \
 	particles heatflux physics compare-physics clean help check-fields \
-	check-moments check-particles check-case show-inputs
+	check-moments check-particles check-case check-resolution show-inputs
 
 all: analysis
 
@@ -104,37 +104,46 @@ check-particles:
 		echo "ERROR: no particle files matched $(PARTICLE_PATTERN)"; exit 1; \
 	}
 
-brazil: check-case check-fields check-moments
+# Compares the grid resolution baked into the PSC_PROFILE (psc_units.py)
+# against the shape actually stored in one real snapshot. A run whose
+# resolution doesn't match its declared profile silently corrupts every
+# downstream reshape/plot instead of failing loudly, so this runs before
+# any target that touches field or moment files.
+check-resolution: check-case
+	@PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) check_resolution.py \
+		--data-dir "$(DATA_DIR)" --case "$(CASE)"
+
+brazil: check-case check-fields check-moments check-resolution
 	@echo "Generating anisotropy evolution and Brazil trajectory"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) anisotropy_analysis.py \
 		--data-dir "$(DATA_DIR)" --B0 $(B0_REF) \
 		--run-name "$(RUN_NAME)" --outdir "$(ANISOTROPY_OUT)"
 
-mirror: check-case check-fields
+mirror: check-case check-fields check-resolution
 	@echo "Generating mirror-structure plots"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) mirror_physics.py \
 		--B0 $(B0_REF) --fields "$(FIELD_PATTERN)" --outdir "$(MIRROR_OUT)"
 
-diamagnetic: check-case check-fields check-moments
+diamagnetic: check-case check-fields check-moments check-resolution
 	@echo "Generating diamagnetic-current plots"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) diamagnetic_current.py \
 		--moments "$(MOMENT_PATTERN)" --fields "$(FIELD_PATTERN)" \
 		--outdir "$(DIAMAGNETIC_OUT)"
 
-fields: check-case check-fields
+fields: check-case check-fields check-resolution
 	@echo "Generating magnetic-field fluctuation plots"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) fluctuationofmagneticfiel.py \
 		--B0 $(B0_REF) --plane yz --smooth 1.5 \
 		--pattern "$(FIELD_PATTERN)" --outdir "$(FIELDS_OUT)"
 
-spectral: check-case check-fields
+spectral: check-case check-fields check-resolution
 	@echo "Generating spectral plots"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) spectral_analysis.py \
 		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)"
 	$(MAKE) dispersion DATA_DIR="$(DATA_DIR)" CASE="$(CASE)" \
 		RESULTS_ROOT="$(RESULTS_ROOT)"
 
-dispersion: check-case check-fields
+dispersion: check-case check-fields check-resolution
 	@echo "Generating frequency--phase-velocity mode-density plot"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) dispersion_analysis.py \
 		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)"
@@ -150,13 +159,13 @@ particles: check-case check-particles
 		"$(PARTICLE_PATTERN)" --run-name "$(RUN_NAME)" \
 		--outdir "$(PARTICLES_OUT)"
 
-heatflux: check-case check-fields check-moments
+heatflux: check-case check-fields check-moments check-resolution
 	@echo "Generating heat-flux plots"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) heat_flux_analysis.py \
 		--moments "$(MOMENT_PATTERN)" --fields "$(FIELD_PATTERN)" \
 		--outdir "$(HEATFLUX_OUT)"
 
-physics: check-case
+physics: check-case check-resolution
 	@echo "Generating integrated physical diagnostics"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) physical_diagnostics.py \
 		--data-dir "$(DATA_DIR)" --particles "$(PARTICLE_PATTERN)" \
