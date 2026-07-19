@@ -3,12 +3,16 @@
 plot_prt.py — Particle diagnostic suite for PSC PIC simulations.
 
 Reads HDF5 particle files and generates publication-quality diagnostics:
-  1. 2D VDF heatmap: f(v_perp, v_parallel)
-  2. Kappa vs. Maxwellian distribution comparison
-  3. Goodness-of-fit tests (Anderson-Darling & Kolmogorov-Smirnov)
-  4. Multi-time VDF snapshots
-  5. 1D distribution temporal evolution
-  6. Anisotropy + magnetic-fluctuation time series
+  1. Kappa vs. Maxwellian distribution comparison
+  2. Goodness-of-fit tests (Anderson-Darling & Kolmogorov-Smirnov)
+  3. 1D distribution temporal evolution (heatmap + suprathermal-tail overlay)
+  4. Magnetic-fluctuation time series
+  5. Energy partition and heat-flux diagnostics
+
+2D/3D VDF snapshots and the T_perp/T_par ("Brazil") evolution are no longer
+generated here -- physical_diagnostics.py (09_physical_diagnostics/) and
+anisotropy_analysis.py (01_anisotropy/) already cover both, denser and
+without this module's corner-noise-in-low-count-bins artifact.
 
 Usage:
     python plot_prt.py [path_to_prt_file | directory | glob_pattern]
@@ -33,11 +37,9 @@ import matplotlib.colors as mcolors
 from matplotlib.lines import Line2D
 from matplotlib.patches import FancyBboxPatch
 try:
-    from scipy.ndimage import gaussian_filter
     from scipy.special import gamma as gamma_func
     from scipy import stats as scipy_stats
 except ImportError:
-    gaussian_filter = lambda values, sigma=1.0: values
     gamma_func = None
     scipy_stats = None
 
@@ -67,8 +69,6 @@ plt.rcParams.update({
 OUTPUT_DIR = "prt_plots"
 DPI = 150          # reducido de 200 para menor uso de RAM en savefig
 MAX_EVOLUTION_FILES = 12
-MAX_VDF_SNAPSHOTS = 5
-NBINS_VDF = 250    # reducido de 400; suficiente para resolución publicable
 MAX_PARTICLES = 500_000  # submuestreo global si hay más partículas
 RNG_SEED = 20260612
 OUTPUT_PREFIX = ""
@@ -89,91 +89,6 @@ def _save_paper_figure(fig, path: str):
     fig.savefig(path, dpi=220, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     print(f"  Saved: {path}")
-
-
-def _centered_vdf_coordinates(species: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    vpar = np.asarray(species["pz"], dtype=float) / VA_OVER_C_
-    vx = np.asarray(species["px"], dtype=float) / VA_OVER_C_
-    vy = np.asarray(species["py"], dtype=float) / VA_OVER_C_
-    vpar = vpar - np.nanmedian(vpar)
-    vx = vx - np.nanmedian(vx)
-    vy = vy - np.nanmedian(vy)
-    vperp = np.sqrt(vx * vx + vy * vy)
-    return vpar, vperp
-
-
-def _plot_vdf_single(
-    vpar: np.ndarray,
-    vperp: np.ndarray,
-    title: str,
-    path: str,
-    *,
-    par_abs: float | None = None,
-    perp_hi: float | None = None,
-    bins_parallel: int = NBINS_VDF,
-    bins_perp: int | None = None,
-    cmap: str = "magma",
-):
-    bins_perp = bins_perp or max(96, int(bins_parallel * 0.65))
-    finite = np.isfinite(vpar) & np.isfinite(vperp)
-    vpar = vpar[finite]
-    vperp = vperp[finite]
-    if vpar.size < 10:
-        return
-    if par_abs is None:
-        par_abs = float(np.nanpercentile(np.abs(vpar), 99.7))
-    if perp_hi is None:
-        perp_hi = float(np.nanpercentile(vperp, 99.7))
-    if par_abs <= 0 or perp_hi <= 0:
-        return
-
-    hist, xedges, yedges = np.histogram2d(
-        vpar,
-        vperp,
-        bins=[bins_parallel, bins_perp],
-        range=[[-par_abs, par_abs], [0.0, perp_hi]],
-        density=True,
-    )
-    hist = gaussian_filter(hist.astype(float), sigma=0.8)
-    positive = hist[np.isfinite(hist) & (hist > 0)]
-    if positive.size == 0:
-        return
-    vmin = max(float(np.nanpercentile(positive, 1.0)), float(positive.max()) * 1e-5)
-    vmax = float(positive.max())
-
-    fig, ax = plt.subplots(figsize=(6.8, 5.4))
-    _style_paper_axes(ax)
-    im = ax.pcolormesh(
-        xedges,
-        yedges,
-        hist.T,
-        shading="auto",
-        cmap=cmap,
-        norm=LogNorm(vmin=vmin, vmax=vmax),
-    )
-    levels = vmax * np.array([1e-4, 1e-3, 1e-2, 1e-1])
-    levels = levels[(levels > vmin) & (levels < vmax)]
-    if levels.size:
-        ax.contour(
-            0.5 * (xedges[:-1] + xedges[1:]),
-            0.5 * (yedges[:-1] + yedges[1:]),
-            hist.T,
-            levels=levels,
-            colors="white",
-            linewidths=0.65,
-            alpha=0.75,
-        )
-    cbar = fig.colorbar(im, ax=ax, pad=0.02)
-    cbar.set_label(r"$f(v_\parallel,v_\perp)$ [PDF]", fontsize=14)
-    cbar.ax.tick_params(which="both", direction="in", labelsize=13)
-    ax.axvline(0.0, color="white", lw=0.8, ls=":", alpha=0.8)
-    ax.set_xlim(-par_abs, par_abs)
-    ax.set_ylim(0.0, perp_hi)
-    ax.set_xlabel(r"$(v_\parallel-\langle v_\parallel\rangle)/v_A$", fontsize=15)
-    ax.set_ylabel(r"$v_\perp/v_A$", fontsize=15)
-    ax.set_title(title, fontsize=15, fontweight="bold")
-    fig.tight_layout()
-    _save_paper_figure(fig, path)
 
 
 def output_file(outdir: str, filename: str) -> str:
@@ -354,34 +269,6 @@ def separate_species(data: np.ndarray, verbose: bool = True):
     return ions, electrons
 
 
-def compute_species_temperatures(species: np.ndarray) -> tuple[float, float]:
-    """Compute temperatures from PSC normalized momentum u = gamma*v."""
-    mass = abs(float(species["m"][0]))
-    px = np.asarray(species["px"], dtype=float)
-    py = np.asarray(species["py"], dtype=float)
-    pz = np.asarray(species["pz"], dtype=float)
-    t_perp = 0.5 * mass * (np.var(px) + np.var(py))
-    t_par = mass * np.var(pz)
-    return t_perp, t_par
-
-
-def summarize_particle_snapshot(filepath: str) -> dict:
-    """Compute anisotropy summary from one snapshot."""
-    data = load_particles(filepath, verbose=False)
-    ions, electrons = separate_species(data, verbose=False)
-    ion_tp, ion_tl = compute_species_temperatures(ions)
-    elec_tp, elec_tl = compute_species_temperatures(electrons)
-    return {
-        "step": extract_step(filepath),
-        "ion_anisotropy": ion_tp / max(ion_tl, 1e-30),
-        "electron_anisotropy": elec_tp / max(elec_tl, 1e-30),
-        "ion_tperp": ion_tp,
-        "ion_tpar": ion_tl,
-        "electron_tperp": elec_tp,
-        "electron_tpar": elec_tl,
-    }
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 #  Theoretical distributions
 # ══════════════════════════════════════════════════════════════════════════════
@@ -407,33 +294,6 @@ def _kappa_cdf(v_sorted: np.ndarray, kappa: float, v_th: float) -> np.ndarray:
     pdf = kappa_1d(v_sorted, kappa, v_th)
     cdf = np.cumsum(pdf * np.abs(dv))
     return np.clip(cdf / cdf[-1], 0.0, 1.0)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  Plot 1: 2D VDF — f(v_perp, v_parallel)
-# ══════════════════════════════════════════════════════════════════════════════
-
-def plot_vdf(ions, electrons, outdir: str):
-    """
-    2D reduced VDF: f(v_perp, v_parallel) for ions and electrons.
-
-    Each species is saved as a separate paper-style PNG. The perpendicular
-    velocity is not mirrored; it is a positive magnitude.
-    """
-    species_cfg = [
-        ("Ions", ions, "vdf_2d_ions.png", "magma"),
-        ("Electrons", electrons, "vdf_2d_electrons.png", "viridis"),
-    ]
-
-    for label, sp, filename, cmap in species_cfg:
-        vpar, vperp = _centered_vdf_coordinates(sp)
-        _plot_vdf_single(
-            vpar,
-            vperp,
-            rf"{label} VDF, initial snapshot",
-            output_file(outdir, filename),
-            cmap=cmap,
-        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -955,54 +815,6 @@ def print_summary(ions, electrons, step: int):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  Plot 5: Multi-time VDF snapshots
-# ══════════════════════════════════════════════════════════════════════════════
-
-def plot_vdf_snapshots(
-    filepaths: list[str],
-    outdir: str,
-    max_snapshots: int = MAX_VDF_SNAPSHOTS,
-    bins_parallel: int = 180,
-    bins_perp: int = 120,
-):
-    """Plot reduced VDFs for a few representative time steps."""
-    print("\nBuilding separated VDF snapshots...")
-
-    sampled_paths = sample_filepaths(filepaths, max_files=max_snapshots)
-    sampled_data = [
-        (extract_step(path), load_particle_phase_space(path))
-        for path in sampled_paths
-    ]
-
-    ion_par_max = max(np.percentile(np.abs(d["ions_pz"] / VA_OVER_C_), 99.7) for _, d in sampled_data)
-    ion_perp_max = max(np.percentile(d["ions_perp"] / VA_OVER_C_, 99.7) for _, d in sampled_data)
-    elec_par_max = max(np.percentile(np.abs(d["electrons_pz"] / VA_OVER_C_), 99.7) for _, d in sampled_data)
-    elec_perp_max = max(np.percentile(d["electrons_perp"] / VA_OVER_C_, 99.7) for _, d in sampled_data)
-
-    species_config = [
-        ("ions_pz", "ions_perp", ion_par_max, ion_perp_max, "ions", "Ions", "magma"),
-        ("electrons_pz", "electrons_perp", elec_par_max, elec_perp_max, "electrons", "Electrons", "viridis"),
-    ]
-
-    for par_key, perp_key, par_max, perp_max, slug, label, cmap in species_config:
-        for step, data in sampled_data:
-            vpar = np.asarray(data[par_key], dtype=float) / VA_OVER_C_
-            vperp = np.asarray(data[perp_key], dtype=float) / VA_OVER_C_
-            vpar = vpar - np.nanmedian(vpar)
-            _plot_vdf_single(
-                vpar,
-                vperp,
-                rf"{label} VDF, step {step}, $t\Omega_{{ci}}={step_to_omegaci(step):.2f}$",
-                output_file(outdir, f"vdf_2d_{slug}_step{step}.png"),
-                par_abs=par_max,
-                perp_hi=perp_max,
-                bins_parallel=bins_parallel,
-                bins_perp=bins_perp,
-                cmap=cmap,
-            )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
 #  Plot 6: Distribution temporal evolution
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1094,24 +906,24 @@ def plot_distribution_evolution(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  Plot 7: Anisotropy + magnetic fluctuation evolution
+#  Plot 7: Magnetic fluctuation evolution
 # ══════════════════════════════════════════════════════════════════════════════
+#
+# The particle-anisotropy-vs-time panels this function used to also produce
+# (T_perp/T_par and its inverse for ions/electrons) are dropped: they
+# duplicated 01_anisotropy's anisotropy_ratio_vs_time.png/inverse_anisotropy_
+# vs_time.png (denser, computed from all field/moment snapshots) and
+# 09_physical_diagnostics's anisotropy_vs_time.png/temperature_parallel_
+# perp_vs_time.png -- three independent implementations of the same T_perp/
+# T_par(t) curve. This module now only produces the one thing that was
+# actually unique here: the field-derived delta_B fluctuation time series.
 
 def plot_macro_evolution(
-    filepaths: list[str],
     outdir: str,
     field_files: dict[int, str] | None = None,
 ):
-    """Track particle anisotropy and magnetic fluctuations vs. time."""
-    print("\nBuilding anisotropy and magnetic-fluctuation evolution plot...")
-
-    sampled_paths = sample_filepaths(filepaths)
-    particle_rows = [summarize_particle_snapshot(p) for p in sampled_paths]
-
-    steps = np.asarray([r["step"] for r in particle_rows], dtype=float)
-    times = np.asarray([step_to_omegaci(int(step)) for step in steps])
-    ion_anis = np.asarray([r["ion_anisotropy"] for r in particle_rows], dtype=float)
-    elec_anis = np.asarray([r["electron_anisotropy"] for r in particle_rows], dtype=float)
+    """Track magnetic-field fluctuations vs. time."""
+    print("\nBuilding magnetic-fluctuation evolution plot...")
 
     field_steps = []
     delta_b_total = []
@@ -1131,34 +943,6 @@ def plot_macro_evolution(
             delta_b_total.append(metrics["delta_b_total"])
             delta_b_parallel.append(metrics["delta_b_parallel"])
             delta_b_perp.append(metrics["delta_b_perp"])
-
-    fig, ax = plt.subplots(figsize=(7.4, 5.2))
-    _style_paper_axes(ax)
-    ax.plot(times, ion_anis, marker="o", linewidth=2.0, color="#c0392b", label="Ions")
-    ax.plot(times, elec_anis, marker="s", linewidth=2.0, color="#2980b9", label="Electrons")
-    ax.axhline(1.0, color="black", linestyle=":", linewidth=1.0, alpha=0.8)
-    ax.set_ylabel(r"$T_\perp / T_\parallel$")
-    ax.set_xlabel(r"$t\Omega_{ci}$")
-    ax.set_title("Particle anisotropy")
-    ax.legend()
-    fig.tight_layout()
-    _save_paper_figure(fig, output_file(outdir, "particle_anisotropy_vs_time.png"))
-
-    fig, ax = plt.subplots(figsize=(7.4, 5.2))
-    _style_paper_axes(ax)
-    driven_anis = ion_anis if DRIVEN_SPECIES == "ion" else elec_anis
-    ax.plot(
-        times, 1.0 / np.maximum(driven_anis, 1e-30),
-        marker="o", linewidth=2.0, color="#d4a017",
-        label=rf"{DRIVEN_SPECIES}: $T_\parallel/T_\perp$",
-    )
-    ax.axhline(1.0, color="black", linestyle=":", linewidth=1.0, alpha=0.8)
-    ax.set_ylabel(r"$T_\parallel/T_\perp$")
-    ax.set_xlabel(r"$t\Omega_{ci}$")
-    ax.set_title("Inverse anisotropy of the driven species")
-    ax.legend()
-    fig.tight_layout()
-    _save_paper_figure(fig, output_file(outdir, "driven_species_inverse_anisotropy_vs_time.png"))
 
     fig, ax = plt.subplots(figsize=(7.4, 5.2))
     _style_paper_axes(ax)
@@ -1182,165 +966,6 @@ def plot_macro_evolution(
     ax.set_title("Magnetic-field fluctuations")
     fig.tight_layout()
     _save_paper_figure(fig, output_file(outdir, "magnetic_fluctuations_vs_time.png"))
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  Plot 8: Brazil plot — T_perp/T_par vs beta_par (instability thresholds)
-# ══════════════════════════════════════════════════════════════════════════════
-
-def plot_brazil(filepaths: list[str], outdir: str):
-    """Canonical Brazil plot: T_perp/T_par vs beta_parallel for ions.
-
-    Threshold curves (Gary 1993 / Hellinger 2006):
-      Mirror:         A_i = 1 + 0.77 / beta_par
-      Firehose:       A_i = 1 - 2   / beta_par
-      Oblique FH:     A_i = 1 - 1.4 / (beta_par - 0.11)^0.55
-    Each snapshot is one point; colour encodes simulation step.
-    """
-    print("\nBuilding Brazil plot (T_perp/T_par vs beta_par)...")
-
-    sampled_paths = sample_filepaths(filepaths, max_files=MAX_EVOLUTION_FILES)
-    steps_arr = np.array([extract_step(p) for p in sampled_paths], dtype=float)
-    times_arr = np.array([step_to_omegaci(int(step)) for step in steps_arr])
-
-    aniso_vals    = []
-    beta_par_vals = []
-
-    for path in sampled_paths:
-        ps = load_particle_phase_space(path)
-        # PSC stores normalized momentum u=gamma*v. In this non-relativistic
-        # setup, T = m*Var(u); subtract drift before computing beta.
-        prefix = "ions" if DRIVEN_SPECIES == "ion" else "electrons"
-        mass = M_ION if DRIVEN_SPECIES == "ion" else M_ELEC
-        tpar = mass * float(np.var(ps[f"{prefix}_pz"]))
-        tperp = 0.5 * mass * float(
-            np.var(ps[f"{prefix}_px"]) + np.var(ps[f"{prefix}_py"])
-        )
-        beta_par = 2.0 * tpar / (B0 ** 2)      # beta_i_par = 2 n T_par / B0^2 (n=1)
-        aniso    = tperp / max(tpar, 1e-30)
-        aniso_vals.append(aniso)
-        beta_par_vals.append(beta_par)
-        del ps
-        gc.collect()
-
-    aniso_vals    = np.asarray(aniso_vals,    dtype=float)
-    beta_par_vals = np.asarray(beta_par_vals, dtype=float)
-
-    # ── Threshold curves ──────────────────────────────────────────────────────
-    beta_range = np.logspace(-2, 2, 500)
-    mirror_thresh   = 1.0 + 0.77 / beta_range
-    firehose_thresh = 1.0 - 2.0  / beta_range
-    whistler_thresh = 1.0 + 0.21 / beta_range**0.6
-    with np.errstate(invalid="ignore", divide="ignore"):
-        valid_bf = beta_range > 0.11
-        oblique_fh = np.where(valid_bf,
-                               1.0 - 1.4 / (beta_range - 0.11) ** 0.55,
-                               np.nan)
-
-    # ── Figure ────────────────────────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(9, 7))
-    fig.patch.set_facecolor("#0d1117")
-    ax.set_facecolor("#111827")
-
-    # Instability regions (shaded)
-    if INSTABILITY == "whistler":
-        ax.fill_between(beta_range, whistler_thresh, 10.0, alpha=0.12,
-                        color="#9b59b6", label="_nolegend_")
-        ax.plot(beta_range, whistler_thresh, "--", color="#9b59b6", linewidth=2.0,
-                label=r"Whistler  $A_e = 1 + 0.21/\beta_{e\parallel}^{0.6}$")
-    else:
-        ax.fill_between(beta_range, mirror_thresh, 10.0, alpha=0.12,
-                        color="#e74c3c", label="_nolegend_")
-        ax.fill_between(beta_range, -10.0, np.clip(firehose_thresh, -10, 10),
-                        alpha=0.12, color="#3498db", label="_nolegend_")
-        ax.plot(beta_range, mirror_thresh, "--", color="#e74c3c", linewidth=2.0,
-                label=r"Mirror  $A_i = 1 + 0.77/\beta_{\parallel}$")
-        ax.plot(beta_range, firehose_thresh, "--", color="#3498db", linewidth=2.0,
-                label=r"Firehose  $A_i = 1 - 2/\beta_{\parallel}$")
-        ax.plot(beta_range[valid_bf], oblique_fh[valid_bf], ":",
-                color="#9b59b6", linewidth=1.8,
-                label=r"Oblique firehose (Hellinger 2006)")
-
-    # Isotropic line
-    ax.axhline(1.0, color="#aaaaaa", linestyle=":", linewidth=1.0, alpha=0.6)
-
-    # Data scatter
-    sc = ax.scatter(beta_par_vals, aniso_vals, c=times_arr,
-                    cmap="plasma", s=90, zorder=5,
-                    edgecolors="white", linewidths=0.6,
-                    norm=plt.Normalize(times_arr.min(), times_arr.max()))
-    ax.plot(beta_par_vals, aniso_vals, "-", color="white",
-            linewidth=0.8, alpha=0.4, zorder=4)
-    ax.scatter(beta_par_vals[0],  aniso_vals[0],  marker="D", s=130,
-               color="#2ecc71", zorder=6, label=f"t=0  (step {int(steps_arr[0])})")
-    ax.scatter(beta_par_vals[-1], aniso_vals[-1], marker="*", s=220,
-               color="#f1c40f", zorder=6, label=f"Final (step {int(steps_arr[-1])})")
-
-    # Region labels
-    if INSTABILITY == "whistler":
-        ax.text(0.03, 0.94, "WHISTLER\nUNSTABLE", transform=ax.transAxes,
-                color="#9b59b6", fontsize=12, alpha=0.9, va="top")
-    else:
-        ax.text(0.03, 0.94, "MIRROR\nUNSTABLE", transform=ax.transAxes,
-                color="#e74c3c", fontsize=12, alpha=0.9, va="top")
-        ax.text(0.03, 0.08, "FIREHOSE\nUNSTABLE", transform=ax.transAxes,
-                color="#3498db", fontsize=12, alpha=0.9, va="bottom")
-    ax.text(0.72, 0.72, "STABLE", transform=ax.transAxes,
-            color="#aaaaaa", fontsize=12, alpha=0.6, va="bottom")
-
-    # Colourbar for time
-    cbar = fig.colorbar(sc, ax=ax, pad=0.02)
-    cbar.set_label(r"$t\Omega_{ci}$", color="white", fontsize=14)
-    cbar.ax.yaxis.set_tick_params(color="white", labelcolor="white")
-    plt.setp(plt.getp(cbar.ax, "yticklabels"), color="white")
-
-    ax.set_xscale("log")
-    xmin = max(0.01, float(np.nanmin(beta_par_vals)) / 1.5)
-    xmax = max(xmin * 2.0, float(np.nanmax(beta_par_vals)) * 1.5)
-    ymin = max(0.03, float(np.nanmin(aniso_vals)) / 1.5)
-    ymax = max(1.25, float(np.nanmax(aniso_vals)) * 1.5)
-    ax.set_xlim(xmin, xmax)
-    ax.set_ylim(ymin, ymax)
-    species_symbol = "i" if DRIVEN_SPECIES == "ion" else "e"
-    ax.set_xlabel(rf"$\beta_{{\parallel,{species_symbol}}}"
-                  rf" = 2\,n\,T_{{\parallel,{species_symbol}}}\,/\,B_0^2$",
-                  fontsize=16, color="white")
-    ax.set_ylabel(rf"$A_{species_symbol} = T_{{\perp,{species_symbol}}}"
-                  rf"\,/\,T_{{\parallel,{species_symbol}}}$",
-                  fontsize=16, color="white")
-    ax.set_title(
-        rf"Brazil Plot — {PROFILE_LABEL}",
-        fontsize=17, fontweight="bold", color="white", pad=12,
-    )
-    ax.tick_params(colors="white", which="both")
-    for spine in ax.spines.values():
-        spine.set_edgecolor("#444")
-    ax.grid(True, alpha=0.15, color="white", linestyle="--", which="both")
-    ax.legend(fontsize=12, loc="upper right",
-              facecolor="#1a1a2e", edgecolor="#444",
-              labelcolor="white", framealpha=0.85)
-
-    plt.tight_layout()
-    path = output_file(outdir, "brazil_plot.png")
-    plt.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="#0d1117")
-    plt.close()
-    print(f"  Saved: {path}")
-
-    csv_path = output_file(outdir, "particle_anisotropy_evolution.csv")
-    with open(csv_path, "w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow([
-            "case", "species", "step", "omega_ci_t", "anisotropy",
-            "parallel_over_perpendicular", "beta_parallel",
-        ])
-        for step, time, aniso, beta in zip(
-            steps_arr.astype(int), times_arr, aniso_vals, beta_par_vals
-        ):
-            writer.writerow([
-                PROFILE_LABEL, DRIVEN_SPECIES, step, time, aniso,
-                1.0 / max(aniso, 1e-30), beta,
-            ])
-    print(f"  Saved: {csv_path}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1799,10 +1424,8 @@ def main():
             f"Using latest snapshot for static plots: {os.path.basename(filepath)}"
         )
         field_files = resolve_field_files(os.path.dirname(os.path.abspath(filepath)))
-        plot_vdf_snapshots(filepaths, outdir);                          gc.collect()
         plot_distribution_evolution(filepaths, outdir);                  gc.collect()
-        plot_macro_evolution(filepaths, outdir, field_files=field_files); gc.collect()
-        plot_brazil(filepaths, outdir);                                   gc.collect()
+        plot_macro_evolution(outdir, field_files=field_files);           gc.collect()
         # ── New diagnostics ────────────────────────────────────────────
         print("\nRunning distribution-tail and energy diagnostics...")
         plot_1d_vdf_evolution(filepaths, outdir);                         gc.collect()
@@ -1815,7 +1438,6 @@ def main():
     print_summary(ions, electrons, extract_step(filepath))
 
     print("\nGenerating plots...")
-    plot_vdf(ions, electrons, outdir);      gc.collect()
     if KAPPA is not None:
         plot_kappa_comparison(ions, outdir); gc.collect()
         print("\nRunning goodness-of-fit tests (Anderson-Darling & Kolmogorov-Smirnov)...")

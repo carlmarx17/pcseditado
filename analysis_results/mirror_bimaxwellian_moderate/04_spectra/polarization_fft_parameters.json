@@ -1,0 +1,40 @@
+{
+  "case": "mirror_bimaxwellian_moderate",
+  "instability": "mirror",
+  "distribution": "Bi-Maxwellian",
+  "plane": "yz",
+  "parallel_axis": "z",
+  "normalization": "ion",
+  "b0": 0.08,
+  "n_snapshots_used": 2349,
+  "t_omegaci_range": [
+    0.0,
+    154.90277777777777
+  ],
+  "selected_modes_kdi": [
+    0.3141592653589793,
+    0.6283185307179586
+  ],
+  "polarization_convention_check": {
+    "Bx=cos(kz-wt), By=+sin(kz-wt)": {
+      "psi_plus": {
+        "peak_k": 0.2945243112740431,
+        "peak_omega": 0.39269908169872414
+      },
+      "psi_minus": {
+        "peak_k": -0.2945243112740431,
+        "peak_omega": -0.39269908169872414
+      }
+    },
+    "Bx=cos(kz-wt), By=-sin(kz-wt)": {
+      "psi_plus": {
+        "peak_k": -0.2945243112740431,
+        "peak_omega": -0.39269908169872414
+      },
+      "psi_minus": {
+        "peak_k": 0.2945243112740431,
+        "peak_omega": 0.39269908169872414
+      }
+    }
+  }
+}

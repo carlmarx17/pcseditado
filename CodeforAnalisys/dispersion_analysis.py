@@ -51,7 +51,7 @@ def compute_phase_velocity_density(
     velocity_bins: int = 240,
     frequency_bins: int = 180,
     absolute_velocity: bool = True,
-    max_spatial_mode: int = 64,
+    max_spatial_mode: int = 128,
     temporal_fft_size: int = 128,
 ) -> dict:
     """Transform B(t, axis0, axis1) into weighted (omega, v_phase) density.
@@ -168,7 +168,12 @@ def compute_phase_velocity_density(
         range=((0.0, omega_max), velocity_range),
         weights=weights,
     )
-    density = _smooth_2d(density, passes=2)
+    # Each discrete k contributes one straight v_ph=omega/k ray; with too few
+    # independent k's relative to the velocity/frequency bin count, those rays
+    # show up as separate streaks instead of merging into a continuum. Using
+    # more spatial modes (max_spatial_mode above) and a bit more smoothing
+    # here closes most of the gaps between them.
+    density = _smooth_2d(density, passes=3)
     # Conditional density P(v_phase | omega): this prevents frequencies with
     # larger total fluctuation power from hiding weaker but coherent branches.
     frequency_power = np.sum(density, axis=1, keepdims=True)
@@ -387,7 +392,7 @@ def main() -> int:
     parser.add_argument("--dz", type=float, default=DX_DI)
     parser.add_argument("--velocity-min", type=float, default=0.5)
     parser.add_argument("--velocity-max", type=float, default=12.0)
-    parser.add_argument("--max-spatial-mode", type=int, default=64)
+    parser.add_argument("--max-spatial-mode", type=int, default=128)
     parser.add_argument("--temporal-fft-size", type=int, default=128)
     parser.add_argument("--signed-velocity", action="store_true")
     parser.add_argument("--ridges", type=int, default=2)

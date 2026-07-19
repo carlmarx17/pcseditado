@@ -1,0 +1,11 @@
+Profile: Firehose Strong Bi-Maxwellian (local)
+Instability: firehose
+Initial step: 0
+T_parallel_i = 0.012482052
+T_perp_i     = 0.0012472051
+A_i          = 0.099919873
+R_i          = 10.008019
+beta_parallel_i = 9.9856418
+
+firehose: expected A_i < 1, R_i > 1 and T_parallel_i > T_perp_i
+Initial check: PASS

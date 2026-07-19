@@ -37,6 +37,24 @@ from psc_units import (
 
 EPS = 1e-30
 
+# Mirror is fundamentally oblique/compressive (see module docstring), but the
+# Makefile runs this psi_pm diagnostic unconditionally for every instability.
+# For a mirror case, spatial_fft_kpar0 below only keeps the k_perp=0 slice, a
+# purely field-aligned fluctuation that is a *different* mode from the real
+# oblique mirror mode (theta_kB != 0, see mirror_bparallel_spectrum output).
+# Flag that on every psi_pm plot instead of letting it look like a duplicate
+# or a broken +/- polarization split.
+MIRROR_CAVEAT = (
+    r"Note: $\psi_\pm$ only sees the $k_\perp=0$ slice; this mirror case's actual "
+    "oblique instability is shown in mirror_bparallel_spectrum, not here."
+)
+
+
+def _add_mirror_caveat(fig) -> None:
+    if INSTABILITY != "mirror":
+        return
+    fig.text(0.5, -0.02, MIRROR_CAVEAT, ha="center", va="top", fontsize=9.5, color="#8b949e")
+
 
 # ── Data loading ──────────────────────────────────────────────────────────
 
@@ -158,8 +176,17 @@ def temporal_dispersion(
     return np.abs(S) ** 2, omega
 
 
-def sigma_m(power_plus: np.ndarray, power_minus: np.ndarray) -> np.ndarray:
-    return (power_plus - power_minus) / (power_plus + power_minus + EPS)
+def sigma_m(power_plus: np.ndarray, power_minus: np.ndarray, min_relative_power: float = 1e-4) -> np.ndarray:
+    """(P+-P-)/(P++P-), masked to NaN wherever P++P- is below
+    ``min_relative_power`` of its own peak. Outside the real signal ridge both
+    channels sit at the numerical noise floor, so the raw ratio is noise
+    divided by noise (visible as uniform +/-1 speckle covering the whole
+    map); masking those pixels leaves only the bins with enough power for the
+    ratio to mean anything."""
+    total = power_plus + power_minus
+    sigma = (power_plus - power_minus) / (total + EPS)
+    max_total = float(np.max(total)) if np.max(total) > 0 else 1.0
+    return np.where(total >= min_relative_power * max_total, sigma, np.nan)
 
 
 # ── Convention check (spec section 8) ────────────────────────────────────
@@ -311,6 +338,7 @@ def plot_dispersion_map(
     ax.set_xlabel(k_label)
     ax.set_ylabel(omega_label)
     ax.set_title(title, fontsize=17)
+    _add_mirror_caveat(fig)
     fig.savefig(outpath, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
     plt.close(fig)
     print(f"Saved dispersion map: {outpath}")
@@ -318,7 +346,9 @@ def plot_dispersion_map(
 
 def plot_sigma_map(sigma: np.ndarray, k_par: np.ndarray, omega: np.ndarray, title: str, outpath: Path, k_label: str, omega_label: str):
     fig, ax = _new_dark_fig((9.2, 7.2))
-    mesh = ax.pcolormesh(k_par, omega, sigma, shading="auto", cmap="RdBu_r", vmin=-1.0, vmax=1.0)
+    cmap = plt.get_cmap("RdBu_r").copy()
+    cmap.set_bad(PANEL_BG)  # masked (below-noise-floor) bins blend into the background
+    mesh = ax.pcolormesh(k_par, omega, sigma, shading="auto", cmap=cmap, vmin=-1.0, vmax=1.0)
     cb = fig.colorbar(mesh, ax=ax)
     cb.set_label(r"$\sigma_m = (P_+-P_-)/(P_++P_-)$", color=TEXT_CLR)
     cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
@@ -326,6 +356,7 @@ def plot_sigma_map(sigma: np.ndarray, k_par: np.ndarray, omega: np.ndarray, titl
     ax.set_xlabel(k_label)
     ax.set_ylabel(omega_label)
     ax.set_title(title, fontsize=17)
+    _add_mirror_caveat(fig)
     fig.savefig(outpath, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
     plt.close(fig)
     print(f"Saved helicity map: {outpath}")
@@ -364,6 +395,7 @@ def plot_mode_growth(
     ax.set_title(fr"Mode growth $\psi_{polarization}$, $k\,{length_unit}={k_val:.3g}$, {PROFILE_LABEL}", fontsize=15)
     if ax.get_legend_handles_labels()[0]:
         ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR, fontsize=11)
+    _add_mirror_caveat(fig)
     fig.savefig(outpath, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
     plt.close(fig)
     print(f"Saved mode-growth curve: {outpath}")
@@ -385,6 +417,26 @@ def plot_mirror_bparallel(
     ax.set_ylabel(r"$k_\parallel\,d_i$")
     ax.set_title(f"Mirror $\\delta B_z$ oblique spectrum, {PROFILE_LABEL}", fontsize=16)
     ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
+
+    # The mirror mode peak usually sits within a few k_min of the origin, which
+    # is invisible against the full +/-Nyquist axis range shown above. Add a
+    # zoomed inset around the peak so the actual oblique structure is legible
+    # instead of only a fading haze around k=0.
+    k_par_peak = float(k0[peak_idx[0]])
+    k_perp_peak = float(k1[peak_idx[1]])
+    zoom = max(8.0 * max(abs(k_par_peak), abs(k_perp_peak)), 5.0 * float(np.median(np.abs(np.diff(k0)))))
+    if zoom < 0.9 * max(float(np.max(np.abs(k0))), float(np.max(np.abs(k1)))):
+        axins = ax.inset_axes([0.60, 0.60, 0.38, 0.38])
+        axins.set_facecolor(PANEL_BG)
+        axins.pcolormesh(k1, k0, log_power, shading="auto", cmap="inferno", vmin=-6, vmax=0)
+        axins.plot(k_perp_peak, k_par_peak, "x", color="#3fb950", markersize=10, mew=2.2)
+        axins.set_xlim(-zoom, zoom)
+        axins.set_ylim(-zoom, zoom)
+        axins.tick_params(colors=TEXT_CLR, labelsize=8)
+        for spine in axins.spines.values():
+            spine.set_edgecolor(GRID_CLR)
+        ax.indicate_inset_zoom(axins, edgecolor=TEXT_CLR)
+
     fig.savefig(outpath, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
     plt.close(fig)
     print(f"Saved mirror oblique spectrum: {outpath}")
@@ -478,6 +530,15 @@ def main() -> int:
     print("Polarization convention check (synthetic Bx=cos(kz-wt), By=+-sin(kz-wt)):")
     for label, entry in convention.items():
         print(f"  {label}: {entry}")
+
+    if INSTABILITY == "mirror":
+        print(
+            "[NOTE] instability='mirror': the psi_pm dispersion/mode-growth plots below "
+            "only cover the k_perp=0 slice, not the oblique mirror mode itself (see "
+            "mirror_bparallel_spectrum for that). psi_plus/psi_minus commonly come out "
+            "nearly identical here because a k_perp=0 fluctuation isn't preferentially "
+            "circularly polarized -- that is expected, not a duplicate/bug."
+        )
 
     series = load_bxyz_series(args.fields, args.plane, args.dx, args.dy, args.dz)
     times_step = series["steps"]

@@ -153,9 +153,9 @@ def _run_step_tasks(worker, tasks: list[tuple], jobs: int, label: str) -> list:
     return sorted(results, key=lambda item: item[0])
 
 
-def _savefig(fig, path: Path):
+def _savefig(fig, path: Path, pad_inches: float = 0.1):
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
+    fig.savefig(path, dpi=180, bbox_inches="tight", pad_inches=pad_inches, facecolor=fig.get_facecolor())
     plt.close(fig)
 
 
@@ -192,6 +192,44 @@ def _select_steps(steps: list[int], requested: list[int] | None, max_count: int)
         return steps
     idx = np.unique(np.linspace(0, len(steps) - 1, max_count, dtype=int))
     return [steps[i] for i in idx]
+
+
+def _select_steps_by_cadence(
+    steps: list[int], requested: list[int] | None, cadence_omegaci: float,
+    step_to_time, max_count: int | None = None,
+) -> list[int]:
+    """Pick one snapshot per ``cadence_omegaci`` interval of physical time.
+
+    The previous particle-step selection (``_select_steps``) spread a fixed
+    count evenly across *indices* of whatever dump files happened to exist,
+    which has no relationship to Omega_ci*t -- the resulting cadence changed
+    with how many particle dumps a given run happened to leave behind. This
+    walks the available steps in time order and keeps the first one at or
+    past each 10*n Omega_ci boundary, so the VDF evolution (and every other
+    per-step particle diagnostic fed by the same selection) is spaced in
+    physical time, never denser than the raw dumps allow and never fabricated
+    between them.
+    """
+    if requested:
+        requested_set = set(requested)
+        return [s for s in steps if s in requested_set]
+    if not steps:
+        return []
+    times = {s: step_to_time(s) for s in steps}
+    ordered = sorted(steps, key=lambda s: times[s])
+    if cadence_omegaci <= 0:
+        selected = ordered
+    else:
+        selected = []
+        next_target = times[ordered[0]]
+        for s in ordered:
+            if times[s] + 1e-9 >= next_target:
+                selected.append(s)
+                next_target = times[s] + cadence_omegaci
+    if max_count is not None and len(selected) > max_count:
+        idx = np.unique(np.linspace(0, len(selected) - 1, max_count, dtype=int))
+        selected = [selected[i] for i in idx]
+    return selected
 
 
 def _read_particle_snapshot(path: str, max_particles: int) -> ParticleSnapshot:
@@ -667,7 +705,20 @@ def plot_time_series(rows: list[dict], outdir: Path):
     _savefig(fig, outdir / "temperature_parallel_perp_vs_time.png")
 
 
-def plot_vdf2d(snapshot: ParticleSnapshot, outdir: Path, species: str = "ion") -> Path | None:
+def plot_vdf2d(
+    snapshot: ParticleSnapshot, outdir: Path, species: str = "ion", min_counts: int = 8,
+) -> Path | None:
+    """f(v_parallel, v_perp) as a log-density heatmap.
+
+    The (v_parallel, v_perp) domain is a rectangle sized from independent
+    percentiles of each axis, but the underlying population is closer to
+    isotropic/elliptical: the rectangle's corners (large |v_par| *and* large
+    v_perp at once) are almost empty, so with only a handful of raw particles
+    landing there the weighted density in those bins is dominated by shot
+    noise -- a speckled black/white "broken" patch instead of a smooth falloff.
+    Masking bins with too few raw (unweighted) particles removes that without
+    touching the physically populated core.
+    """
     mask = _species_mask(snapshot, species)
     if not np.any(mask):
         return None
@@ -681,12 +732,16 @@ def plot_vdf2d(snapshot: ParticleSnapshot, outdir: Path, species: str = "ion") -
     perp_hi = np.nanpercentile(vperp, 99.7)
     if par_abs <= 0 or perp_hi <= 0:
         return None
+    bins = (220, 150)
+    hist_range = ((-par_abs, par_abs), (0.0, perp_hi))
     hist, xedges, yedges = np.histogram2d(
-        vpar, vperp, bins=(220, 150), weights=weights,
-        range=((-par_abs, par_abs), (0.0, perp_hi)), density=True,
+        vpar, vperp, bins=bins, weights=weights, range=hist_range, density=True,
     )
+    counts, _, _ = np.histogram2d(vpar, vperp, bins=bins, range=hist_range)
     if gaussian_filter is not None:
         hist = gaussian_filter(hist.astype(float), sigma=0.8)
+        counts = gaussian_filter(counts.astype(float), sigma=0.8)
+    hist = np.where(counts >= min_counts, hist, np.nan)
 
     finite_hist = hist[np.isfinite(hist) & (hist > 0)]
     if finite_hist.size == 0:
@@ -694,14 +749,12 @@ def plot_vdf2d(snapshot: ParticleSnapshot, outdir: Path, species: str = "ion") -
     vmin = max(np.nanpercentile(finite_hist, 1.0), np.nanmax(finite_hist) * 1e-5)
     vmax = np.nanmax(finite_hist)
     fig, ax = plt.subplots(figsize=(6.8, 5.4))
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
-    ax.tick_params(which="both", direction="in", top=True, right=True, labelsize=13)
-    ax.minorticks_on()
-    for spine in ax.spines.values():
-        spine.set_linewidth(1.0)
+    fig.patch.set_facecolor(DARK_BG)
+    _style_axes(ax)
+    cmap = plt.get_cmap("magma").copy()
+    cmap.set_bad(PANEL_BG)
     pcm = ax.pcolormesh(
-        xedges, yedges, hist.T, cmap="magma",
+        xedges, yedges, hist.T, cmap=cmap,
         norm=LogNorm(vmin=vmin, vmax=vmax),
         shading="auto",
     )
@@ -713,22 +766,111 @@ def plot_vdf2d(snapshot: ParticleSnapshot, outdir: Path, species: str = "ion") -
             0.5 * (yedges[:-1] + yedges[1:]),
             hist.T,
             levels=levels,
-            colors="white",
+            colors=TEXT_CLR,
             linewidths=0.65,
-            alpha=0.75,
+            alpha=0.6,
         )
     cb = fig.colorbar(pcm, ax=ax, pad=0.02)
-    cb.set_label(r"$f(v_\parallel,v_\perp)$ [PDF]", fontsize=13)
-    cb.ax.tick_params(which="both", direction="in", labelsize=12)
-    ax.axvline(0.0, color="white", lw=0.8, ls=":", alpha=0.8)
-    ax.set_xlabel(r"$(v_\parallel-\langle v_\parallel\rangle)/v_A$", fontsize=14)
-    ax.set_ylabel(r"$v_\perp/v_A$", fontsize=14)
+    cb.set_label(r"$f(v_\parallel,v_\perp)$ [PDF]", fontsize=13, color=TEXT_CLR)
+    cb.ax.tick_params(which="both", direction="in", labelsize=12, colors=TEXT_CLR)
+    plt.setp(plt.getp(cb.ax, "yticklabels"), color=TEXT_CLR)
+    ax.axvline(0.0, color=TEXT_CLR, lw=0.8, ls=":", alpha=0.6)
+    ax.set_xlabel(r"$(v_\parallel-\langle v_\parallel\rangle)/v_A$", fontsize=14, color=TEXT_CLR)
+    ax.set_ylabel(r"$v_\perp/v_A$", fontsize=14, color=TEXT_CLR)
     ax.set_title(
         rf"{species.capitalize()} VDF, step {snapshot.step}, $t\Omega_{{ci}}={snapshot.time:.2f}$",
-        fontsize=14, fontweight="bold",
+        fontsize=14, fontweight="bold", color=TEXT_CLR,
     )
-    path = outdir / f"vdf_2d_step_{snapshot.step}.png"
+    path = outdir / f"vdf_2d_{species}_step_{snapshot.step}.png"
     _savefig(fig, path)
+    return path
+
+
+def plot_vdf3d(
+    snapshot: ParticleSnapshot, outdir: Path, species: str = "ion", max_points: int = 35_000,
+) -> Path | None:
+    """3D velocity-space scatter of f(vx, vy, vz), points colored by local
+    phase-space density (from a coarse 3D histogram) rather than a flat
+    color, and density-weighted subsampling so the plotted cloud still reads
+    as a distribution instead of a diffuse haze of equally-likely points."""
+    mask = _species_mask(snapshot, species)
+    if not np.any(mask):
+        return None
+    vx, vy, vz = snapshot.px[mask], snapshot.py[mask], snapshot.pz[mask]
+    weights = snapshot.w[mask]
+    vx = (vx - _weighted_mean(vx, weights)) / VA
+    vy = (vy - _weighted_mean(vy, weights)) / VA
+    vz = (vz - _weighted_mean(vz, weights)) / VA
+
+    speed = np.sqrt(vx**2 + vy**2 + vz**2)
+    v_lim = np.nanpercentile(speed, 99.0)
+    if not np.isfinite(v_lim) or v_lim <= 0:
+        return None
+    keep = speed <= v_lim
+    vx, vy, vz, weights = vx[keep], vy[keep], vz[keep], weights[keep]
+    if vx.size < 50:
+        return None
+
+    nbins = 36
+    edges = np.linspace(-v_lim, v_lim, nbins + 1)
+    density3d, _ = np.histogramdd((vz, vx, vy), bins=(edges, edges, edges), weights=weights)
+    if gaussian_filter is not None:
+        density3d = gaussian_filter(density3d.astype(float), sigma=1.0)
+
+    iz = np.clip(np.digitize(vz, edges) - 1, 0, nbins - 1)
+    ix = np.clip(np.digitize(vx, edges) - 1, 0, nbins - 1)
+    iy = np.clip(np.digitize(vy, edges) - 1, 0, nbins - 1)
+    point_density = density3d[iz, ix, iy]
+    valid = point_density > 0
+    if np.count_nonzero(valid) < 50:
+        return None
+    vx, vy, vz, point_density = vx[valid], vy[valid], vz[valid], point_density[valid]
+
+    if vx.size > max_points:
+        prob = point_density / point_density.sum()
+        idx = RNG.choice(vx.size, size=max_points, replace=False, p=prob)
+        vx, vy, vz, point_density = vx[idx], vy[idx], vz[idx], point_density[idx]
+
+    order = np.argsort(point_density)  # draw the densest points last (on top)
+    vx, vy, vz, point_density = vx[order], vy[order], vz[order], point_density[order]
+    log_density = np.log10(point_density)
+
+    fig = plt.figure(figsize=(7.6, 6.8))
+    fig.patch.set_facecolor(DARK_BG)
+    ax = fig.add_subplot(111, projection="3d")
+    ax.set_facecolor(DARK_BG)
+    sc = ax.scatter(
+        vz, vx, vy, c=log_density, cmap="magma", s=4, alpha=0.55,
+        linewidths=0, depthshade=True,
+    )
+    ax.set_box_aspect((1, 1, 1))
+    ax.set_xlim(-v_lim, v_lim)
+    ax.set_ylim(-v_lim, v_lim)
+    ax.set_zlim(-v_lim, v_lim)
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        axis.set_major_locator(plt.MaxNLocator(5))  # dense ticks overlap badly at this view angle
+    ax.set_xlabel(r"$v_\parallel/v_A$", color=TEXT_CLR, labelpad=14)
+    ax.set_ylabel(r"$v_{x,\perp}/v_A$", color=TEXT_CLR, labelpad=14)
+    ax.set_zlabel(r"$v_{y,\perp}/v_A$", color=TEXT_CLR, labelpad=10)
+    ax.tick_params(colors=TEXT_CLR, labelsize=10, pad=2)
+    ax.view_init(elev=18, azim=-55)
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        axis.pane.set_facecolor(PANEL_BG)
+        axis.pane.set_alpha(0.6)
+        axis._axinfo["grid"]["color"] = GRID_CLR
+        axis._axinfo["grid"]["linewidth"] = 0.5
+    ax.set_title(
+        rf"{species.capitalize()} 3D VDF, step {snapshot.step}, $t\Omega_{{ci}}={snapshot.time:.2f}$",
+        color=TEXT_CLR, fontweight="bold", pad=14,
+    )
+    cb = fig.colorbar(sc, ax=ax, shrink=0.65, pad=0.1)
+    cb.set_label(r"$\log_{10} f(v_x,v_y,v_z)$ [PDF]", color=TEXT_CLR)
+    cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
+    plt.setp(plt.getp(cb.ax, "yticklabels"), color=TEXT_CLR)
+    path = outdir / f"vdf_3d_{species}_step_{snapshot.step}.png"
+    # mplot3d's tight-bbox calculation doesn't account for the rotated 3D axis
+    # labels, so the default pad_inches clips the x-label off the bottom edge.
+    _savefig(fig, path, pad_inches=0.4)
     return path
 
 
@@ -781,8 +923,24 @@ def plot_distribution_fit(fit: dict, outdir: Path):
     _savefig(fig, outdir / f"kappa_vs_maxwellian_step_{fit['step']}.png")
 
 
-def plot_map(field: np.ndarray, path: Path, title: str, label: str, cmap="viridis", symmetric=False):
+def plot_map(
+    field: np.ndarray, path: Path, title: str, label: str, cmap="viridis", symmetric=False,
+    smooth_sigma: float | None = None,
+):
+    """``smooth_sigma`` applies a display-only Gaussian smoothing (matching the
+    sigma=3.0 already used for the J_dia maps in compute_jdia): single-cell
+    moment quantities like T_par/T_perp/A_i/q_par/q_perp are dominated by
+    per-cell particle-counting shot noise without it -- the map otherwise
+    renders as uniform salt-and-pepper noise with no visible physical
+    structure. Only the plotted copy is smoothed; callers that also feed
+    ``field`` into scalar statistics (mean/percentiles) or correlations pass
+    the raw array there unchanged."""
     arr = np.asarray(field, dtype=float)
+    if smooth_sigma is not None and gaussian_filter is not None:
+        finite = np.isfinite(arr)
+        if np.any(finite):
+            filled = np.where(finite, arr, np.nanmedian(arr[finite]))
+            arr = gaussian_filter(filled, sigma=smooth_sigma)
     fig, ax = plt.subplots(figsize=(7.6, 6.2))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
@@ -1072,15 +1230,15 @@ def plot_scatter(x, y, path: Path, xlabel: str, ylabel: str, title: str):
 
 def _process_particle_step_worker(args):
     """Worker function for run_particles to process a single step in parallel."""
-    step, filepath, max_particles, outdir = args
+    step, filepath, max_particles, outdir, want_vdf = args
     try:
         snap = _read_particle_snapshot(filepath, max_particles)
         if snap is None:
-            return step, None, None, None
-        
+            return step, None, [], None
+
         ion = particle_temperatures(snap, "ion")
         elec = particle_temperatures(snap, "electron")
-        
+
         row = None
         if ion:
             beta_par = 2.0 * ion["T_parallel"] / (B0**2 + 1e-30)
@@ -1100,13 +1258,23 @@ def _process_particle_step_worker(args):
             row.update(particle_heat_flux(snap, "ion"))
             row.update(particle_energy(snap, "ion"))
 
-        path = plot_vdf2d(snap, outdir, "ion")
+        # Both species, both a 2D reduced (v_par,v_perp) heatmap and a true 3D
+        # (vx,vy,vz) scatter -- but only on the steps selected for the VDF
+        # cadence; every other selected step still contributes its row above.
+        vdf_paths = []
+        if want_vdf:
+            vdf_paths = [
+                path
+                for species in ("ion", "electron")
+                for path in (plot_vdf2d(snap, outdir, species), plot_vdf3d(snap, outdir, species))
+                if path is not None
+            ]
         fit = fit_distribution(snap, "ion")
-        
-        return step, row, path, fit
+
+        return step, row, vdf_paths, fit
     except Exception as exc:
         print(f"\n[ERROR] Step {step} processing failed: {exc}")
-        return step, None, None, None
+        return step, None, [], None
 
 
 def _field_metrics_worker(args):
@@ -1192,11 +1360,14 @@ def _thermal_map_worker(args):
     step, moment_file, field_file, species, outdir = args
     maps = moment_thermal_maps(moment_file, field_file, species)
     plot_map(maps["T_parallel"], outdir / f"T_parallel_map_step_{step}.png",
-             rf"$T_{{\parallel i}}$ - step {step}", r"$T_{\parallel i}$", cmap="plasma")
+             rf"$T_{{\parallel i}}$ - step {step}", r"$T_{\parallel i}$", cmap="plasma",
+             smooth_sigma=3.0)
     plot_map(maps["T_perp"], outdir / f"T_perp_map_step_{step}.png",
-             rf"$T_{{\perp i}}$ - step {step}", r"$T_{\perp i}$", cmap="plasma")
+             rf"$T_{{\perp i}}$ - step {step}", r"$T_{\perp i}$", cmap="plasma",
+             smooth_sigma=3.0)
     plot_map(maps["A"], outdir / f"A_i_map_step_{step}.png",
-             rf"$A_i=T_\perp/T_\parallel$ - step {step}", r"$A_i$", cmap="RdYlBu_r")
+             rf"$A_i=T_\perp/T_\parallel$ - step {step}", r"$A_i$", cmap="RdYlBu_r",
+             smooth_sigma=3.0)
     return step, True
 
 
@@ -1209,10 +1380,11 @@ class PhysicalDiagnostics:
         field_pattern: str | None,
         moment_pattern: str | None,
         max_particles: int,
-        max_particle_steps: int,
+        max_particle_steps: int | None,
         max_map_steps: int,
         selected_steps: list[int] | None,
         jobs: int = 0,
+        vdf_cadence_omegaci: float = 10.0,
     ):
         self.data_dir = Path(data_dir).expanduser().resolve()
         self.outdir = Path(outdir)
@@ -1221,6 +1393,7 @@ class PhysicalDiagnostics:
         self.max_map_steps = max_map_steps
         self.selected_steps = selected_steps
         self.jobs = jobs
+        self.vdf_cadence_omegaci = vdf_cadence_omegaci
         discovered = PICDataReader.discover_outputs(str(self.data_dir))
         if particle_pattern:
             self.particle_files = PICDataReader.find_files(particle_pattern)
@@ -1262,24 +1435,42 @@ class PhysicalDiagnostics:
             return []
 
         steps = sorted(self.particle_files)
-        selected = _select_steps(steps, self.selected_steps, self.max_particle_steps)
+        # Every available (or --steps-selected/--max-particle-steps-capped) snapshot
+        # feeds the temperature/anisotropy/energy/fit time series -- that resolution
+        # is independent of how often we want a VDF frame. Only the VDF plots
+        # themselves are thinned to the requested Omega_ci*t cadence; a run short
+        # enough to yield one VDF frame at that cadence should not also collapse
+        # its temperature-vs-time curves to a single point.
+        selected = (
+            [s for s in steps if s in set(self.selected_steps)] if self.selected_steps
+            else _select_steps(steps, None, self.max_particle_steps)
+            if self.max_particle_steps is not None else steps
+        )
+        vdf_steps = set(_select_steps_by_cadence(
+            steps, self.selected_steps, self.vdf_cadence_omegaci, step_to_omegaci,
+        ))
+        print(
+            f"[INFO] {len(selected)} particle snapshot(s) selected for time-series diagnostics "
+            f"(of {len(steps)} available); {len(vdf_steps & set(selected))} of those get a VDF frame "
+            f"at ~{self.vdf_cadence_omegaci:g} Omega_ci*t cadence."
+        )
         rows = []
         fit_rows = []
         vdf_paths = []
         first_fit = None
 
         tasks = [
-            (step, self.particle_files[step], self.max_particles, self.outdir)
+            (step, self.particle_files[step], self.max_particles, self.outdir, step in vdf_steps)
             for step in selected
         ]
         results = _run_step_tasks(
             _process_particle_step_worker, tasks, self.jobs, "Particle diagnostics"
         )
-        for step, row, path, fit in results:
+        for step, row, paths, fit in results:
             if row:
                 rows.append(row)
-            if path:
-                vdf_paths.append(path)
+            if paths:
+                vdf_paths.extend(paths)
             if fit:
                 if first_fit is None:
                     first_fit = fit
@@ -1431,6 +1622,7 @@ class PhysicalDiagnostics:
                 r"$q_{\parallel,i}$",
                 cmap="RdBu_r",
                 symmetric=True,
+                smooth_sigma=3.0,
             )
             plot_map(
                 heat_flux["q_perp"],
@@ -1438,6 +1630,7 @@ class PhysicalDiagnostics:
                 rf"$q_{{\perp,i}}$ - step {step}",
                 r"$q_{\perp,i}$",
                 cmap="inferno",
+                smooth_sigma=3.0,
             )
             plot_scatter(maps["A"], PICDataReader.flatten_2d_slice(fmet["delta_B"]),
                          self.outdir / "A_vs_deltaB_scatter.png", r"$A_i$", r"$\delta B$",
@@ -1575,8 +1768,14 @@ def parse_args():
     )
     parser.add_argument("--max-particles", type=int, default=500_000,
                         help="Maximum particles read per snapshot.")
-    parser.add_argument("--max-particle-steps", type=int, default=12,
-                        help="Maximum particle snapshots to process.")
+    parser.add_argument("--vdf-cadence-omegaci", type=float, default=10.0,
+                        help="Physical-time spacing (Omega_ci*t) between selected particle "
+                             "snapshots -- one VDF evolution frame (2D + 3D, ion + electron) "
+                             "per interval, never denser than the raw particle dumps allow.")
+    parser.add_argument("--max-particle-steps", type=int, default=None,
+                        help="Optional hard cap on the number of particle snapshots to "
+                             "process, applied on top of --vdf-cadence-omegaci (default: "
+                             "no cap -- process every snapshot the cadence selects).")
     parser.add_argument("--max-map-steps", type=int, default=5,
                         help="Maximum spatial-map snapshots to render.")
     parser.add_argument("--steps", nargs="*", type=int, help="Optional explicit steps.")
@@ -1598,6 +1797,7 @@ def main():
         max_map_steps=args.max_map_steps,
         selected_steps=args.steps,
         jobs=args.jobs,
+        vdf_cadence_omegaci=args.vdf_cadence_omegaci,
     ).run()
 
 

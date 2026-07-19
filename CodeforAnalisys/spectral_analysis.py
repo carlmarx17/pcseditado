@@ -501,6 +501,8 @@ class SpectralAnalyzer:
 
         bin_edges = None
         resolved_plane = None
+        half_plane = None
+        bin_counts = None
         energy_perp_rows = []
         energy_par_rows = []
         helicity_num_rows = []
@@ -525,6 +527,14 @@ class SpectralAnalyzer:
                     )
                 num_bins = max(int(min(k_mag.shape) // 2), 10)
                 bin_edges = self._radial_bin_edges(k_mag, num_bins, k_max_di=k_max_di)
+                bin_counts, _ = np.histogram(k_mag.ravel(), bins=bin_edges)
+                # Non-redundant half of k-space (k and -k carry conjugate, not
+                # independent, information for a real field): binning the full
+                # annulus makes Im(conj(b1)*b2) cancel between +k/-k exactly,
+                # so sigma_m(k) would be ~0 everywhere by construction. Restrict
+                # the helicity numerator/denominator to one half-plane instead.
+                K0, K1 = data["k_grids"]["K0"], data["k_grids"]["K1"]
+                half_plane = (K1 > 1e-12) | ((np.abs(K1) <= 1e-12) & (K0 > 1e-12))
 
             energy_perp_rows.append(
                 self._bin_radial_sum(data["spectra"]["perp"]["psd_2d"], k_mag, bin_edges)
@@ -536,10 +546,14 @@ class SpectralAnalyzer:
             b1 = data["component_ffts"][perpendicular_axes[0]]
             b2 = data["component_ffts"][perpendicular_axes[1]]
             helicity_num_rows.append(
-                self._bin_radial_sum(np.imag(np.conj(b1) * b2), k_mag, bin_edges)
+                self._bin_radial_sum(
+                    np.where(half_plane, np.imag(np.conj(b1) * b2), 0.0), k_mag, bin_edges
+                )
             )
             helicity_den_rows.append(
-                self._bin_radial_sum(np.abs(b1) ** 2 + np.abs(b2) ** 2, k_mag, bin_edges)
+                self._bin_radial_sum(
+                    np.where(half_plane, np.abs(b1) ** 2 + np.abs(b2) ** 2, 0.0), k_mag, bin_edges
+                )
             )
             valid_times.append(t)
 
@@ -554,13 +568,33 @@ class SpectralAnalyzer:
         helicity_den = np.asarray(helicity_den_rows).T
         helicity_num = np.asarray(helicity_num_rows).T
 
+        # Drop k-shells that contain zero grid points (possible at this coarse,
+        # k_max_di-capped resolution): they carry exact-zero energy/NaN gamma
+        # and otherwise show up as a solid black gap in the E(k,t) maps and a
+        # dead row in growth_rate_by_k.csv instead of being left out cleanly.
+        occupied_bins = bin_counts > 0
+        if not np.all(occupied_bins):
+            dropped = k_centers[~occupied_bins]
+            print(f"[INFO] Dropping {np.count_nonzero(~occupied_bins)} empty k-shell(s) "
+                  f"(no grid points at k*d_i = {np.round(dropped, 3).tolist()}).")
+            k_centers = k_centers[occupied_bins]
+            energy_perp = energy_perp[occupied_bins]
+            energy_par = energy_par[occupied_bins]
+            helicity_den = helicity_den[occupied_bins]
+            helicity_num = helicity_num[occupied_bins]
+
         growth_rows = []
         for i, k in enumerate(k_centers):
             fit_perp = _fit_growth_rate(valid_times, np.sqrt(np.clip(energy_perp[i], 0, None)))
             fit_par = _fit_growth_rate(valid_times, np.sqrt(np.clip(energy_par[i], 0, None)))
+            # Power-weighted time average of the per-snapshot helicity fraction
+            # sigma_m(t) = num_t/den_t, i.e. sum(w_t * x_t)/sum(w_t) with w_t =
+            # den_t: since w_t * x_t = num_t, that reduces to sum(num_t)/sum(den_t)
+            # (previously this multiplied num_t by den_t again, over-weighting
+            # high-power snapshots quadratically instead of linearly).
             weight = helicity_den[i]
             sigma_m_k = (
-                float(np.sum(helicity_num[i] * weight) / np.sum(weight))
+                float(np.sum(helicity_num[i]) / np.sum(weight))
                 if np.sum(weight) > 0 else np.nan
             )
             growth_rows.append({
@@ -725,17 +759,40 @@ class SpectralAnalyzer:
         plt.close(fig)
         print(f"Saved growth curve: {out_file}")
 
-    def plot_growth_rate_vs_k(self, growth_rows: list[dict], plane: str):
+    def plot_growth_rate_vs_k(self, growth_rows: list[dict], plane: str, significance_threshold: float = 1e-3):
+        """gamma(k), with k-shells whose final energy never rose above
+        ``significance_threshold`` of the run's peak drawn as faint,
+        unconnected points instead of a solid line. A log-linear fit to a
+        numerical-noise-floor amplitude can still return a "significant"
+        looking gamma with decent R^2, which otherwise reads as a real
+        growing mode at that k (see the analyze_simulation peak-selection
+        filter, which already applies this same threshold)."""
         k = np.array([row["k"] for row in growth_rows])
         gamma_perp = np.array([row["gamma_perp"] for row in growth_rows])
         gamma_par = np.array([row["gamma_parallel"] for row in growth_rows])
+        final_perp = np.array([row["final_energy_perp"] for row in growth_rows])
+        final_par = np.array([row["final_energy_parallel"] for row in growth_rows])
+
+        max_perp = float(np.max(final_perp)) if np.any(np.isfinite(final_perp)) and np.max(final_perp) > 0 else 1.0
+        max_par = float(np.max(final_par)) if np.any(np.isfinite(final_par)) and np.max(final_par) > 0 else 1.0
+        sig_perp = np.isfinite(gamma_perp) & (final_perp >= significance_threshold * max_perp)
+        sig_par = np.isfinite(gamma_par) & (final_par >= significance_threshold * max_par)
 
         fig, ax = _new_dark_fig((9, 6))
         ax.axhline(0.0, color=GRID_CLR, lw=1.2)
-        ax.plot(k, gamma_perp, "o-", markersize=4, color="#58a6ff",
+        ax.plot(k[sig_perp], gamma_perp[sig_perp], "o-", markersize=4, color="#58a6ff",
                 label=fr"$\gamma_\perp(k)$ ({_CHANNEL_HINT['perp']})")
-        ax.plot(k, gamma_par, "s-", markersize=4, color="#f0883e",
+        ax.plot(k[sig_par], gamma_par[sig_par], "s-", markersize=4, color="#f0883e",
                 label=fr"$\gamma_\parallel(k)$ ({_CHANNEL_HINT['parallel']})")
+        if np.any(~sig_perp):
+            ax.plot(k[~sig_perp], gamma_perp[~sig_perp], "o", markersize=4,
+                    color="#58a6ff", alpha=0.25, markeredgecolor="none")
+        if np.any(~sig_par):
+            ax.plot(k[~sig_par], gamma_par[~sig_par], "s", markersize=4,
+                    color="#f0883e", alpha=0.25, markeredgecolor="none")
+        if np.any(~sig_perp) or np.any(~sig_par):
+            ax.plot([], [], "x", color=TEXT_CLR, alpha=0.4,
+                    label=f"below {significance_threshold:.0e}$\\times$peak energy (noise floor)")
         ax.set_xscale("log")
         ax.set_xlabel(r"$k\,d_i$")
         ax.set_ylabel(r"$\gamma\ [\Omega_{ci}]$")

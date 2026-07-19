@@ -1,0 +1,11 @@
+Profile: Mirror Moderate Bi-Maxwellian
+Instability: mirror
+Initial step: 0
+T_parallel_i = 0.016034071
+T_perp_i     = 0.032051316
+A_i          = 1.9989506
+R_i          = 0.50026249
+beta_parallel_i = 5.0106472
+
+mirror: expected A_i > 1 and T_perp_i > T_parallel_i
+Initial check: PASS
