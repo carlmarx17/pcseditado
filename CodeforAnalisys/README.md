@@ -62,6 +62,18 @@ Para generar solamente ese diagrama:
 make dispersion DATA_DIR=/ruta/a/run CASE=F_S_bM_local
 ```
 
+Para hacer el mismo tipo de diagnostico sobre la anisotropia de temperatura
+\(A=T_\perp/T_\parallel\), leyendo momentos y campos:
+
+```bash
+make anisotropy-dispersion DATA_DIR=/ruta/a/run CASE=M_M_bM
+```
+
+Ese target guarda en `04_spectra/` un mapa de densidad
+\(\omega/\Omega_{ci}\) frente a \(|v_{\rm ph}|/v_A\), un CSV con las crestas
+dominantes, un resumen temporal de \(A\), y un panel lineal en espacio-k del
+ultimo snapshot analizado.
+
 Las pruebas de regresión se ejecutan con:
 
 ```bash

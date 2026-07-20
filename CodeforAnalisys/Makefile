@@ -42,6 +42,7 @@ export MPLCONFIGDIR ?= /tmp/psc-matplotlib
 
 .PHONY: all analysis common manifest F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM \
 	W_S_bM W_M_bM W_W_bM brazil mirror diamagnetic fields spectral dispersion \
+	anisotropy-dispersion \
 	polarization validate particles heatflux physics compare-physics clean help \
 	check-fields check-moments check-particles check-case check-resolution show-inputs
 
@@ -151,6 +152,12 @@ dispersion: check-case check-fields check-resolution
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) dispersion_analysis.py \
 		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)"
 
+anisotropy-dispersion: check-case check-fields check-moments check-resolution
+	@echo "Generating temperature-anisotropy dispersion plots"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) temperature_anisotropy_dispersion.py \
+		--moments "$(MOMENT_PATTERN)" --fields "$(FIELD_PATTERN)" \
+		--outdir "$(SPECTRAL_OUT)"
+
 # omega-k_parallel maps (P+, P-, sigma_m) via the circular polarization
 # psi_pm = (dBx +- i dBy)/B0, plus per-mode growth curves with a theory
 # overlay (THEORY_CSV: kdi,omega_r_over_Omegai,gamma_over_Omegai), and the
@@ -209,6 +216,7 @@ help:
 	@echo "               mirror_bikappa3 mirror_bikappa5 firehose_bikappa3 firehose_bikappa5"
 	@echo "Legacy cases:  F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM W_S_bM W_M_bM W_W_bM"
 	@echo "Main targets: analysis brazil particles fields spectral polarization diamagnetic heatflux validate physics compare-physics"
+	@echo "              anisotropy-dispersion"
 	@echo "  make polarization DATA_DIR=... CASE=... THEORY_CSV=theory.csv  # omega-k dispersion (psi_pm), mode growth, mirror oblique spectrum"
 	@echo "Utility target: show-inputs"
 	@echo "Results default to ../analysis_results/<RUN_NAME>/"
