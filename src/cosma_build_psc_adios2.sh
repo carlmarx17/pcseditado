@@ -60,7 +60,7 @@ TARGETS=(
   psc_whistler_bimaxwellian_strong
   psc_whistler_bimaxwellian_moderate
   psc_whistler_bimaxwellian_weak
-  psc_mirror_bikappa3 psc_mirror_bikappa5
+  psc_mirror_bikappa3 psc_mirror_bikappa3_moderate psc_mirror_bikappa5
   psc_firehose_bikappa3 psc_firehose_bikappa5
 )
 
