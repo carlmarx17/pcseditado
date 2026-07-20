@@ -6,10 +6,10 @@
   "parallel_axis": "z",
   "normalization": "ion",
   "b0": 0.08,
-  "n_snapshots_used": 2349,
+  "n_snapshots_used": 2401,
   "t_omegaci_range": [
     0.0,
-    154.90277777777777
+    158.33333333333334
   ],
   "selected_modes_kdi": [
     0.3141592653589793,
