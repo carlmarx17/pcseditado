@@ -37,6 +37,9 @@ add_psc_executable(psc_whistler_bimaxwellian_weak)
 
 # --- Bi-Kappa anisotropy cases (1500 ppc, 1024², mr=200) ---
 add_psc_executable(psc_mirror_bikappa3)
+# Mismo Ai/beta que psc_mirror_bimaxwellian_moderate, para comparar
+# Bi-Maxwelliana vs Bi-Kappa a igualdad de anisotropia.
+add_psc_executable(psc_mirror_bikappa3_moderate)
 add_psc_executable(psc_mirror_bikappa5)
 add_psc_executable(psc_firehose_bikappa3)
 add_psc_executable(psc_firehose_bikappa5)
