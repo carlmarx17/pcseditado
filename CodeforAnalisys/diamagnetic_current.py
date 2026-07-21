@@ -8,11 +8,11 @@ Generates:
   - Individual 2D maps for selected simulation snapshots.
   - Animated GIF of the temporal evolution.
 
-Diamagnetic current definition:
-  J_d = (nabla P_perp × B_hat) / B
+Diamagnetic current definition (force balance nabla P = J × B):
+  J_d = (B × nabla P_perp) / B^2
 
 In 2D (YZ plane, B0 || z-hat):
-  J_dx =  (dP_perp/dy · Bz  -  dP_perp/dz · By) / B^2
+  J_dx =  (By · dP_perp/dz  -  Bz · dP_perp/dy) / B^2
   J_dy, J_dz → 0  in the 2D YZ plane
 
 The dominant out-of-plane component is J_dx.
@@ -202,9 +202,9 @@ class DiamagneticCurrentAnalyzer:
         dyi, dzi = np.gradient(pperp_i, axis=1), np.gradient(pperp_i, axis=0)
         dye, dze = np.gradient(pperp_e, axis=1), np.gradient(pperp_e, axis=0)
 
-        # J_dx = (dP_perp/dy · Bz  -  dP_perp/dz · By) / B^2
-        jdia_i     = (dyi * bz - dzi * by) / b2
-        jdia_e     = (dye * bz - dze * by) / b2
+        # J_dx = (By · dP_perp/dz  -  Bz · dP_perp/dy) / B^2   [= (B x grad P_perp)/B^2]
+        jdia_i     = (by * dzi - bz * dyi) / b2
+        jdia_e     = (by * dze - bz * dye) / b2
         jdia_total = jdia_i + jdia_e
 
         return {
