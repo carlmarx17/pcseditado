@@ -47,12 +47,28 @@ def compute_growth_rate_map(
     kperp_max: float | None = None,
     min_rvalue: float = 0.0,
     fit_frac: tuple[float, float] = (0.1, 0.6),
+    fold_negative_k: bool = False,
 ) -> dict:
     """Return gamma(k_parallel, k_perp) fitted from the linear growth phase.
 
     ``field_series`` has shape ``(n_components, nt, n0, n1)``. Time is
     ``Omega_ci t`` and spacing is measured in ``d_i``. The returned k axes are
     therefore in ``k d_i`` and gamma is in ``Omega_ci``.
+
+    Modes separate by geometry: a gamma peak on the k_parallel axis
+    (k_perp ~ 0) indicates a parallel mode (EMIC / parallel firehose), while
+    an off-axis, oblique peak (~45 deg) indicates a mirror / oblique firehose
+    mode.
+
+    ``k_perp`` has no physically preferred sign for a gyrotropic background
+    (flipping it is just a spatial reflection perpendicular to B0), so it is
+    always folded onto |k_perp|. ``k_parallel`` is kept as a full signed axis
+    by default (``fold_negative_k=False``): folding it too would sum the four
+    quadrants (+k_par,+k_perp), (-k_par,+k_perp), (+k_par,-k_perp), and
+    (-k_par,-k_perp) into a single pixel, silently conflating potentially
+    distinct oblique branches (forward vs. backward propagation along B0)
+    into one blended growth rate. Pass ``fold_negative_k=True`` to restore
+    that first-quadrant-only view.
     """
     fields = np.asarray(field_series, dtype=float)
     times = np.asarray(time_oci, dtype=float)
@@ -95,11 +111,14 @@ def compute_growth_rate_map(
         par_dim, perp_dim = 2, 1
 
     energy = np.moveaxis(energy, (par_dim, perp_dim), (1, 2))
-    kpar_pos, energy = _fold_positive(kpar_axis, energy, axis=1)
+    if fold_negative_k:
+        kpar_pos, energy = _fold_positive(kpar_axis, energy, axis=1)
+    else:
+        kpar_pos = kpar_axis
     kperp_pos, energy = _fold_positive(kperp_axis, energy, axis=2)
 
     if kpar_max is not None:
-        keep = kpar_pos <= kpar_max
+        keep = np.abs(kpar_pos) <= kpar_max
         kpar_pos = kpar_pos[keep]
         energy = energy[:, keep, :]
     if kperp_max is not None:
@@ -145,6 +164,7 @@ def compute_growth_rate_map(
         "kperp": kperp_pos,
         "fit_window": (fit_lo, fit_hi),
         "min_rvalue": min_rvalue,
+        "fold_negative_k": fold_negative_k,
         "diagnostics": {
             "nt": int(nt),
             "n_axis0": int(n0),
@@ -152,6 +172,7 @@ def compute_growth_rate_map(
             "axes": axes,
             "spacing": tuple(float(v) for v in spacing),
             "parallel_axis": parallel_axis,
+            "fold_negative_k": fold_negative_k,
             "raw_kpar_modes": int(len(kpar_axis)),
             "raw_kperp_modes": int(len(kperp_axis)),
             "folded_kpar_modes": int(len(kpar_pos)),
@@ -173,7 +194,7 @@ def _display_crop(result: dict, display_kpar_max: float | None, display_kperp_ma
     keep_par = np.ones_like(kpar, dtype=bool)
     keep_perp = np.ones_like(kperp, dtype=bool)
     if display_kpar_max is not None:
-        keep_par &= kpar <= display_kpar_max
+        keep_par &= np.abs(kpar) <= display_kpar_max
     if display_kperp_max is not None:
         keep_perp &= kperp <= display_kperp_max
     return (
@@ -230,22 +251,26 @@ def plot_growth_rate_map(
 
     if len(kpar) and len(kperp):
         angles = range(max(angle_step, 1), 90, max(angle_step, 1))
+        kpar_extent = float(np.max(np.abs(kpar)))
+        signs = (-1, 1) if kpar.min() < 0 else (1,)
         for angle in angles:
-            kk = np.linspace(0.0, float(kpar.max()), 32)
-            yy = kk * np.tan(np.radians(angle))
             main_angle = angle in {30, 45, 60}
-            axis.plot(
-                kk,
-                yy,
-                color="cyan",
-                lw=0.9 if main_angle else 0.45,
-                ls=":",
-                alpha=0.65 if main_angle else 0.35,
-            )
-            if len(yy) and yy[-1] <= kperp.max():
+            for sign in signs:
+                kk = np.linspace(0.0, sign * kpar_extent, 32)
+                yy = np.abs(kk) * np.tan(np.radians(angle))
+                axis.plot(
+                    kk,
+                    yy,
+                    color="cyan",
+                    lw=0.9 if main_angle else 0.45,
+                    ls=":",
+                    alpha=0.65 if main_angle else 0.35,
+                )
+            yy_label = kpar_extent * np.tan(np.radians(angle))
+            if yy_label <= kperp.max():
                 axis.text(
-                    kk[-1] * 0.92,
-                    yy[-1] * 0.92,
+                    kpar_extent * 0.92,
+                    yy_label * 0.92,
                     f"{angle} deg",
                     color="cyan",
                     fontsize=8 if main_angle else 7,
@@ -261,6 +286,9 @@ def plot_growth_rate_map(
         # lands on the dominant physical Fourier cell, not a low-power leakage cell.
         peak_score = np.where(near_peak, final_power, -np.inf)
         peak_i, peak_j = np.unravel_index(int(np.argmax(peak_score)), peak_score.shape)
+        # theta ~ 0 (on the k_parallel axis) => parallel mode (EMIC / parallel
+        # firehose); theta ~ 45 deg, off-axis => mirror / oblique firehose.
+        theta = np.degrees(np.arctan2(abs(kperp[peak_j]), abs(kpar[peak_i])))
         axis.plot(
             kpar[peak_i],
             kperp[peak_j],
@@ -271,7 +299,8 @@ def plot_growth_rate_map(
             label=(
                 fr"peak $\gamma$={gamma[peak_i, peak_j]:.3f} at "
                 fr"$k_\parallel d_i$={kpar[peak_i]:.2f}, "
-                fr"$k_\perp d_i$={kperp[peak_j]:.2f}"
+                fr"$k_\perp d_i$={kperp[peak_j]:.2f} "
+                fr"($\theta$={theta:.0f}$\degree$)"
             ),
         )
         axis.legend(loc="upper right", fontsize=9)
@@ -293,8 +322,9 @@ def print_diagnostics(result: dict, metadata: dict, component: str):
     print(f"  parallel axis: {diag.get('parallel_axis')}")
     print(f"  snapshots used: {diag.get('nt')}  fit points: {diag.get('fit_points')}")
     print(f"  grid on analyzed plane: {diag.get('n_axis0')} x {diag.get('n_axis1')}")
+    print(f"  k_parallel folded to |k|: {diag.get('fold_negative_k')}")
     print(
-        "  folded k modes retained: "
+        "  k modes retained: "
         f"k_parallel={diag.get('folded_kpar_modes')} (dk={diag.get('dkpar'):.4g}), "
         f"k_perp={diag.get('folded_kperp_modes')} (dk={diag.get('dkperp'):.4g})"
     )
@@ -360,6 +390,11 @@ def main() -> int:
     parser.add_argument("--min-rvalue", type=float, default=0.7)
     parser.add_argument("--fit-lo", type=float, default=0.1)
     parser.add_argument("--fit-hi", type=float, default=0.6)
+    parser.add_argument("--fold-negative-k", action="store_true",
+                        help="Fold +/-k_parallel onto |k_parallel| too (in addition to the always-folded "
+                             "k_perp). Off by default: folding k_parallel sums forward- and backward-"
+                             "propagating branches into the same pixel, which can conflate distinct "
+                             "oblique modes.")
     parser.add_argument("--display-kpar-max", type=float, default=None,
                         help="Plot-only k_parallel zoom; does not change the computed CSV.")
     parser.add_argument("--display-kperp-max", type=float, default=0.9,
@@ -395,6 +430,7 @@ def main() -> int:
         kperp_max=args.kperp_max,
         min_rvalue=args.min_rvalue,
         fit_frac=(args.fit_lo, args.fit_hi),
+        fold_negative_k=args.fold_negative_k,
     )
     png = outdir / f"growth_rate_map_{metadata['plane']}_{args.component}.png"
     csv_path = outdir / f"growth_rate_map_{metadata['plane']}_{args.component}.csv"
