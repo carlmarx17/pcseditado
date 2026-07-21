@@ -192,6 +192,12 @@ def compute_phase_velocity_density(
         "omega_grid": omega_grid,
         "phase_velocity": phase_velocity,
         "power": power,
+        "k0": k0,
+        "k1": k1,
+        "omega": omega,
+        "spacing": spacing,
+        "axes": axes,
+        "parallel_axis": parallel_axis,
         "jacobian_weight": np.divide(
             phase_velocity**2,
             np.abs(omega_grid),
@@ -309,6 +315,83 @@ def plot_density(result: dict, ridges: list[dict], output: Path, component: str)
     plt.close(fig)
 
 
+def plot_omega_k_dispersion(
+    result: dict,
+    output: Path,
+    component: str,
+    va_over_c: float,
+    kperp_reduction: str = "sum",
+):
+    """Dense omega-k dispersion diagram in log(omega/omega_p) vs log(k c/omega_p).
+
+    Uses the full ``power`` cube (nfft, nk0, nk1) already computed in
+    ``compute_phase_velocity_density``. Because time is Omega_ci t and spacing is
+    in d_i, we have k c/omega_pi = k d_i exactly, and omega/omega_pi =
+    (omega/Omega_ci) * (v_A/c). Pass ``va_over_c`` (= Omega_ci/omega_pi).
+    """
+    power = result["power"]                      # (nfft, nk0, nk1)
+    omega = result["omega"]                      # omega/Omega_ci, shape (nfft,)
+    k0 = result["k0"]                            # k*d_i along axis0
+    k1 = result["k1"]                            # k*d_i along axis1
+    axes = result["axes"]
+    parallel_axis = result["parallel_axis"]
+
+    # Pick k_parallel axis and reduce the perpendicular one.
+    if axes[0] == parallel_axis:
+        k_par = k0
+        axis_perp = 2                            # reduce k1
+    else:
+        k_par = k1
+        axis_perp = 1                            # reduce k0
+
+    if kperp_reduction == "sum":
+        p2d = np.sum(power, axis=axis_perp)      # (nfft, nk_par)
+    elif kperp_reduction == "max":
+        p2d = np.max(power, axis=axis_perp)
+    else:                                        # perpendicular slice at k_perp~0
+        kperp = k1 if axis_perp == 2 else k0
+        j0 = int(np.argmin(np.abs(kperp)))
+        p2d = np.take(power, j0, axis=axis_perp)
+
+    # Keep positive omega and positive k_parallel (physical quadrant).
+    pos_w = omega > 0
+    pos_k = k_par > 0
+    w = omega[pos_w]                             # omega/Omega_ci
+    kk = k_par[pos_k]                            # k d_i = k c/omega_pi
+    p2d = p2d[np.ix_(pos_w, pos_k)]
+
+    # Convert to requested units.
+    w_wp = w * va_over_c                         # omega/omega_pi
+    kc_wp = kk                                   # k c/omega_pi = k d_i (identity)
+
+    log_x = np.log10(kc_wp)
+    log_y = np.log10(w_wp)
+    pnorm = p2d / max(float(np.max(p2d)), np.finfo(float).tiny)
+    log_p = np.log10(pnorm + 1e-8)
+
+    fig, axis = plt.subplots(figsize=(9.6, 7.4))
+    image = axis.pcolormesh(
+        log_x, log_y, log_p,
+        shading="auto", cmap="turbo", vmin=-6, vmax=0,
+    )
+    # Reference line: Alfven phase speed v_ph = v_A  ->  omega/Omega_ci = k d_i
+    #   -> omega/omega_pi = (k d_i) * va_over_c
+    kline = np.logspace(np.log10(kc_wp.min()), np.log10(kc_wp.max()), 50)
+    axis.plot(
+        np.log10(kline), np.log10(kline * va_over_c),
+        color="white", ls="--", lw=1.2, alpha=0.7, label=r"$v_{ph}=v_A$",
+    )
+    axis.set_xlabel(r"$\log_{10}(k\,c/\omega_{pi})=\log_{10}(k\,d_i)$")
+    axis.set_ylabel(r"$\log_{10}(\omega/\omega_{pi})$")
+    axis.set_title(f"Dispersion diagram ({component} magnetic power)")
+    axis.legend(loc="lower right")
+    colorbar = fig.colorbar(image, ax=axis)
+    colorbar.set_label(r"$\log_{10}[P(\omega,k_\parallel)/P_{\max}]$")
+    fig.tight_layout()
+    fig.savefig(output, dpi=220)
+    plt.close(fig)
+
+
 def write_csv(path: Path, rows: list[dict]):
     if not rows:
         return
@@ -375,9 +458,10 @@ def load_series(
 
 def main() -> int:
     try:
-        from psc_units import DX_DI, step_to_omegaci
+        from psc_units import DX_DI, VA_OVER_C, step_to_omegaci
     except (ImportError, ValueError):
         DX_DI = 1.0
+        VA_OVER_C = None
         step_to_omegaci = lambda step: float(step)
 
     parser = argparse.ArgumentParser(
@@ -396,6 +480,11 @@ def main() -> int:
     parser.add_argument("--temporal-fft-size", type=int, default=128)
     parser.add_argument("--signed-velocity", action="store_true")
     parser.add_argument("--ridges", type=int, default=2)
+    parser.add_argument("--va-over-c", type=float, default=VA_OVER_C,
+                        help="v_A/c = Omega_ci/omega_pi. If set, also emit the omega-k dispersion diagram. "
+                             "Defaults to psc_units.VA_OVER_C when available.")
+    parser.add_argument("--kperp-reduction", choices=["sum", "max", "slice"], default="sum",
+                        help="How to collapse the perpendicular k axis for the omega-k diagram.")
     parser.add_argument("--outdir", default="spectral_plots")
     args = parser.parse_args()
 
@@ -428,6 +517,11 @@ def main() -> int:
     image_path = outdir / f"dispersion_density_{metadata['plane']}_{args.component}_{suffix}.png"
     csv_path = outdir / f"dispersion_ridges_{metadata['plane']}_{args.component}_{suffix}.csv"
     plot_density(result, ridges, image_path, args.component)
+    if args.va_over_c is not None:
+        wk_path = outdir / f"dispersion_omega_k_{metadata['plane']}_{args.component}_{suffix}.png"
+        plot_omega_k_dispersion(result, wk_path, args.component, args.va_over_c,
+                                kperp_reduction=args.kperp_reduction)
+        print(f"Saved omega-k dispersion diagram: {wk_path}")
     write_csv(csv_path, ridges)
     print(f"Processed {series.shape[1]} snapshots on plane {metadata['plane']}.")
     print(
