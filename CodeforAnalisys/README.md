@@ -52,6 +52,12 @@ EMIC / firehose del Bloque 1.3-1.4. El mismo target genera además
 \(\omega/\Omega_{ci}\) frente a \(|v_{\rm ph}|/v_A\), y superpone con puntos
 negros las crestas de mayor potencia.
 
+El mismo target produce además `growth_rate_map_<plano>_<component>.png` y
+`.csv`, un mapa directo \(\gamma(k_\parallel,k_\perp)\) sin binning radial.
+Este diagnóstico conserva la geometría del modo: picos sobre el eje
+\(k_\parallel\) indican modos paralelos, mientras que picos fuera del eje
+identifican modos oblicuos como mirror u oblique firehose.
+
 La FFT temporal se rellena con ceros para dibujar las crestas con continuidad;
 esto interpola el espectro, pero no aumenta el número de frecuencias físicamente
 independientes determinado por la cantidad y cadencia de snapshots.
@@ -60,6 +66,12 @@ Para generar solamente ese diagrama:
 
 ```bash
 make dispersion DATA_DIR=/ruta/a/run CASE=F_S_bM_local
+```
+
+Para generar solamente el mapa \(\gamma(k_\parallel,k_\perp)\):
+
+```bash
+make growth-map DATA_DIR=/ruta/a/run CASE=M_M_bM
 ```
 
 Para hacer el mismo tipo de diagnostico sobre la anisotropia de temperatura
