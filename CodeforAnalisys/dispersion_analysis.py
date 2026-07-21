@@ -40,6 +40,28 @@ def _smooth_2d(values: np.ndarray, passes: int = 2) -> np.ndarray:
     return result
 
 
+def _autocrop_signal_extent(centers: np.ndarray, marginal: np.ndarray, exclude_fraction: float) -> np.ndarray | None:
+    """Return the subset of ``centers`` needed to cover ``1-exclude_fraction``
+    of the total marginal power, smallest-power bins dropped first.
+
+    A per-pixel floor lets a long tail of individually-weak (but numerous)
+    noise bins defeat autocropping, since each survives on its own even
+    though collectively they carry little power. Ranking by cumulative
+    contribution to the total is robust to that: a real ridge concentrates
+    most of the power in comparatively few bins, so the crop still tracks it
+    even when scattered noise extends much further out.
+    """
+    total = float(np.sum(marginal))
+    if total <= 0:
+        return None
+    order = np.argsort(marginal)[::-1]
+    cumulative = np.cumsum(marginal[order])
+    cutoff = int(np.searchsorted(cumulative, (1.0 - exclude_fraction) * total)) + 1
+    keep = np.zeros_like(marginal, dtype=bool)
+    keep[order[:cutoff]] = True
+    return centers[keep] if np.any(keep) else None
+
+
 def compute_phase_velocity_density(
     field_series: np.ndarray,
     time_oci: np.ndarray,
@@ -498,6 +520,9 @@ def plot_density(
     output: Path,
     component: str,
     omega_max_ci: float | None = None,
+    vph_max: float | None = None,
+    autocrop: bool = True,
+    autocrop_floor: float = 1e-2,
 ):
     density = result["density"]
     normalized = density / max(float(np.max(density)), np.finfo(float).tiny)
@@ -555,8 +580,29 @@ def plot_density(
     axis.grid(alpha=0.15)
     if ridges:
         axis.legend(loc="upper right")
+
+    omega_marginal = np.sum(normalized, axis=1)
+    velocity_marginal = np.sum(normalized, axis=0)
+    omega_signal = _autocrop_signal_extent(omega_centers, omega_marginal, autocrop_floor)
+    velocity_signal = _autocrop_signal_extent(velocity_centers, velocity_marginal, autocrop_floor)
+
     if omega_max_ci is not None:
         axis.set_xlim(0, omega_max_ci)
+    elif autocrop and omega_signal is not None:
+        axis.set_xlim(0, float(omega_signal.max()) * 1.3)
+
+    if vph_max is not None:
+        if result["absolute_velocity"]:
+            axis.set_ylim(0, vph_max)
+        else:
+            axis.set_ylim(-vph_max, vph_max)
+    elif autocrop and velocity_signal is not None:
+        if result["absolute_velocity"]:
+            axis.set_ylim(0, float(velocity_signal.max()) * 1.3)
+        else:
+            extent = max(abs(float(velocity_signal.min())), abs(float(velocity_signal.max()))) * 1.3
+            axis.set_ylim(-extent, extent)
+
     colorbar = fig.colorbar(image, ax=axis)
     colorbar_label = (
         r"$\log_{10}[P(v_{\rm ph}\mid\omega)/P_{\max}]$"
@@ -578,6 +624,8 @@ def plot_omega_k_dispersion(
     theta_max_deg: float | None = None,
     omega_max_ci: float | None = None,
     kpar_max_di: float | None = None,
+    autocrop: bool = True,
+    autocrop_floor: float = 1e-2,
 ):
     """Dense omega-k dispersion diagram: log(omega/omega_p) vs log(k c/omega_p),
     or a linear k axis when ``result`` carries signed velocities.
@@ -626,6 +674,20 @@ def plot_omega_k_dispersion(
     pnorm = p2d / max(float(np.max(p2d)), np.finfo(float).tiny)
     log_p = np.log10(pnorm + 1e-8)
 
+    # This plot renders the raw, unweighted native grid on purpose (that's the
+    # point of showing it before any v_phase transform). But raw power here has
+    # poor per-pixel SNR - a broadband, fairly uniform floor spread across many
+    # k columns - which drags out the marginal-coverage crop even though the
+    # real ridge is visually obvious. Smooth a copy purely to size the crop;
+    # what actually gets rendered (log_p) stays untouched.
+    pnorm_for_crop = _smooth_2d(pnorm, passes=1)
+    k_marginal = np.sum(pnorm_for_crop, axis=0)
+    omega_marginal = np.sum(pnorm_for_crop, axis=1)
+    kc_signal = _autocrop_signal_extent(kc_wp, k_marginal, autocrop_floor)
+    w_wp_signal = _autocrop_signal_extent(w_wp, omega_marginal, autocrop_floor)
+    has_k_signal = kc_signal is not None
+    has_w_signal = w_wp_signal is not None
+
     fig, axis = plt.subplots(figsize=(9.6, 7.4))
     if signed:
         x_coord, y_coord = kc_wp, w_wp
@@ -642,8 +704,13 @@ def plot_omega_k_dispersion(
         axis.set_ylabel(r"$\omega/\omega_{pi}$")
         if kpar_max_di is not None:
             axis.set_xlim(-kpar_max_di, kpar_max_di)
+        elif autocrop and has_k_signal:
+            extent = float(np.max(np.abs(kc_signal))) * 1.3
+            axis.set_xlim(-extent, extent)
         if omega_max_ci is not None:
             axis.set_ylim(0, omega_max_ci * va_over_c)
+        elif autocrop and has_w_signal:
+            axis.set_ylim(0, float(w_wp_signal.max()) * 1.3)
     else:
         x_coord, y_coord = np.log10(kc_wp), np.log10(w_wp)
         image = axis.pcolormesh(
@@ -661,8 +728,14 @@ def plot_omega_k_dispersion(
         axis.set_ylabel(r"$\log_{10}(\omega/\omega_{pi})$")
         if kpar_max_di is not None:
             axis.set_xlim(right=np.log10(kpar_max_di))
+        elif autocrop and has_k_signal:
+            log_k_signal = np.log10(kc_signal)
+            axis.set_xlim(log_k_signal.min() - 0.1, log_k_signal.max() + 0.3)
         if omega_max_ci is not None:
             axis.set_ylim(top=np.log10(omega_max_ci * va_over_c))
+        elif autocrop and has_w_signal:
+            log_w_signal = np.log10(w_wp_signal)
+            axis.set_ylim(log_w_signal.min() - 0.2, log_w_signal.max() + 0.2)
     axis.set_title(f"Dispersion diagram ({component} magnetic power)")
     axis.legend(loc="lower right")
     colorbar = fig.colorbar(image, ax=axis)
@@ -802,9 +875,22 @@ def main() -> int:
                         help="Maximum allowed step in k_parallel between consecutive ridge points, "
                              "as a fraction of the resolved k_parallel range (omega-k ridge source only).")
     parser.add_argument("--omega-max-ci", type=float, default=None,
-                        help="Crop the displayed omega/Omega_ci axis range (cosmetic only).")
+                        help="Crop the displayed omega/Omega_ci axis range (cosmetic only). "
+                             "Overrides autocrop when set.")
     parser.add_argument("--kpar-max-di", type=float, default=None,
-                        help="Crop the displayed k_parallel*d_i axis range on the omega-k plot (cosmetic only).")
+                        help="Crop the displayed k_parallel*d_i axis range on the omega-k plot "
+                             "(cosmetic only). Overrides autocrop when set.")
+    parser.add_argument("--vph-max", type=float, default=None,
+                        help="Crop the displayed v_phase/v_A axis range on the density plot "
+                             "(cosmetic only). Overrides autocrop when set.")
+    parser.add_argument("--no-autocrop", action="store_true",
+                        help="Disable automatic cropping to the region carrying signal (by default, "
+                             "both plots crop out the empty axis range above the fastest/slowest modes "
+                             "actually present, unless --omega-max-ci/--kpar-max-di/--vph-max override it).")
+    parser.add_argument("--autocrop-floor", type=float, default=1e-2,
+                        help="Autocrop tolerance: the fraction of total marginal power allowed to be "
+                             "excluded from the cropped range (smaller = tighter crop, more likely to "
+                             "cut off a weak-but-real tail).")
     parser.add_argument("--outdir", default="spectral_plots")
     args = parser.parse_args()
 
@@ -849,14 +935,20 @@ def main() -> int:
     suffix = "absolute" if result["absolute_velocity"] else "signed"
     image_path = outdir / f"dispersion_density_{metadata['plane']}_{args.component}_{suffix}.png"
     csv_path = outdir / f"dispersion_ridges_{metadata['plane']}_{args.component}_{suffix}.csv"
-    plot_density(result, ridges, image_path, args.component, omega_max_ci=args.omega_max_ci)
+    plot_density(result, ridges, image_path, args.component,
+                omega_max_ci=args.omega_max_ci,
+                vph_max=args.vph_max,
+                autocrop=not args.no_autocrop,
+                autocrop_floor=args.autocrop_floor)
     if args.va_over_c is not None:
         wk_path = outdir / f"dispersion_omega_k_{metadata['plane']}_{args.component}_{suffix}.png"
         plot_omega_k_dispersion(result, wk_path, args.component, args.va_over_c,
                                 kperp_reduction=args.kperp_reduction,
                                 theta_max_deg=args.theta_max_deg,
                                 omega_max_ci=args.omega_max_ci,
-                                kpar_max_di=args.kpar_max_di)
+                                kpar_max_di=args.kpar_max_di,
+                                autocrop=not args.no_autocrop,
+                                autocrop_floor=args.autocrop_floor)
         print(f"Saved omega-k dispersion diagram: {wk_path}")
     write_csv(csv_path, ridges)
     print(f"Processed {series.shape[1]} snapshots on plane {metadata['plane']}, "
