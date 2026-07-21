@@ -135,6 +135,8 @@ def _fit_growth_rate(time: np.ndarray, amplitude: np.ndarray) -> dict:
         "rvalue": rvalue,
         "n_points": int(len(t[fit_slice])),
         "fit_time_range": (float(t[fit_slice][0]), float(t[fit_slice][-1])),
+        "fit_time": t[fit_slice],
+        "fit_amplitude": np.exp(fitted),
     }
 
 
@@ -742,8 +744,7 @@ class SpectralAnalyzer:
             if np.isfinite(fit["gamma"]):
                 lo, hi = fit["fit_time_range"]
                 ax.axvspan(lo, hi, color=GRID_CLR, alpha=0.4, label="fit window")
-                fitted = np.exp(np.polyval([fit["gamma"], fit["intercept"]], times))
-                ax.semilogy(times, fitted, "--", color="#f0883e", lw=2.0,
+                ax.semilogy(fit["fit_time"], fit["fit_amplitude"], "--", color="#f0883e", lw=2.0,
                             label=fr"fit $\gamma={fit['gamma']:.3g}\,\Omega_{{ci}}$ (r={fit['rvalue']:.2f})")
         ax.set_xlabel(r"$\Omega_{ci} t$")
         ax.set_ylabel(r"$\sqrt{E(k,t)}$  (field amplitude, a.u.)")

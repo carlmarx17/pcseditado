@@ -380,15 +380,14 @@ def plot_mode_growth(
         if np.isfinite(fit["gamma"]):
             lo, hi = fit["fit_time_range"]
             ax.axvspan(lo, hi, color=GRID_CLR, alpha=0.4, label="fit window")
-            fitted_amp = np.exp(np.polyval([fit["gamma"], fit["intercept"]], times_norm))
-            ax.semilogy(times_norm, fitted_amp ** 2, "--", color="#f0883e", lw=2.0,
+            ax.semilogy(fit["fit_time"], fit["fit_amplitude"] ** 2, "--", color="#f0883e", lw=2.0,
                         label=fr"PIC fit $\gamma={fit['gamma']:.3g}$ (R$^2$={fit['rvalue']**2:.2f})")
             _, gamma_theory = interp_theory(theory, k_val) if length_unit == "d_i" else (None, float("nan"))
             if np.isfinite(gamma_theory):
-                t0 = times_norm[valid][0]
-                p0 = power[valid][0]
-                theory_curve = p0 * np.exp(2.0 * gamma_theory * (times_norm - t0))
-                ax.semilogy(times_norm, theory_curve, ":", color="#a371f7", lw=2.0,
+                t0 = fit["fit_time"][0]
+                p0 = fit["fit_amplitude"][0] ** 2
+                theory_curve = p0 * np.exp(2.0 * gamma_theory * (fit["fit_time"] - t0))
+                ax.semilogy(fit["fit_time"], theory_curve, ":", color="#a371f7", lw=2.0,
                             label=fr"theory $\gamma={gamma_theory:.3g}$")
     ax.set_xlabel(fr"${time_unit}$")
     ax.set_ylabel(r"$P_n(t) = |\psi_" + polarization + r"(k,t)|^2$")
