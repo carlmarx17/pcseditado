@@ -145,15 +145,60 @@ def compute_growth_rate_map(
         "kperp": kperp_pos,
         "fit_window": (fit_lo, fit_hi),
         "min_rvalue": min_rvalue,
+        "diagnostics": {
+            "nt": int(nt),
+            "n_axis0": int(n0),
+            "n_axis1": int(n1),
+            "axes": axes,
+            "spacing": tuple(float(v) for v in spacing),
+            "parallel_axis": parallel_axis,
+            "raw_kpar_modes": int(len(kpar_axis)),
+            "raw_kperp_modes": int(len(kperp_axis)),
+            "folded_kpar_modes": int(len(kpar_pos)),
+            "folded_kperp_modes": int(len(kperp_pos)),
+            "dkpar": float(kpar_pos[1] - kpar_pos[0]) if len(kpar_pos) > 1 else float("nan"),
+            "dkperp": float(kperp_pos[1] - kperp_pos[0]) if len(kperp_pos) > 1 else float("nan"),
+            "fit_points": int(np.count_nonzero(fit_mask)),
+        },
     }
 
 
-def plot_growth_rate_map(result: dict, output: Path, component: str, mark_peak: bool = True):
+def _display_crop(result: dict, display_kpar_max: float | None, display_kperp_max: float | None):
+    kpar = np.asarray(result["kpar"], dtype=float)
+    kperp = np.asarray(result["kperp"], dtype=float)
     gamma = np.asarray(result["gamma"], dtype=float)
     rvalue = np.asarray(result["rvalue"], dtype=float)
     final_power = np.asarray(result["final_power"], dtype=float)
-    kpar = np.asarray(result["kpar"], dtype=float)
-    kperp = np.asarray(result["kperp"], dtype=float)
+
+    keep_par = np.ones_like(kpar, dtype=bool)
+    keep_perp = np.ones_like(kperp, dtype=bool)
+    if display_kpar_max is not None:
+        keep_par &= kpar <= display_kpar_max
+    if display_kperp_max is not None:
+        keep_perp &= kperp <= display_kperp_max
+    return (
+        kpar[keep_par],
+        kperp[keep_perp],
+        gamma[np.ix_(keep_par, keep_perp)],
+        rvalue[np.ix_(keep_par, keep_perp)],
+        final_power[np.ix_(keep_par, keep_perp)],
+    )
+
+
+def plot_growth_rate_map(
+    result: dict,
+    output: Path,
+    component: str,
+    mark_peak: bool = True,
+    display_kpar_max: float | None = None,
+    display_kperp_max: float | None = None,
+    shading: str = "auto",
+    contour_count: int = 6,
+    angle_step: int = 15,
+):
+    kpar, kperp, gamma, rvalue, final_power = _display_crop(
+        result, display_kpar_max, display_kperp_max
+    )
     minr = float(result["min_rvalue"])
 
     floor = np.nanmax(final_power) * 1e-3 if np.any(np.isfinite(final_power)) else np.inf
@@ -165,18 +210,47 @@ def plot_growth_rate_map(result: dict, output: Path, component: str, mark_peak: 
 
     fig, axis = plt.subplots(figsize=(8.6, 7.2))
     image = axis.pcolormesh(
-        kpar, kperp, display.T, shading="auto", cmap="inferno", vmin=0.0, vmax=gmax
+        kpar, kperp, display.T, shading=shading, cmap="inferno", vmin=0.0, vmax=gmax
     )
     colorbar = fig.colorbar(image, ax=axis)
     colorbar.set_label(r"growth rate $\gamma\ [\Omega_{ci}]$")
 
+    if contour_count > 0 and np.any(~mask) and len(kpar) > 1 and len(kperp) > 1:
+        levels = np.linspace(0.0, gmax, contour_count + 2)[1:-1]
+        if len(levels):
+            axis.contour(
+                kpar,
+                kperp,
+                display.T,
+                levels=levels,
+                colors="white",
+                linewidths=0.55,
+                alpha=0.45,
+            )
+
     if len(kpar) and len(kperp):
-        for angle, label in [(30, "30 deg"), (45, "45 deg"), (60, "60 deg")]:
+        angles = range(max(angle_step, 1), 90, max(angle_step, 1))
+        for angle in angles:
             kk = np.linspace(0.0, float(kpar.max()), 32)
             yy = kk * np.tan(np.radians(angle))
-            axis.plot(kk, yy, color="cyan", lw=0.7, ls=":", alpha=0.5)
+            main_angle = angle in {30, 45, 60}
+            axis.plot(
+                kk,
+                yy,
+                color="cyan",
+                lw=0.9 if main_angle else 0.45,
+                ls=":",
+                alpha=0.65 if main_angle else 0.35,
+            )
             if len(yy) and yy[-1] <= kperp.max():
-                axis.text(kk[-1] * 0.92, yy[-1] * 0.92, label, color="cyan", fontsize=8)
+                axis.text(
+                    kk[-1] * 0.92,
+                    yy[-1] * 0.92,
+                    f"{angle} deg",
+                    color="cyan",
+                    fontsize=8 if main_angle else 7,
+                    alpha=0.85 if main_angle else 0.55,
+                )
 
     if mark_peak and np.any(~mask):
         candidate = np.where(~mask, gamma, np.nan)
@@ -205,9 +279,39 @@ def plot_growth_rate_map(result: dict, output: Path, component: str, mark_peak: 
     axis.set_xlabel(r"$k_\parallel\,d_i$")
     axis.set_ylabel(r"$k_\perp\,d_i$")
     axis.set_title(fr"Growth-rate map $\gamma(k_\parallel,k_\perp)$ - {component}")
+    axis.grid(True, color="white", alpha=0.12, linestyle=":", linewidth=0.5)
     fig.tight_layout()
     fig.savefig(output, dpi=200)
     plt.close(fig)
+
+
+def print_diagnostics(result: dict, metadata: dict, component: str):
+    diag = result.get("diagnostics", {})
+    print("Growth-rate map diagnostics:")
+    print(f"  component: {component}")
+    print(f"  plane: {metadata.get('plane')} axes={metadata.get('axes')} normal={metadata.get('normal_axis')}")
+    print(f"  parallel axis: {diag.get('parallel_axis')}")
+    print(f"  snapshots used: {diag.get('nt')}  fit points: {diag.get('fit_points')}")
+    print(f"  grid on analyzed plane: {diag.get('n_axis0')} x {diag.get('n_axis1')}")
+    print(
+        "  folded k modes retained: "
+        f"k_parallel={diag.get('folded_kpar_modes')} (dk={diag.get('dkpar'):.4g}), "
+        f"k_perp={diag.get('folded_kperp_modes')} (dk={diag.get('dkperp'):.4g})"
+    )
+    if metadata.get("normal_axis") == diag.get("parallel_axis"):
+        print(
+            "  [WARN] selected plane collapses the requested parallel axis; "
+            "choose a plane containing B0/parallel direction."
+        )
+    gamma = np.asarray(result["gamma"], dtype=float)
+    final_power = np.asarray(result["final_power"], dtype=float)
+    rvalue = np.asarray(result["rvalue"], dtype=float)
+    floor = np.nanmax(final_power) * 1e-3 if np.any(np.isfinite(final_power)) else np.inf
+    good = np.isfinite(gamma) & (gamma > 0.0) & (final_power >= floor)
+    minr = float(result["min_rvalue"])
+    if minr > 0:
+        good &= rvalue >= minr
+    print(f"  display-quality growing cells: {int(np.count_nonzero(good))}/{gamma.size}")
 
 
 def write_csv(result: dict, path: Path):
@@ -256,6 +360,16 @@ def main() -> int:
     parser.add_argument("--min-rvalue", type=float, default=0.7)
     parser.add_argument("--fit-lo", type=float, default=0.1)
     parser.add_argument("--fit-hi", type=float, default=0.6)
+    parser.add_argument("--display-kpar-max", type=float, default=None,
+                        help="Plot-only k_parallel zoom; does not change the computed CSV.")
+    parser.add_argument("--display-kperp-max", type=float, default=0.9,
+                        help="Plot-only k_perp zoom; does not change the computed CSV.")
+    parser.add_argument("--shading", choices=["auto", "nearest", "gouraud"], default="auto",
+                        help="pcolormesh shading used only for display.")
+    parser.add_argument("--contours", type=int, default=7,
+                        help="Number of gamma contour levels overlaid on the image.")
+    parser.add_argument("--angle-step", type=int, default=15,
+                        help="Angle-grid spacing in degrees.")
     parser.add_argument("--outdir", default="spectral_plots")
     args = parser.parse_args()
 
@@ -284,7 +398,17 @@ def main() -> int:
     )
     png = outdir / f"growth_rate_map_{metadata['plane']}_{args.component}.png"
     csv_path = outdir / f"growth_rate_map_{metadata['plane']}_{args.component}.csv"
-    plot_growth_rate_map(result, png, args.component)
+    print_diagnostics(result, metadata, args.component)
+    plot_growth_rate_map(
+        result,
+        png,
+        args.component,
+        display_kpar_max=args.display_kpar_max,
+        display_kperp_max=args.display_kperp_max,
+        shading=args.shading,
+        contour_count=args.contours,
+        angle_step=args.angle_step,
+    )
     write_csv(result, csv_path)
     print(f"Saved growth-rate map: {png}")
     print(f"Saved data: {csv_path}")
