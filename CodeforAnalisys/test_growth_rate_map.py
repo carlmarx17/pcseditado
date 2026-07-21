@@ -35,6 +35,11 @@ class GrowthRateMapTests(unittest.TestCase):
             kperp_max=1.0,
             min_rvalue=0.0,
             fit_frac=(0.0, 1.0),
+            # A single real-valued plane wave is inherently Hermitian-symmetric:
+            # equal power sits at (+kpar,+kperp) and (-kpar,-kperp). Fold k_parallel
+            # here so the test has one unambiguous peak; the default (unfolded)
+            # behavior is exercised separately below.
+            fold_negative_k=True,
         )
 
         candidate = np.where(np.isfinite(result["final_power"]), result["final_power"], -np.inf)
@@ -43,6 +48,45 @@ class GrowthRateMapTests(unittest.TestCase):
         self.assertAlmostEqual(result["kperp"][peak_j], expected_kperp, places=6)
         self.assertAlmostEqual(result["gamma"][peak_i, peak_j], gamma, delta=0.02)
         self.assertGreater(result["rvalue"][peak_i, peak_j], 0.99)
+
+    def test_default_keeps_kparallel_signed(self):
+        nt, nz, ny = 36, 64, 64
+        dz = dy = 1.0
+        times = np.linspace(0.0, 10.0, nt)
+        gamma = 0.17
+        mode_z = 3
+        mode_y = 4
+        expected_kpar = 2.0 * np.pi * mode_z / (nz * dz)
+        expected_kperp = 2.0 * np.pi * mode_y / (ny * dy)
+
+        z = np.arange(nz)[:, None] * dz
+        y = np.arange(ny)[None, :] * dy
+        phase = expected_kpar * z + expected_kperp * y
+        amplitude = np.exp(gamma * times)[:, None, None]
+        wave = amplitude * np.cos(phase)[None, :, :]
+
+        result = compute_growth_rate_map(
+            wave[None, ...],
+            times,
+            spacing=(dz, dy),
+            axes=("z", "y"),
+            parallel_axis="z",
+            kpar_max=1.0,
+            kperp_max=1.0,
+            min_rvalue=0.0,
+            fit_frac=(0.0, 1.0),
+        )
+
+        self.assertFalse(result["fold_negative_k"])
+        self.assertTrue(np.any(result["kpar"] < 0))
+        # A real plane wave puts equal power at (+kpar,+kperp) and
+        # (-kpar,-kperp); with k_parallel left signed, both should recover
+        # the same growth rate at the same |k_perp|.
+        pos_i = int(np.argmin(np.abs(result["kpar"] - expected_kpar)))
+        neg_i = int(np.argmin(np.abs(result["kpar"] + expected_kpar)))
+        j = int(np.argmin(np.abs(result["kperp"] - expected_kperp)))
+        self.assertAlmostEqual(result["gamma"][pos_i, j], gamma, delta=0.02)
+        self.assertAlmostEqual(result["gamma"][neg_i, j], gamma, delta=0.02)
 
 
 if __name__ == "__main__":
