@@ -37,6 +37,15 @@ PHYSICS_OUT = $(OUTPUT_DIR)/09_physical_diagnostics
 COMPARE_CASES ?=
 COMPARE_OUT ?= $(RESULTS_ROOT)/comparison_physical
 THEORY_CSV ?=
+GROWTH_COMPONENT ?= parallel
+GROWTH_KPAR_MAX ?= 1.5
+GROWTH_KPERP_MAX ?= 1.5
+GROWTH_DISPLAY_KPAR_MAX ?=
+GROWTH_DISPLAY_KPERP_MAX ?= 0.9
+GROWTH_SHADING ?= auto
+GROWTH_CONTOURS ?= 7
+GROWTH_ANGLE_STEP ?= 15
+GROWTH_MIN_RVALUE ?= 0.7
 
 export MPLCONFIGDIR ?= /tmp/psc-matplotlib
 
@@ -157,7 +166,13 @@ dispersion: check-case check-fields check-resolution
 growth-map: check-case check-fields check-resolution
 	@echo "Generating gamma(k_parallel,k_perp) growth-rate map"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) growth_rate_map.py \
-		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)"
+		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)" \
+		--component "$(GROWTH_COMPONENT)" \
+		--kpar-max "$(GROWTH_KPAR_MAX)" --kperp-max "$(GROWTH_KPERP_MAX)" \
+		$(if $(GROWTH_DISPLAY_KPAR_MAX),--display-kpar-max "$(GROWTH_DISPLAY_KPAR_MAX)",) \
+		--display-kperp-max "$(GROWTH_DISPLAY_KPERP_MAX)" \
+		--shading "$(GROWTH_SHADING)" --contours "$(GROWTH_CONTOURS)" \
+		--angle-step "$(GROWTH_ANGLE_STEP)" --min-rvalue "$(GROWTH_MIN_RVALUE)"
 
 anisotropy-dispersion: check-case check-fields check-moments check-resolution
 	@echo "Generating temperature-anisotropy dispersion plots"
