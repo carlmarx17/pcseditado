@@ -64,6 +64,13 @@ def _style_axes(axis):
     axis.title.set_color(TEXT_CLR)
 
 
+def _style_colorbar(colorbar):
+    colorbar.ax.yaxis.label.set_color(TEXT_CLR)
+    colorbar.ax.tick_params(colors=TEXT_CLR)
+    for label in colorbar.ax.get_yticklabels():
+        label.set_color(TEXT_CLR)
+
+
 def _slice_scalar_plane(data_3d: np.ndarray, plane: str, slice_idx: int | None = None) -> np.ndarray:
     """Return the same PSC-ordered plane convention as SpectralAnalyzer."""
     values = np.asarray(data_3d)
@@ -327,13 +334,22 @@ def plot_phase_velocity_density(
     velocity_label = r"$|v_{\rm ph}|/v_A$" if result["absolute_velocity"] else r"$v_{\rm ph}/v_A$"
     axis.set_xlabel(r"Angular frequency $\omega/\Omega_{ci}$")
     axis.set_ylabel(velocity_label)
-    axis.set_title(
-        rf"Temperature-anisotropy fluctuation density: {_quantity_label(quantity, species_symbol)}"
+    axis.set_title("Temperature-anisotropy fluctuation density", fontsize=18, pad=10)
+    axis.text(
+        0.01,
+        0.99,
+        _quantity_label(quantity, species_symbol),
+        transform=axis.transAxes,
+        ha="left",
+        va="top",
+        color=TEXT_CLR,
+        fontsize=13,
     )
     if ridges:
-        axis.legend(loc="upper right")
+        axis.legend(loc="upper right", fontsize=12, framealpha=0.75)
     colorbar = fig.colorbar(image, ax=axis)
     colorbar.set_label(r"$\log_{10}[P(v_{\rm ph}\mid\omega)/P_{\max}]$")
+    _style_colorbar(colorbar)
     fig.tight_layout()
     fig.savefig(output, dpi=220, facecolor=DARK_BG)
     plt.close(fig)
@@ -416,13 +432,22 @@ def plot_kspace_density(
     )
     axis.set_xlabel(rf"$|k_{{{result['parallel_axis']}}}|d_i$")
     axis.set_ylabel(rf"$|k_{{{result['perpendicular_axis']}}}|d_i$")
-    axis.set_title(
-        rf"Linear k-space spectrum of {_quantity_label(quantity, species_symbol)}"
-        "\n"
-        rf"{PROFILE_LABEL}, step {step}, $t\Omega_{{ci}}={time_oci:.2f}$"
+    axis.set_title("Temperature-anisotropy k-space spectrum", fontsize=18, pad=10)
+    axis.text(
+        0.01,
+        0.99,
+        rf"{_quantity_label(quantity, species_symbol)}  |  step {step}  |  "
+        rf"$t\Omega_{{ci}}={time_oci:.2f}$",
+        transform=axis.transAxes,
+        ha="left",
+        va="top",
+        color=TEXT_CLR,
+        fontsize=12,
+        bbox={"facecolor": PANEL_BG, "edgecolor": "none", "alpha": 0.78, "pad": 3},
     )
     colorbar = fig.colorbar(image, ax=axis)
     colorbar.set_label(r"$\log_{10}(P/P_{\max})$")
+    _style_colorbar(colorbar)
     fig.tight_layout()
     fig.savefig(output, dpi=220, facecolor=DARK_BG)
     plt.close(fig)
