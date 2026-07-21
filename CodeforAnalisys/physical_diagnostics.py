@@ -983,7 +983,7 @@ def plot_spatial_maps(rows: list[dict], outdir: Path):
 
 
 def growth_rate(time: np.ndarray, delta_b: np.ndarray) -> dict:
-    valid = np.isfinite(time) & np.isfinite(delta_b) & (delta_b > 0)
+    valid = np.isfinite(time) & np.isfinite(delta_b) & (delta_b > 0) & (time > 0.0)
     if np.count_nonzero(valid) < 4:
         return {}
     t = time[valid]
@@ -1022,6 +1022,12 @@ def plot_field_time(rows: list[dict], outdir: Path):
     perp = np.array([r["delta_B_perp_rms_over_B0"] for r in rows], dtype=float)
     depth = np.array([r["mirror_depth"] for r in rows], dtype=float)
     area = np.array([r["mirror_area_fraction"] for r in rows], dtype=float)
+    plot_mask = np.isfinite(t) & (t > 0.0)
+    t, rms, par, perp, depth, area = (
+        arr[plot_mask] for arr in (t, rms, par, perp, depth, area)
+    )
+    if len(t) == 0:
+        return
 
     fig, ax = plt.subplots(figsize=(8.5, 5.2))
     fig.patch.set_facecolor(DARK_BG)
