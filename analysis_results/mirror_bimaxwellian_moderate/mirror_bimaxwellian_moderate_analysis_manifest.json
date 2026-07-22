@@ -1,0 +1,38 @@
+{
+  "generated_utc": "2026-07-19T22:56:53.640328+00:00",
+  "case": "mirror_bimaxwellian_moderate",
+  "profile": "mirror_bimaxwellian_moderate",
+  "label": "Mirror Moderate Bi-Maxwellian",
+  "instability": "mirror",
+  "driven_species": "ion",
+  "input_directory": "/cosma7/data/dp433/dc-mart18/anisotropy_adios2/psc_mirror_bimaxwellian_moderate_11596993",
+  "output_directory": "/cosma7/data/dp433/dc-mart18/pcseditado/analysis_results/mirror_bimaxwellian_moderate",
+  "expected_patterns": {
+    "fields": "pfd.<step>_p<rank>.h5",
+    "moments": "pfd_moments.<step>_p<rank>.h5",
+    "particles": "prt_mirror_bimaxwellian_moderate.<step>.h5"
+  },
+  "detected": {
+    "field_files": 2401,
+    "moment_files": 2401,
+    "particle_files": 121,
+    "paired_field_moment_snapshots": 2401,
+    "grid_from_hdf5": [
+      576,
+      576
+    ],
+    "first_paired_step": 0,
+    "last_paired_step": 1200000,
+    "first_particle_step": 0,
+    "last_particle_step": 1200000
+  },
+  "physics": {
+    "mass_ratio": 200.0,
+    "B0": 0.08,
+    "domain_di": 20.0,
+    "grid": [
+      576,
+      576
+    ]
+  }
+}
