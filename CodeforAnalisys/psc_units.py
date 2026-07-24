@@ -136,7 +136,7 @@ _PROFILES = {
         "Te_perp_over_Te_par": 1.0,
         "kappa": None,
         "domain_di": 40.0,
-        "ngrid": 1152,
+        "ngrid": 576,
         "nmax": 1_200_000,
         "nicell": 1000,
         "particle_basename": "prt_firehose_bimaxwellian_moderate_bigbox40",
