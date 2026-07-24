@@ -5,8 +5,9 @@
 //   (beta_i_parallel=10.0, Ai=0.1, beta_e_parallel=1.0, Ae=1.0,
 //   mass_ratio=200, 1500 ppc).
 //
-//   Unica diferencia: PSC_DOMAIN_DI=40 en vez de 20. Con ngrid=576
-//   (sin cambios) la resolucion pasa de ~28.8 a ~14.4 celdas/d_i.
+//   Unica diferencia: PSC_DOMAIN_DI=40 en vez de 20. Se corre con
+//   PSC_NGRID=1152 (ver cosma_jobs/simulacion) para mantener la misma
+//   resolucion que los casos estandar (~28.8 celdas/d_i).
 //   El tamano de caja NO es overrideable por variable de entorno
 //   (ver #ifndef PSC_DOMAIN_DI en psc_anisotropy_case.hxx), por eso
 //   esto es un ejecutable aparte compilado con el define.

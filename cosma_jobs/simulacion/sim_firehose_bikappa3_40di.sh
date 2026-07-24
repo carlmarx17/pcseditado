@@ -4,11 +4,12 @@
 #  Job SLURM: psc_firehose_bikappa3_bigbox40 — COSMA7-rp
 #
 #  Firehose Bi-Kappa (kappa=3) en caja de 40 d_i (el doble de la
-#  estandar de 20 d_i). Misma fisica y resolucion de malla que
+#  estandar de 20 d_i). Misma fisica que
 #  psc_firehose_bikappa3 (beta_i_par=10.0, Ai=0.1, mass_ratio=200,
-#  ngrid=576, 1000 nicell). Con la caja el doble de grande y ngrid=576
-#  SIN cambios, la resolucion baja de ~28.8 a ~14.4 celdas/d_i
-#  (elegido asi a proposito: mas barato).
+#  1000 nicell). Con la caja el doble de grande, ngrid=1152 mantiene
+#  la MISMA resolucion que los casos estandar (~28.8 celdas/d_i).
+#  Coste ~4x un caso estandar; se compensa con 4x ranks (np 64x64,
+#  parches de 18x18 celdas, identicos a los de las corridas de 20 d_i).
 #
 #  IMPORTANTE: el tamano de caja NO es una variable de entorno; esta
 #  fijo en compile-time (#define PSC_DOMAIN_DI en
@@ -28,9 +29,9 @@
 #SBATCH --job-name=psc_firehose_bikappa3_40di
 #SBATCH --partition=cosma7-rp
 #SBATCH --account=dp433
-#SBATCH --nodes=37
+#SBATCH --nodes=147
 #SBATCH --ntasks-per-node=28
-#SBATCH --ntasks=1024
+#SBATCH --ntasks=4096
 #SBATCH --time=48:00:00
 #SBATCH --output=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.out
 #SBATCH --error=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.err
@@ -46,12 +47,13 @@ RUN_ROOT="$BASE/anisotropy_adios2"
 PSC_TARGET=psc_firehose_bikappa3_bigbox40
 RUN_DIR="$RUN_ROOT/${PSC_TARGET}_${SLURM_JOB_ID}"
 
-# Misma resolucion de malla que los demas casos (ngrid=576). La caja
-# de 40 d_i vive en el ejecutable (PSC_DOMAIN_DI=40), no aqui.
-PSC_NGRID="${PSC_NGRID:-576}"
+# ngrid=1152 en caja de 40 d_i = misma resolucion que los casos
+# estandar (576 en 20 d_i, ~28.8 celdas/d_i). La caja de 40 d_i vive
+# en el ejecutable (PSC_DOMAIN_DI=40), no aqui.
+PSC_NGRID="${PSC_NGRID:-1152}"
 PSC_NICELL="${PSC_NICELL:-1000}"
-PSC_NP_Y="${PSC_NP_Y:-32}"
-PSC_NP_Z="${PSC_NP_Z:-32}"
+PSC_NP_Y="${PSC_NP_Y:-64}"
+PSC_NP_Z="${PSC_NP_Z:-64}"
 PSC_CHECKPOINT_EVERY="${PSC_CHECKPOINT_EVERY:-150000}"
 PSC_ENERGIES_EVERY="${PSC_ENERGIES_EVERY:-0}"
 PSC_LAUNCHER="${PSC_LAUNCHER:-mpirun}"
