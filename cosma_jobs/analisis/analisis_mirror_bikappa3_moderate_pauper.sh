@@ -1,51 +1,45 @@
 #!/bin/bash -l
 #
 # =====================================================================
-#  Job SLURM: analysis_mirror_bimaxwellian_moderate — COSMA7-rp (8 nodos)
+#  Job SLURM: analysis_mirror_bikappa3_moderate — COSMA7-rp-pauper
 #
-#  Version de maxima potencia real para este pipeline: identico en
-#  diseno a job_analysis_mirror_bimaxwellian_moderate.sh (8 nodos
-#  completos, uno por cada una de las 8 etapas independientes de
-#  "common": brazil, fields, particles, spectral, diamagnetic,
-#  heatflux, validate, physics -> 224 cores en total), pero apuntando
-#  a la particion "cosma7-rp" (sin "-pauper") en vez de
-#  "cosma7-rp-pauper". Mismo pool fisico de nodos (m70xx-m71xx), solo
-#  cambia el tier de prioridad/limite de tiempo.
+#  Copia de analisis_mirror_bimaxwellian_moderate_pauper.sh apuntando a
+#  la corrida Bi-Kappa (kappa=3) en vez de la Bi-Maxwelliana. Unicos
+#  cambios respecto al original: DATA_DIR, CASE y los nombres de log.
 #
-#  Nota: 8 nodos es el techo util de paralelismo de este pipeline --
-#  hay exactamente 8 etapas independientes, cada una un proceso Python
-#  sin soporte MPI/multi-nodo. Pedir mas nodos que eso no lo hace mas
-#  rapido, solo deja nodos reservados sin trabajo asignado.
+#  Corre el pipeline de analisis Python (CodeforAnalisys/Makefile,
+#  target "common") sobre una corrida ya finalizada, repartiendo las 8
+#  etapas independientes (brazil, fields, particles, spectral,
+#  diamagnetic, heatflux, validate, physics) en 8 nodos via srun.
 #
-#  Envio: sbatch job_analysis_mirror_bimaxwellian_moderate_cosma7.sh
+#  Envio (desde la raiz del repo en COSMA):
+#    sbatch cosma_jobs/analisis/analisis_mirror_bikappa3_moderate_pauper.sh
 # =====================================================================
 
 # --- Identificacion del job ---
-#SBATCH --job-name=an_mirror_mod_rp
+#SBATCH --job-name=an_bikappa3_mod
 
 # --- Salidas ---
-#SBATCH --output=/cosma7/data/dp433/dc-mart18/logs/analysis_mirror_moderate_cosma7.%J.out
-#SBATCH --error=/cosma7/data/dp433/dc-mart18/logs/analysis_mirror_moderate_cosma7.%J.err
+#SBATCH --output=/cosma7/data/dp433/dc-mart18/logs/analysis_bikappa3_moderate.%J.out
+#SBATCH --error=/cosma7/data/dp433/dc-mart18/logs/analysis_bikappa3_moderate.%J.err
 
 # --- Particion y cuenta ---
-# cosma7-rp (no pauper): mismo pool fisico que cosma7-rp-pauper (que ya
-# usa el job original), pero tier de prioridad mas alto -- utilmente
-# distinto solo si se manda junto con el otro job y se quiere que este
-# entre primero. Limite de tiempo 72h (vs 24h de -pauper).
-#SBATCH --partition=cosma7-rp
+# cosma7-rp-pauper: cola de bajo costo, limite de tiempo 24h.
+# Cambiar a cosma7-rp (72h) si hace falta.
+#SBATCH --partition=cosma7-rp-pauper
 #SBATCH --account=dp433
 
 # --- Recursos ---
-# 8 nodos, 1 tarea por nodo, nodo completo (28 cores) por tarea = 224
-# cores en total -- el maximo paralelismo que este pipeline puede usar
-# (una etapa independiente por nodo).
+# 8 nodos, 1 tarea por nodo, nodo completo (28 cores) por tarea: cada
+# etapa del pipeline es un proceso Python (no MPI) que puede usar
+# internamente varios cores para su propio trabajo.
 #SBATCH --nodes=8
 #SBATCH --ntasks=8
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=28
 #SBATCH --exclusive
 
-# --- Tiempo maximo ---
+# --- Tiempo maximo (maximo de la particion: 24h) ---
 #SBATCH --time=08:00:00
 
 # --- Directorio de trabajo ---
@@ -58,28 +52,26 @@
 set -uo pipefail
 
 # =====================================================================
-# Entorno: mismos modulos + variables ADIOS2/HDF5 que
-# src/submit_anisotropy_adios2.slurm, para que los scripts de Python
-# puedan leer snapshots ADIOS2 (.bp) si la corrida quedo en ese formato.
+# Entorno: mismos modulos + variables ADIOS2/HDF5 que las corridas PSC,
+# para poder leer snapshots ADIOS2 (.bp) si la corrida quedo asi.
 # =====================================================================
 REPO=/cosma7/data/dp433/dc-mart18/pcseditado
-# shellcheck source=src/cosma_adios2_env.sh
+# shellcheck source=../../src/cosma_adios2_env.sh
 source "$REPO/src/cosma_adios2_env.sh"
 
 cd "$REPO/CodeforAnalisys"
 
-DATA_DIR=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/psc_mirror_bimaxwellian_moderate_11596993
-CASE=mirror_bimaxwellian_moderate
+# --- UNICO cambio de fondo respecto al script de maxwellian ---
+DATA_DIR=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/psc_mirror_bikappa3_moderate_11618877
+CASE=mirror_bikappa3_moderate
 RESULTS_ROOT=../analysis_results
 
 mkdir -p /cosma7/data/dp433/dc-mart18/logs
 
 # =====================================================================
-# El Makefile solo reconoce el patron .h5 en sus guardas check-fields /
-# check-moments / check-particles (los scripts de Python si soportan
-# .h5 y .bp via data_reader.py). Si la corrida solo dejo snapshots
-# ADIOS2 (.bp), hay que forzar los patrones explicitamente o esas
-# guardas fallan aunque los datos existan.
+# El Makefile solo reconoce .h5 en sus guardas check-fields/moments/
+# particles. Si la corrida solo dejo snapshots ADIOS2 (.bp), hay que
+# forzar los patrones o esas guardas fallan aunque los datos existan.
 # =====================================================================
 EXTRA_VARS=()
 if ! compgen -G "$DATA_DIR/pfd.*_p*.h5" > /dev/null && \

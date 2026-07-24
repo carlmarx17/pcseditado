@@ -23,7 +23,7 @@
 #
 #  Envio:
 #    cd /cosma7/data/dp433/dc-mart18/pcseditado
-#    sbatch job_mirror_bikappa3_moderate.sh
+#    sbatch cosma_jobs/simulacion/sim_mirror_bikappa3_moderate.sh
 # =====================================================================
 
 #SBATCH --job-name=psc_mirror_bikappa3_mod

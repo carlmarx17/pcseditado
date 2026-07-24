@@ -44,6 +44,12 @@ add_psc_executable(psc_mirror_bikappa5)
 add_psc_executable(psc_firehose_bikappa3)
 add_psc_executable(psc_firehose_bikappa5)
 
+# --- Firehose caja grande (40 d_i, misma fisica, ngrid=576) ---
+# El tamano de caja es compile-time (#define PSC_DOMAIN_DI), no env,
+# por eso son ejecutables aparte. Ver cosma_jobs/README.md.
+add_psc_executable(psc_firehose_bimaxwellian_moderate_bigbox40)
+add_psc_executable(psc_firehose_bikappa3_bigbox40)
+
 add_psc_executable(psc_reconnection)
 add_psc_executable(psc_turbulence_3D_kappa_3)
 add_psc_executable(psc_turbulence_3D_maxwellian_3)

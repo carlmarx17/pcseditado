@@ -2,7 +2,7 @@
 #
 # =====================================================================
 #  Job SLURM: psc_M_S_bM  — COSMA7-rp  (nodos libres)
-#  Submision: sbatch job_MSbM.sh
+#  Submision: sbatch cosma_jobs/simulacion/sim_mirror_bimaxwellian_strong_MSbM.sh
 # =====================================================================
 
 # --- Identificación del job ---
