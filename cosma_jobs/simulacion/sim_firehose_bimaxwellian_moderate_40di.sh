@@ -10,7 +10,8 @@
 #  ngrid=1152 mantiene la MISMA resolucion que los casos estandar
 #  (~28.8 celdas/d_i). Coste ~4x un caso estandar; se corre con np 48x48
 #  (2304 ranks, 83 nodos, parches de 24x24 celdas, ~1.8x trabajo por
-#  rank) y limite de 72 h, para no acaparar la particion cosma7-rp.
+#  rank), para no acaparar la particion cosma7-rp. Si las 48 h no
+#  alcanzan, se reanuda desde el ultimo checkpoint.
 #
 #  IMPORTANTE: el tamano de caja NO es una variable de entorno; esta
 #  fijo en compile-time (#define PSC_DOMAIN_DI en
@@ -33,7 +34,7 @@
 #SBATCH --nodes=83
 #SBATCH --ntasks-per-node=28
 #SBATCH --ntasks=2304
-#SBATCH --time=72:00:00
+#SBATCH --time=48:00:00
 #SBATCH --output=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.out
 #SBATCH --error=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
