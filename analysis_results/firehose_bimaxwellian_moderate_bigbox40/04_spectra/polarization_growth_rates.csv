@@ -1,0 +1,5 @@
+case,distribution,instability,polarization,mode_index,kdi,kde,fit_t_start,fit_t_end,gamma_pic,gamma_pic_error,gamma_theory,relative_difference_pct,R2
+firehose_bimaxwellian_moderate_bigbox40,Bi-Maxwellian,firehose,plus,578,0.3141592653589793,nan,13.128472222222223,89.0625,0.08273891377893637,0.0015242237104771863,nan,nan,0.7192798763461862
+firehose_bimaxwellian_moderate_bigbox40,Bi-Maxwellian,firehose,minus,578,0.3141592653589793,nan,11.677083333333334,78.24305555555556,0.08526578806886848,0.0017802194389871574,nan,nan,0.6947349244687483
+firehose_bimaxwellian_moderate_bigbox40,Bi-Maxwellian,firehose,plus,579,0.471238898038469,nan,12.600694444444445,87.67708333333334,0.054479874785969655,0.001688556102071544,nan,nan,0.4779559646074561
+firehose_bimaxwellian_moderate_bigbox40,Bi-Maxwellian,firehose,minus,579,0.471238898038469,nan,8.972222222222223,57.13194444444444,0.13298649297294507,0.0018796148174648622,nan,nan,0.8728823402237922

@@ -1,0 +1,11 @@
+Profile: Mirror Moderate Bi-Kappa 3
+Instability: mirror
+Initial step: 0
+T_parallel_i = 0.015936995
+T_perp_i     = 0.031986093
+A_i          = 2.0070341
+R_i          = 0.49824763
+beta_parallel_i = 4.9803109
+
+mirror: expected A_i > 1 and T_perp_i > T_parallel_i
+Initial check: PASS

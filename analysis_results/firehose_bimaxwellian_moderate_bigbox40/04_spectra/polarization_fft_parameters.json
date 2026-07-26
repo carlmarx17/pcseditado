@@ -1,0 +1,40 @@
+{
+  "case": "firehose_bimaxwellian_moderate_bigbox40",
+  "instability": "firehose",
+  "distribution": "Bi-Maxwellian",
+  "plane": "yz",
+  "parallel_axis": "z",
+  "normalization": "ion",
+  "b0": 0.08,
+  "n_snapshots_used": 1731,
+  "t_omegaci_range": [
+    0.0,
+    114.13194444444446
+  ],
+  "selected_modes_kdi": [
+    0.3141592653589793,
+    0.471238898038469
+  ],
+  "polarization_convention_check": {
+    "Bx=cos(kz-wt), By=+sin(kz-wt)": {
+      "psi_plus": {
+        "peak_k": 0.2945243112740431,
+        "peak_omega": 0.39269908169872414
+      },
+      "psi_minus": {
+        "peak_k": -0.2945243112740431,
+        "peak_omega": -0.39269908169872414
+      }
+    },
+    "Bx=cos(kz-wt), By=-sin(kz-wt)": {
+      "psi_plus": {
+        "peak_k": -0.2945243112740431,
+        "peak_omega": -0.39269908169872414
+      },
+      "psi_minus": {
+        "peak_k": 0.2945243112740431,
+        "peak_omega": 0.39269908169872414
+      }
+    }
+  }
+}

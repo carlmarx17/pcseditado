@@ -1,0 +1,2 @@
+case,distribution,instability,kdi_perp,kdi_parallel,theta_kB_deg,fit_t_start,fit_t_end,gamma_pic,gamma_pic_error,R2
+mirror_bikappa3_moderate,Bi-Kappa (kappa=3.0),mirror,0.3141592653589793,-0.3141592653589793,45.0,21.96875,131.74652777777777,0.005974795124828599,0.00037829351037092264,0.13043602198252804
