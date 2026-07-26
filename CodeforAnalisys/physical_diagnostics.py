@@ -378,7 +378,10 @@ def field_metrics(field_file: str, b0: float = B0) -> dict:
         "B_min": float(np.nanmin(bmag)),
         "mirror_depth": float(1.0 - np.nanmin(bmag) / b0_abs),
         "mirror_area_fraction": float(np.nanmean(bmag < (b0 - sigma_b))),
-        "magnetic_energy_fluct": float(0.5 * np.nanmean(delta_b**2)),
+        # Full fluctuation energy density 0.5<|dB|^2>: using only the
+        # magnitude fluctuation (|B|-B0) drops the perpendicular components,
+        # which dominate by ~an order of magnitude in these runs.
+        "magnetic_energy_fluct": float(0.5 * np.nanmean(dbx**2 + dby**2 + dbz**2)),
     }
 
 
@@ -982,34 +985,56 @@ def plot_spatial_maps(rows: list[dict], outdir: Path):
     _savefig(fig, outdir / "brazil_plot_time_evolution.png")
 
 
-def growth_rate(time: np.ndarray, delta_b: np.ndarray) -> dict:
+def growth_rate(time: np.ndarray, delta_b: np.ndarray,
+                amp_lo: float = 0.1, amp_hi: float = 0.9) -> dict:
+    """Fit gamma on the exponential segment of ln(delta_b).
+
+    The linear-phase window is selected by AMPLITUDE, not by local slope:
+    slope-based selection keeps saturation samples (noise makes the local
+    slope flicker positive there), stretching the window across saturation
+    and biasing gamma low. Here the fit uses only samples whose ln-amplitude
+    lies in the central [amp_lo, amp_hi] band between the noise floor and the
+    saturation level.
+    """
     valid = np.isfinite(time) & np.isfinite(delta_b) & (delta_b > 0) & (time > 0.0)
     if np.count_nonzero(valid) < 4:
         return {}
     t = time[valid]
     y = np.log(delta_b[valid])
-    slope_local = np.gradient(y, t)
-    positive = slope_local > 0
-    if np.count_nonzero(positive) >= 3:
-        idx_valid = np.where(positive)[0]
-        # Use central 70 percent of positive-growth samples to avoid noise/saturation.
-        lo = idx_valid[max(0, int(0.15 * len(idx_valid)))]
-        hi = idx_valid[min(len(idx_valid) - 1, int(0.85 * len(idx_valid)))]
-        fit_slice = slice(lo, hi + 1)
+    # Noise floor: median of the first 5% of samples; saturation: 95th pct.
+    n_head = max(3, int(0.05 * len(y)))
+    y_noise = float(np.median(y[:n_head]))
+    y_sat = float(np.nanpercentile(y, 95))
+    if y_sat <= y_noise:  # no growth at all; fall back to everything
+        band = np.ones_like(y, dtype=bool)
     else:
-        fit_slice = slice(1, -1)
-    if len(t[fit_slice]) < 3:
-        fit_slice = slice(None)
-    coeff = np.polyfit(t[fit_slice], y[fit_slice], 1)
+        lo_level = y_noise + amp_lo * (y_sat - y_noise)
+        hi_level = y_noise + amp_hi * (y_sat - y_noise)
+        band = (y >= lo_level) & (y <= hi_level)
+        # Restrict to the FIRST contiguous rise: stop at the first sample
+        # after the curve has reached hi_level (post-saturation excursions
+        # back into the band must not re-enter the fit).
+        above_hi = np.where(y > hi_level)[0]
+        if len(above_hi):
+            band[above_hi[0]:] = False
+    if np.count_nonzero(band) < 3:
+        band = np.ones_like(y, dtype=bool)
+    tf, yf = t[band], y[band]
+    coeff = np.polyfit(tf, yf, 1)
+    y_pred = np.polyval(coeff, tf)
+    ss_res = float(np.sum((yf - y_pred) ** 2))
+    ss_tot = float(np.sum((yf - np.mean(yf)) ** 2))
+    r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
     return {
         "gamma": float(coeff[0]),
         "intercept": float(coeff[1]),
-        "linear_phase_start": float(t[fit_slice][0]),
-        "linear_phase_end": float(t[fit_slice][-1]),
+        "linear_phase_start": float(tf[0]),
+        "linear_phase_end": float(tf[-1]),
+        "r_squared": r_squared,
         "time": t,
         "ln_delta_b": y,
-        "fit_time": t[fit_slice],
-        "fit_ln_delta_b": np.polyval(coeff, t[fit_slice]),
+        "fit_time": tf,
+        "fit_ln_delta_b": y_pred,
     }
 
 
@@ -1542,6 +1567,9 @@ class PhysicalDiagnostics:
                 "gamma": growth["gamma"],
                 "linear_phase_start": growth["linear_phase_start"],
                 "linear_phase_end": growth["linear_phase_end"],
+                "r_squared": growth["r_squared"],
+                "fit_ok": int(np.isfinite(growth["r_squared"])
+                              and growth["r_squared"] >= 0.7),
             }])
         self.plot_field_maps()
         self.run_magnetic_spectra()
@@ -1695,14 +1723,21 @@ class PhysicalDiagnostics:
             e_b = r.get("magnetic_energy_fluct", np.nan)
             if not np.all(np.isfinite([e_bulk, e_th, e_b])):
                 continue
-            total = e_bulk + e_th + e_b
+            # Internal (thermal) energy densities per species, (3/2) n T with
+            # n = N0 = 1 in code units and T = (T_par + 2 T_perp)/3. The old
+            # table set E_internal_e = nan and summed ONLY the ion thermal
+            # energy into E_total, so all energy scattered to electrons was
+            # booked as a spurious "conservation error" of tens of percent.
+            e_int_i = 1.5 * (r.get("T_parallel_i", np.nan) + 2.0 * r.get("T_perp_i", np.nan)) / 3.0
+            e_int_e = 1.5 * (r.get("T_parallel_e", np.nan) + 2.0 * r.get("T_perp_e", np.nan)) / 3.0
+            total = e_bulk + e_int_i + e_int_e + e_b
             rows.append({
                 "step": step,
                 "omega_ci_t": step_to_omegaci(step),
                 "E_kin_bulk": e_bulk,
                 "E_kin_thermal": e_th,
-                "E_internal_i": 1.5 * (r.get("T_parallel_i", np.nan) + 2.0 * r.get("T_perp_i", np.nan)) / 3.0,
-                "E_internal_e": np.nan,
+                "E_internal_i": e_int_i,
+                "E_internal_e": e_int_e,
                 "E_B": e_b,
                 "E_total": total,
             })
@@ -1722,7 +1757,8 @@ class PhysicalDiagnostics:
         _style_axes(ax)
         for key, color, label in [
             ("E_kin_bulk", "#58a6ff", "bulk"),
-            ("E_kin_thermal", "#ff7b72", "thermal"),
+            ("E_internal_i", "#ff7b72", "ion internal"),
+            ("E_internal_e", "#d2a8ff", "electron internal"),
             ("E_B", "#56d364", "magnetic fluct."),
             ("E_total", "#f2cc60", "total"),
         ]:

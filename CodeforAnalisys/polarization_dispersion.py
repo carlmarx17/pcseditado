@@ -37,6 +37,9 @@ from psc_units import (
 
 EPS = 1e-30
 
+# Minimum R^2 of the exponential fit for a growth rate to be flagged usable.
+MIN_FIT_R2 = 0.7
+
 # Mirror is fundamentally oblique/compressive (see module docstring), but the
 # Makefile runs this psi_pm diagnostic unconditionally for every instability.
 # For a mirror case, spatial_fft_kpar0 below only keeps the k_perp=0 slice, a
@@ -313,6 +316,12 @@ def growth_rate_rows(
             "gamma_theory": gamma_theory,
             "relative_difference_pct": relative_diff,
             "R2": fit["rvalue"] ** 2 if np.isfinite(fit["rvalue"]) else float("nan"),
+            # Quality gate: a growth rate is only citable if the exponential
+            # fit explains the data (R2 >= MIN_FIT_R2). Rows failing the gate
+            # are kept for provenance but must not enter thesis tables.
+            "fit_ok": int(
+                np.isfinite(fit["rvalue"]) and fit["rvalue"] ** 2 >= MIN_FIT_R2
+            ),
         })
     return rows
 
@@ -630,6 +639,9 @@ def main() -> int:
             "fit_t_end": mirror_fit["fit_time_range"][1] if mirror_fit["fit_time_range"] else float("nan"),
             "gamma_pic": mirror_fit["gamma"], "gamma_pic_error": mirror_error,
             "R2": mirror_fit["rvalue"] ** 2 if np.isfinite(mirror_fit["rvalue"]) else float("nan"),
+            "fit_ok": int(
+                np.isfinite(mirror_fit["rvalue"]) and mirror_fit["rvalue"] ** 2 >= MIN_FIT_R2
+            ),
         }])
 
     params = {
