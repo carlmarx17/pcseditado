@@ -176,3 +176,11 @@ desktop.ini
 *.zip
 *.7z
 *.rar
+
+# ---- Curated analysis results ARE versioned ----
+# (cleaned: per-step maps only every 100k steps; one file per figure)
+!analysis_results/**/*.png
+!analysis_results/**/*.csv
+!analysis_results/**/*.json
+!analysis_results/**/*.txt
+!analysis_results/**/*.gif

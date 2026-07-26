@@ -1037,7 +1037,7 @@ def plot_field_time(rows: list[dict], outdir: Path):
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
     ax.set_ylabel(r"$\delta B_{\rm rms}/B_0$", color=TEXT_CLR)
     ax.set_title("Magnetic fluctuation growth", color=TEXT_CLR, fontweight="bold")
-    _savefig_many(fig, [outdir / "deltaB_rms_vs_time.png", outdir / "deltaB_over_B0_vs_time.png"])
+    _savefig_many(fig, [outdir / "deltaB_rms_vs_time.png"])
 
     fig, ax = plt.subplots(figsize=(8.5, 5.2))
     fig.patch.set_facecolor(DARK_BG)
@@ -1049,14 +1049,7 @@ def plot_field_time(rows: list[dict], outdir: Path):
     ax.set_ylabel("RMS fluctuation", color=TEXT_CLR)
     ax.set_title("Parallel vs perpendicular magnetic fluctuations", color=TEXT_CLR, fontweight="bold")
     ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
-    _savefig_many(
-        fig,
-        [
-            outdir / "deltaB_components_comparison.png",
-            outdir / "deltaB_parallel_vs_time.png",
-            outdir / "deltaB_perp_vs_time.png",
-        ],
-    )
+    _savefig_many(fig, [outdir / "deltaB_components_comparison.png"])
 
     fig, ax = plt.subplots(figsize=(8.5, 5.2))
     fig.patch.set_facecolor(DARK_BG)
@@ -1067,7 +1060,7 @@ def plot_field_time(rows: list[dict], outdir: Path):
     ax.set_ylabel("mirror-hole metric", color=TEXT_CLR)
     ax.set_title("Mirror-hole depth and area fraction", color=TEXT_CLR, fontweight="bold")
     ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
-    _savefig_many(fig, [outdir / "mirror_depth_vs_time.png", outdir / "mirror_area_fraction_vs_time.png"])
+    _savefig_many(fig, [outdir / "mirror_depth_area_vs_time.png"])
 
 
 def plot_growth(growth: dict, outdir: Path):
@@ -1489,7 +1482,8 @@ class PhysicalDiagnostics:
                     ]
                 })
 
-        _write_csv(self.outdir / "validation_table.csv", rows)
+        # anisotropy_table.csv is the single canonical per-step table; the
+        # initial-condition check lives in validation_summary.txt.
         _write_csv(self.outdir / "anisotropy_table.csv", rows)
         _write_csv(self.outdir / "fit_metrics.csv", fit_rows)
         self.write_validation_summary(rows)
@@ -1683,7 +1677,7 @@ class PhysicalDiagnostics:
         cb.set_label(r"$t\Omega_{ci}$", color=TEXT_CLR)
         cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
         plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
-        _savefig_many(fig, [self.outdir / "brazil_plot_global.png", self.outdir / "brazil_plot_spatial.png"])
+        _savefig_many(fig, [self.outdir / "brazil_plot_global.png"])
 
     def run_energy_summary(self, particle_rows: list[dict], field_rows: list[dict]):
         if not particle_rows and not field_rows:

@@ -37,6 +37,13 @@ PHYSICS_OUT = $(OUTPUT_DIR)/09_physical_diagnostics
 COMPARE_CASES ?=
 COMPARE_OUT ?= $(RESULTS_ROOT)/comparison_physical
 THEORY_CSV ?=
+# Dispersion-diagram controls. For firehose (quasi-parallel) cases set
+# DISPERSION_THETA_MAX (e.g. 30) so the omega-k diagram is not washed out by
+# oblique k_perp power, and set DISPERSION_T_START to the end of the linear
+# phase so the FFT sees a quasi-stationary signal.
+DISPERSION_THETA_MAX ?=
+DISPERSION_T_START ?=
+DISPERSION_T_END ?=
 GROWTH_COMPONENT ?= parallel
 GROWTH_KPAR_MAX ?= 1.5
 GROWTH_KPERP_MAX ?= 1.5
@@ -161,7 +168,10 @@ spectral: check-case check-fields check-resolution
 dispersion: check-case check-fields check-resolution
 	@echo "Generating frequency--phase-velocity mode-density plot"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) dispersion_analysis.py \
-		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)"
+		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)" \
+		$(if $(DISPERSION_THETA_MAX),--theta-max-deg "$(DISPERSION_THETA_MAX)",) \
+		$(if $(DISPERSION_T_START),--t-start "$(DISPERSION_T_START)",) \
+		$(if $(DISPERSION_T_END),--t-end "$(DISPERSION_T_END)",)
 
 growth-map: check-case check-fields check-resolution
 	@echo "Generating gamma(k_parallel,k_perp) growth-rate map"

@@ -245,10 +245,17 @@ class FieldImagePlotter:
 
         return True
 
-    def batch_plot(self, steps=None, plane='xy', slice_index=None):
+    def batch_plot(self, steps=None, plane='xy', slice_index=None, every=100_000):
         if not steps:
-            steps = sorted(self.file_map.keys())
-            
+            # Individual maps only every `every` steps (plus first and last):
+            # per-snapshot maps at full output cadence are bulk nobody reads.
+            available = sorted(self.file_map.keys())
+            steps = [s for s in available if s % every == 0]
+            for endpoint in (available[:1] + available[-1:]):
+                if endpoint not in steps:
+                    steps.append(endpoint)
+            steps.sort()
+
         if not steps:
             print("No se encontraron pasos para procesar.")
             return []
@@ -283,6 +290,8 @@ if __name__ == '__main__':
     parser.add_argument('--fluct', type=float, default=0.1)
     parser.add_argument('--plane', type=str, default='xy', choices=['xy','xz','yz'])
     parser.add_argument('--steps', nargs='*', type=int)
+    parser.add_argument('--every', type=int, default=100_000,
+                        help='Sin --steps: procesar un snapshot cada N pasos (default 100000).')
     parser.add_argument('--slice', type=int, default=None)
     parser.add_argument('--outdir', type=str, default='field_images')
     parser.add_argument('--smooth', type=float, default=0.8)
@@ -309,7 +318,8 @@ if __name__ == '__main__':
         fixed_scale=args.fixed_scale
     )
     
-    plotter.batch_plot(steps=args.steps, plane=args.plane, slice_index=args.slice)
+    plotter.batch_plot(steps=args.steps, plane=args.plane, slice_index=args.slice,
+                       every=args.every)
     
     if args.create_gifs:
         plotter.create_gifs(plane=args.plane, duration=args.gif_duration)

@@ -40,6 +40,7 @@ from psc_units import (
     DOMAIN_DE,
     DOMAIN_DI_Y,
     DOMAIN_DI_Z,
+    DX_DI,
     FIELD_FILE_PATTERN,
     MASS_RATIO,
     MOMENT_FILE_PATTERN,
@@ -69,11 +70,19 @@ PANEL_BG  = "#161b22"
 TEXT_CLR  = "#e6edf3"
 GRID_CLR  = "#21262d"
 
-# Steps to plot individually — build2 range (0–75000, stride 500)
-PLOT_STEPS: list[int] = [0, 2500, 5000, 10000, 15000, 25000, 35000, 50000, 65000, 75000]
+# Default smoothing scale in d_i. The diamagnetic current comes from moment
+# gradients: PIC shot noise (nicell ~ 1000) dominates any gradient computed
+# below the ion kinetic scales, so the filter must live at a fraction of
+# rho_i ~ d_i, NOT at a few cells (dx ~ 0.035 d_i). sigma = 0.5 d_i keeps the
+# mirror/firehose structures (several d_i) while killing the grid-scale noise.
+SIGMA_DI_DEFAULT: float = 0.5
 
-# GIF decimation factor — build2 has 151 snapshots, stride 10 → ~15 frames
-GIF_STRIDE: int = 10
+# Production runs write snapshots every 500 steps; individual maps every
+# snapshot are useless bulk. Default cadence for the per-step PNG maps:
+STEP_EVERY_DEFAULT: int = 100_000
+
+# GIF decimation factor applied on top of the selected steps
+GIF_STRIDE: int = 1
 
 
 class DiamagneticCurrentAnalyzer:
@@ -83,16 +92,21 @@ class DiamagneticCurrentAnalyzer:
         self,
         moment_pattern: str = MOMENT_FILE_PATTERN,
         field_pattern: str = FIELD_FILE_PATTERN,
-        sigma: float = 4.0,
+        sigma: float | None = None,
+        sigma_di: float = SIGMA_DI_DEFAULT,
         outdir: str = "diamagnetic_plots",
     ):
         self.moment_pattern = moment_pattern
         self.field_pattern  = field_pattern
-        self.sigma  = sigma
+        # sigma (cells) overrides sigma_di (physical); default is physical.
+        self.sigma  = sigma if sigma is not None else sigma_di / DX_DI
         self.outdir = Path(outdir)
         self.outdir.mkdir(parents=True, exist_ok=True)
+        print(f"Gaussian smoothing: sigma = {self.sigma:.1f} cells "
+              f"({self.sigma * DX_DI:.2f} d_i)")
 
-    def run(self, steps: list[int] | None = None, make_gif: bool = True):
+    def run(self, steps: list[int] | None = None, make_gif: bool = True,
+            every: int = STEP_EVERY_DEFAULT):
         """Run full analysis: individual plots + optional animated GIF."""
         moment_files = PICDataReader.find_files(self.moment_pattern)
         field_files  = PICDataReader.find_files(self.field_pattern)
@@ -102,10 +116,15 @@ class DiamagneticCurrentAnalyzer:
             print("No matched moment/field files found.")
             return
 
-        selected_steps = (
-            common_steps if not steps
-            else [s for s in steps if s in moment_files and s in field_files]
-        )
+        if steps:
+            selected_steps = [s for s in steps if s in moment_files and s in field_files]
+        else:
+            # Keep only every `every` steps, always including first and last.
+            selected_steps = [s for s in common_steps if s % every == 0]
+            for endpoint in (common_steps[0], common_steps[-1]):
+                if endpoint not in selected_steps:
+                    selected_steps.append(endpoint)
+            selected_steps.sort()
         if not selected_steps:
             print("No matching steps found for the requested selection.")
             return
@@ -139,7 +158,7 @@ class DiamagneticCurrentAnalyzer:
             return
 
         # ── 3. Animated GIF ───────────────────────────────────────────────────
-        gif_steps = common_steps[::GIF_STRIDE]
+        gif_steps = selected_steps[::GIF_STRIDE]
         print(f"\n[3/3] Generating GIF with {len(gif_steps)} frames (stride={GIF_STRIDE})...")
 
         frames = []
@@ -366,8 +385,14 @@ def parse_args():
                         help="Glob pattern for pfd field files.")
     parser.add_argument("--outdir",  default="diamagnetic_plots",
                         help="Directory for output plots.")
-    parser.add_argument("--sigma",   type=float, default=4.0,
-                        help="Gaussian smoothing width in cells.")
+    parser.add_argument("--sigma",   type=float, default=None,
+                        help="Gaussian smoothing width in cells (overrides --sigma-di).")
+    parser.add_argument("--sigma-di", type=float, default=SIGMA_DI_DEFAULT,
+                        help="Gaussian smoothing width in ion inertial lengths "
+                             f"(default {SIGMA_DI_DEFAULT} d_i).")
+    parser.add_argument("--every",   type=int, default=STEP_EVERY_DEFAULT,
+                        help="Plot one snapshot every this many simulation steps "
+                             f"(default {STEP_EVERY_DEFAULT}). Ignored if --steps is given.")
     parser.add_argument("--steps",   nargs="*", type=int,
                         help="Optional list of steps to process.")
     parser.add_argument("--no-gif",  action="store_true",
@@ -381,5 +406,6 @@ if __name__ == "__main__":
         moment_pattern=args.moments,
         field_pattern=args.fields,
         sigma=args.sigma,
+        sigma_di=args.sigma_di,
         outdir=args.outdir,
-    ).run(steps=args.steps, make_gif=not args.no_gif)
+    ).run(steps=args.steps, make_gif=not args.no_gif, every=args.every)
