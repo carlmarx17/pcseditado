@@ -10,7 +10,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import re
 import imageio
+from io import BytesIO
 from pathlib import Path
+from PIL import Image
 from scipy.ndimage import gaussian_filter
 from matplotlib.colors import LinearSegmentedColormap
 
@@ -31,6 +33,15 @@ DARK_BG  = "#0c0e14"
 PANEL_BG = "#12151f"
 TEXT_CLR  = "#dde2f0"
 GRID_CLR  = "#2a2f45"
+
+# Saved PNG maps are thesis figures: a handful is enough.
+STEP_EVERY_DEFAULT: int = 100_000
+# GIF frames are rendered in memory, so they can run much finer.
+GIF_EVERY_DEFAULT: int = 10_000
+# GIF render DPI. Scientific colormaps compress poorly in GIF's palette
+# format (~350 kB/frame at dpi=100), and a 1.2M-step run gives 121 frames.
+# dpi=80 keeps a 1.2M-step animation near 30 MB instead of ~45 MB.
+GIF_DPI_DEFAULT: int = 80
 
 class FieldImagePlotter:
     def __init__(self, em_pattern='pfd.*.h5', B0=B0_DEFAULT, fluct_amp=0.1, outdir='field_images', 
@@ -139,11 +150,17 @@ class FieldImagePlotter:
         for comp in self.global_vmin:
             print(f"  {comp}: [{self.global_vmin[comp]:.4f}, {self.global_vmax[comp]:.4f}]")
 
-    def plot_snapshot(self, step, plane='xy', slice_index=None):
+    def _build_panels(self, step, plane='xy', slice_index=None):
+        """Read one snapshot and return the per-component render specs.
+
+        Returns None if the step cannot be read. Each spec carries everything
+        _make_figure needs, so both the PNG path and the in-memory GIF path
+        produce byte-identical plots.
+        """
         fn = self.file_map.get(step)
         if fn is None:
-            return False
-            
+            return None
+
         try:
             fields = PICDataReader.read_multiple_fields_3d(fn, "jeh-", ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"])
             bx3d = fields["hx_fc/p0/3d"]
@@ -151,28 +168,18 @@ class FieldImagePlotter:
             bz3d = fields["hz_fc/p0/3d"]
         except Exception as e:
             print(f"Error procesando step {step}: {e}")
-            return False
+            return None
 
         bx2d, by2d, bz2d, xlabel, ylabel = self._get_slice(bx3d, by3d, bz3d, plane, slice_index)
 
-        time_omega_ci = step_to_omegaci(step)
-
-        # Determinar extent físico en unidades d_i
-        # PSC: shape (Nz, Ny), eje horizontal = Z, eje vertical = Y
-        ny, nz = bz2d.shape[1] if bz2d.ndim > 1 else 1, bz2d.shape[0]
-        # Tras _get_slice + .T: imshow recibe (Ny, Nz)
-        #   → extent = [z_min, z_max, y_min, y_max]
-        extent_phys = [0, DOMAIN_DI_Z, 0, DOMAIN_DI_Y]
-
-        xlabel_phys = rf"$Z\ [d_i]$"
-        ylabel_phys = rf"$Y\ [d_i]$"
+        panels = []
 
         # Magnitud
         if self.comp_magnitude:
             mag = np.sqrt((bx2d - np.mean(bx2d))**2 + (by2d - np.mean(by2d))**2 + (bz2d - np.mean(bz2d))**2) / self.B0
             if self.smooth_sigma > 0:
                 mag = gaussian_filter(mag, sigma=self.smooth_sigma)
-            
+
             if self.fixed_scale and 'Bmag' in self.global_vmin:
                 vmin, vmax = self.global_vmin['Bmag'], self.global_vmax['Bmag']
             elif self.dyn_scale:
@@ -181,36 +188,22 @@ class FieldImagePlotter:
             else:
                 vmin, vmax = 0, self.fluct_amp
 
-            fig, ax = plt.subplots(figsize=(9, 8))
-            fig.patch.set_facecolor(DARK_BG)
-            ax.set_facecolor(PANEL_BG)
-            im = ax.imshow(mag.T, origin='lower', cmap=self.palettes['Bmag'],
-                           vmin=vmin, vmax=vmax, aspect='auto', extent=extent_phys)
-            cb = fig.colorbar(im, ax=ax, pad=0.02)
-            cb.set_label(r'$|\delta B|/B_0$', fontsize=17, color=TEXT_CLR)
-            cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
-            plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
-            ax.set_xlabel(xlabel_phys, fontsize=16, color=TEXT_CLR)
-            ax.set_ylabel(ylabel_phys, fontsize=16, color=TEXT_CLR)
-            ax.set_title(
-                rf'$|\delta B|/B_0$  —  $t \approx {time_omega_ci:.2f}\,\Omega_{{ci}}^{{-1}}$ (step {step})',
-                fontsize=17, color=TEXT_CLR, fontweight='bold'
-            )
-            ax.tick_params(colors=TEXT_CLR, direction='in', which='both', top=True, right=True)
-            ax.grid(True, linestyle=':', alpha=0.25, color=GRID_CLR)
-            for spine in ax.spines.values():
-                spine.set_edgecolor(GRID_CLR)
-            
-            outname = self.outdir / f'Bmag_fluct_step{step}_{plane}.png'
-            fig.savefig(outname, dpi=200, bbox_inches='tight', facecolor=DARK_BG)
-            plt.close(fig)
+            panels.append({
+                'slug': 'Bmag',
+                'data': mag,
+                'cmap': self.palettes['Bmag'],
+                'vmin': vmin, 'vmax': vmax,
+                'label': r'$|\delta B|/B_0$',
+                'filename': f'Bmag_fluct_step{step}_{plane}.png',
+            })
 
         # Componentes
         for comp, data in [('Bx', bx2d), ('By', by2d), ('Bz', bz2d)]:
-            if comp not in self.comps_to_plot: continue
-                
+            if comp not in self.comps_to_plot:
+                continue
+
             fluct = self._process_component(data)
-            
+
             if self.fixed_scale and comp in self.global_vmin:
                 vmin, vmax = self.global_vmin[comp], self.global_vmax[comp]
             elif self.dyn_scale:
@@ -219,33 +212,78 @@ class FieldImagePlotter:
             else:
                 vmin, vmax = -self.fluct_amp, self.fluct_amp
 
-            fig, ax = plt.subplots(figsize=(9, 8))
-            fig.patch.set_facecolor(DARK_BG)
-            ax.set_facecolor(PANEL_BG)
-            im = ax.imshow(fluct.T, origin='lower', cmap=self.palettes[comp],
-                           vmin=vmin, vmax=vmax, aspect='auto', extent=extent_phys)
-            cb = fig.colorbar(im, ax=ax, pad=0.02)
-            cb.set_label(rf'$\delta B_{comp[-1]}/B_0$', fontsize=17, color=TEXT_CLR)
-            cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
-            plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
-            ax.set_xlabel(xlabel_phys, fontsize=16, color=TEXT_CLR)
-            ax.set_ylabel(ylabel_phys, fontsize=16, color=TEXT_CLR)
-            ax.set_title(
-                rf'$\delta B_{comp[-1]}/B_0$  —  $t \approx {time_omega_ci:.2f}\,\Omega_{{ci}}^{{-1}}$ (step {step})',
-                fontsize=17, color=TEXT_CLR, fontweight='bold'
-            )
-            ax.tick_params(colors=TEXT_CLR, direction='in', which='both', top=True, right=True)
-            ax.grid(True, linestyle=':', alpha=0.25, color=GRID_CLR)
-            for spine in ax.spines.values():
-                spine.set_edgecolor(GRID_CLR)
-            
-            outname = self.outdir / f'{comp}fluct_step{step}_{plane}.png'
-            fig.savefig(outname, dpi=200, bbox_inches='tight', facecolor=DARK_BG)
-            plt.close(fig)
+            panels.append({
+                'slug': comp,
+                'data': fluct,
+                'cmap': self.palettes[comp],
+                'vmin': vmin, 'vmax': vmax,
+                'label': rf'$\delta B_{comp[-1]}/B_0$',
+                'filename': f'{comp}fluct_step{step}_{plane}.png',
+            })
 
+        return panels
+
+    def _make_figure(self, panel, step):
+        """Build one panel figure (shared by the PNG and GIF paths)."""
+        # PSC: shape (Nz, Ny); tras .T imshow recibe (Ny, Nz)
+        #   → extent = [z_min, z_max, y_min, y_max]
+        extent_phys = [0, DOMAIN_DI_Z, 0, DOMAIN_DI_Y]
+        time_omega_ci = step_to_omegaci(step)
+
+        fig, ax = plt.subplots(figsize=(9, 8))
+        fig.patch.set_facecolor(DARK_BG)
+        ax.set_facecolor(PANEL_BG)
+        im = ax.imshow(panel['data'].T, origin='lower', cmap=panel['cmap'],
+                       vmin=panel['vmin'], vmax=panel['vmax'],
+                       aspect='auto', extent=extent_phys)
+        cb = fig.colorbar(im, ax=ax, pad=0.02)
+        cb.set_label(panel['label'], fontsize=17, color=TEXT_CLR)
+        cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
+        plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
+        ax.set_xlabel(r"$Z\ [d_i]$", fontsize=16, color=TEXT_CLR)
+        ax.set_ylabel(r"$Y\ [d_i]$", fontsize=16, color=TEXT_CLR)
+        ax.set_title(
+            rf"{panel['label']}  —  $t \approx {time_omega_ci:.2f}\,\Omega_{{ci}}^{{-1}}$ (step {step})",
+            fontsize=17, color=TEXT_CLR, fontweight='bold'
+        )
+        ax.tick_params(colors=TEXT_CLR, direction='in', which='both', top=True, right=True)
+        ax.grid(True, linestyle=':', alpha=0.25, color=GRID_CLR)
+        for spine in ax.spines.values():
+            spine.set_edgecolor(GRID_CLR)
+        return fig
+
+    def plot_snapshot(self, step, plane='xy', slice_index=None):
+        panels = self._build_panels(step, plane, slice_index)
+        if panels is None:
+            return False
+        for panel in panels:
+            fig = self._make_figure(panel, step)
+            fig.savefig(self.outdir / panel['filename'], dpi=200,
+                        bbox_inches='tight', facecolor=DARK_BG)
+            plt.close(fig)
         return True
 
-    def batch_plot(self, steps=None, plane='xy', slice_index=None, every=100_000):
+    def render_frames(self, step, plane='xy', slice_index=None, dpi=GIF_DPI_DEFAULT):
+        """Render one step's panels to in-memory RGB arrays keyed by slug.
+
+        Used for GIFs so they can run at a much finer step cadence than the
+        saved PNGs without writing thousands of files to disk.
+        """
+        panels = self._build_panels(step, plane, slice_index)
+        if panels is None:
+            return {}
+        frames = {}
+        for panel in panels:
+            fig = self._make_figure(panel, step)
+            buf = BytesIO()
+            fig.savefig(buf, dpi=dpi, bbox_inches='tight', facecolor=DARK_BG)
+            plt.close(fig)
+            buf.seek(0)
+            frames[panel['slug']] = np.asarray(Image.open(buf).convert('RGB'))
+            buf.close()
+        return frames
+
+    def batch_plot(self, steps=None, plane='xy', slice_index=None, every=STEP_EVERY_DEFAULT):
         if not steps:
             # Individual maps only every `every` steps (plus first and last):
             # per-snapshot maps at full output cadence are bulk nobody reads.
@@ -267,20 +305,52 @@ class FieldImagePlotter:
             print(f"Procesando step {step}...")
             self.plot_snapshot(step, plane, slice_index)
 
-    def create_gifs(self, plane='xy', duration=0.2):
-        print("Generando GIFs...")
-        for comp in (['Bmag'] if self.comp_magnitude else []) + self.comps_to_plot:
-            pattern = f"Bmag_fluct_step*_{plane}.png" if comp == 'Bmag' else f"{comp}fluct_step*_{plane}.png"
-            files = sorted(self.outdir.glob(pattern), key=lambda x: int(re.search(r'step(\d+)_', x.name).group(1)))
-            
-            if not files:
-                continue
-                
-            gif_path = self.outdir / f"{comp}_fluct_{plane}.gif"
-            with imageio.get_writer(gif_path, mode='I', duration=duration, loop=0) as writer:
-                for file in files:
-                    writer.append_data(imageio.imread(file))
-            print(f"  GIF creado: {gif_path}")
+    def create_gifs(self, plane='xy', duration=0.2, slice_index=None,
+                    every=GIF_EVERY_DEFAULT, dpi=GIF_DPI_DEFAULT):
+        """Build one GIF per component, rendering frames in memory.
+
+        The GIF runs at its own (much finer) step cadence: the saved PNGs are
+        a handful of thesis figures, but a GIF needs many frames to show the
+        instability actually evolving. Frames are never written to disk.
+        """
+        available = sorted(self.file_map.keys())
+        gif_steps = [s for s in available if s % every == 0]
+        for endpoint in (available[:1] + available[-1:]):
+            if endpoint not in gif_steps:
+                gif_steps.append(endpoint)
+        gif_steps.sort()
+        if not gif_steps:
+            print("No hay pasos para el GIF.")
+            return
+
+        if self.fixed_scale:
+            # Scales must span the GIF's own steps, which are finer than the
+            # PNG steps batch_plot measured.
+            self.compute_global_scales(gif_steps, plane, slice_index)
+        else:
+            print("  [AVISO] escala dinámica por frame: la inestabilidad crecerá "
+                  "varios órdenes de magnitud pero el GIF la mostrará con "
+                  "amplitud constante. Usa --fixed_scale para ver el crecimiento.")
+
+        print(f"Generando GIFs con {len(gif_steps)} frames (cada {every} pasos)...")
+        writers = {}
+        try:
+            for i, step in enumerate(gif_steps, 1):
+                print(f"  frame {i}/{len(gif_steps)}  step={step}", end='\r')
+                frames = self.render_frames(step, plane, slice_index, dpi=dpi)
+                for slug, image in frames.items():
+                    if slug not in writers:
+                        gif_path = self.outdir / f"{slug}_fluct_{plane}.gif"
+                        writers[slug] = (
+                            imageio.get_writer(gif_path, mode='I',
+                                               duration=duration, loop=0),
+                            gif_path,
+                        )
+                    writers[slug][0].append_data(image)
+        finally:
+            for writer, gif_path in writers.values():
+                writer.close()
+                print(f"\n  GIF creado: {gif_path}")
 
 
 if __name__ == '__main__':
@@ -290,8 +360,13 @@ if __name__ == '__main__':
     parser.add_argument('--fluct', type=float, default=0.1)
     parser.add_argument('--plane', type=str, default='xy', choices=['xy','xz','yz'])
     parser.add_argument('--steps', nargs='*', type=int)
-    parser.add_argument('--every', type=int, default=100_000,
-                        help='Sin --steps: procesar un snapshot cada N pasos (default 100000).')
+    parser.add_argument('--every', type=int, default=STEP_EVERY_DEFAULT,
+                        help='Sin --steps: guardar un PNG cada N pasos (default 100000).')
+    parser.add_argument('--gif_every', type=int, default=GIF_EVERY_DEFAULT,
+                        help='Cadencia de frames del GIF, en pasos (default 10000). '
+                             'Los frames se renderizan en memoria, no se guardan.')
+    parser.add_argument('--gif_dpi', type=int, default=GIF_DPI_DEFAULT,
+                        help=f'DPI de los frames del GIF (default {GIF_DPI_DEFAULT}).')
     parser.add_argument('--slice', type=int, default=None)
     parser.add_argument('--outdir', type=str, default='field_images')
     parser.add_argument('--smooth', type=float, default=0.8)
@@ -322,4 +397,6 @@ if __name__ == '__main__':
                        every=args.every)
     
     if args.create_gifs:
-        plotter.create_gifs(plane=args.plane, duration=args.gif_duration)
+        plotter.create_gifs(plane=args.plane, duration=args.gif_duration,
+                            slice_index=args.slice, every=args.gif_every,
+                            dpi=args.gif_dpi)

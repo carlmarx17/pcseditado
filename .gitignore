@@ -183,4 +183,5 @@ desktop.ini
 !analysis_results/**/*.csv
 !analysis_results/**/*.json
 !analysis_results/**/*.txt
-!analysis_results/**/*.gif
+# GIFs stay OUT of git: ~30 MB each x 5 per case, and fully regenerable with
+# `make fields diamagnetic`. The PNG maps are the thesis figures.

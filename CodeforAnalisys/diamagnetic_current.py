@@ -81,8 +81,11 @@ SIGMA_DI_DEFAULT: float = 0.5
 # snapshot are useless bulk. Default cadence for the per-step PNG maps:
 STEP_EVERY_DEFAULT: int = 100_000
 
-# GIF decimation factor applied on top of the selected steps
-GIF_STRIDE: int = 1
+# GIF frames are rendered in memory (never written to disk), so the animation
+# can run at a much finer cadence than the saved PNGs.
+GIF_EVERY_DEFAULT: int = 10_000
+# See fluctuationofmagneticfiel.py: dpi=80 keeps a 1.2M-step GIF near 30 MB.
+GIF_DPI_DEFAULT: int = 80
 
 
 class DiamagneticCurrentAnalyzer:
@@ -106,7 +109,7 @@ class DiamagneticCurrentAnalyzer:
               f"({self.sigma * DX_DI:.2f} d_i)")
 
     def run(self, steps: list[int] | None = None, make_gif: bool = True,
-            every: int = STEP_EVERY_DEFAULT):
+            every: int = STEP_EVERY_DEFAULT, gif_every: int = GIF_EVERY_DEFAULT):
         """Run full analysis: individual plots + optional animated GIF."""
         moment_files = PICDataReader.find_files(self.moment_pattern)
         field_files  = PICDataReader.find_files(self.field_pattern)
@@ -158,8 +161,13 @@ class DiamagneticCurrentAnalyzer:
             return
 
         # ── 3. Animated GIF ───────────────────────────────────────────────────
-        gif_steps = selected_steps[::GIF_STRIDE]
-        print(f"\n[3/3] Generating GIF with {len(gif_steps)} frames (stride={GIF_STRIDE})...")
+        gif_steps = [s for s in common_steps if s % gif_every == 0]
+        for endpoint in (common_steps[0], common_steps[-1]):
+            if endpoint not in gif_steps:
+                gif_steps.append(endpoint)
+        gif_steps.sort()
+        print(f"\n[3/3] Generating GIF with {len(gif_steps)} frames "
+              f"(one every {gif_every} steps)...")
 
         frames = []
         for i, s in enumerate(gif_steps):
@@ -305,7 +313,7 @@ class DiamagneticCurrentAnalyzer:
             raise ImportError("Pillow is required for GIF generation.")
         fig = self._make_figure(step, data, vmax_i, vmax_e, vmax_tot)
         buf = BytesIO()
-        fig.savefig(buf, dpi=100, bbox_inches="tight", facecolor=DARK_BG)
+        fig.savefig(buf, dpi=GIF_DPI_DEFAULT, bbox_inches="tight", facecolor=DARK_BG)
         buf.seek(0)
         img = Image.open(buf).copy()
         buf.close()
@@ -391,8 +399,12 @@ def parse_args():
                         help="Gaussian smoothing width in ion inertial lengths "
                              f"(default {SIGMA_DI_DEFAULT} d_i).")
     parser.add_argument("--every",   type=int, default=STEP_EVERY_DEFAULT,
-                        help="Plot one snapshot every this many simulation steps "
+                        help="Save one PNG every this many simulation steps "
                              f"(default {STEP_EVERY_DEFAULT}). Ignored if --steps is given.")
+    parser.add_argument("--gif-every", type=int, default=GIF_EVERY_DEFAULT,
+                        help="GIF frame cadence in simulation steps "
+                             f"(default {GIF_EVERY_DEFAULT}). Frames are rendered "
+                             "in memory, never written to disk.")
     parser.add_argument("--steps",   nargs="*", type=int,
                         help="Optional list of steps to process.")
     parser.add_argument("--no-gif",  action="store_true",
@@ -408,4 +420,5 @@ if __name__ == "__main__":
         sigma=args.sigma,
         sigma_di=args.sigma_di,
         outdir=args.outdir,
-    ).run(steps=args.steps, make_gif=not args.no_gif, every=args.every)
+    ).run(steps=args.steps, make_gif=not args.no_gif, every=args.every,
+          gif_every=args.gif_every)

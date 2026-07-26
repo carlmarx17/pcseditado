@@ -41,6 +41,11 @@ THEORY_CSV ?=
 # DISPERSION_THETA_MAX (e.g. 30) so the omega-k diagram is not washed out by
 # oblique k_perp power, and set DISPERSION_T_START to the end of the linear
 # phase so the FFT sees a quasi-stationary signal.
+# Snapshot cadence: SNAPSHOT_EVERY controls the saved PNG maps (thesis
+# figures), GIF_EVERY the animation frames (rendered in memory, not saved).
+SNAPSHOT_EVERY ?= 100000
+GIF_EVERY ?= 10000
+FIELDS_GIF ?= 1
 DISPERSION_THETA_MAX ?=
 DISPERSION_T_START ?=
 DISPERSION_T_END ?=
@@ -146,13 +151,16 @@ diamagnetic: check-case check-fields check-moments check-resolution
 	@echo "Generating diamagnetic-current plots"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) diamagnetic_current.py \
 		--moments "$(MOMENT_PATTERN)" --fields "$(FIELD_PATTERN)" \
-		--outdir "$(DIAMAGNETIC_OUT)"
+		--outdir "$(DIAMAGNETIC_OUT)" \
+		--every $(SNAPSHOT_EVERY) --gif-every $(GIF_EVERY)
 
 fields: check-case check-fields check-resolution
 	@echo "Generating magnetic-field fluctuation plots"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) fluctuationofmagneticfiel.py \
 		--B0 $(B0_REF) --plane yz --smooth 1.5 \
-		--pattern "$(FIELD_PATTERN)" --outdir "$(FIELDS_OUT)"
+		--pattern "$(FIELD_PATTERN)" --outdir "$(FIELDS_OUT)" \
+		--every $(SNAPSHOT_EVERY) --gif_every $(GIF_EVERY) \
+		$(if $(FIELDS_GIF),--create_gifs --fixed_scale,)
 
 spectral: check-case check-fields check-resolution
 	@echo "Generating spectral plots"
