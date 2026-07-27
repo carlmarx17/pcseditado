@@ -51,6 +51,9 @@ add_psc_executable(psc_firehose_bimaxwellian_moderate_bigbox40)
 add_psc_executable(psc_firehose_bikappa3_bigbox40)
 
 add_psc_executable(psc_reconnection)
+# Reconexion con parametros igualados a los casos de anisotropia
+# (mi/me=200, 40x40 d_i, 1152^2, nicell=1000; ver ESCALADO_INESTABILIDADES.md)
+add_psc_executable(psc_reconnection_comparable)
 add_psc_executable(psc_turbulence_3D_kappa_3)
 add_psc_executable(psc_turbulence_3D_maxwellian_3)
 

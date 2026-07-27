@@ -19,8 +19,12 @@ ApJ 971, 109 (2024), doi:10.3847/1538-4357/ad5e73.
 | `psc_reconnection` | Kappa (κ=3) | 256×512 | 100 | 10M | 8 | ~30 GB | Producción |
 | `psc_reconnection_local` | Maxwellian | 64×256 | 10 | 5,000 | 1 | ~1 GB | PC local |
 | `psc_reconnection_mini` | Maxwellian | 32×128 | 4 | 200 | 1 | ~50 MB | Test rápido |
+| `psc_reconnection_comparable` | Kappa (κ=3) | 1152×1152 | 1000 | 250k | 2304 | ~40 GB | Comparativa con anisotropía |
 
-> Todos con mᵢ/mₑ = 25, ωpe/ωce = 2, Ti/Te = 5, Ly = 25.6 dᵢ, Lz = 51.2 dᵢ.
+> Los tres primeros con mᵢ/mₑ = 25, ωpe/ωce = 2, Ti/Te = 5, Ly = 25.6 dᵢ, Lz = 51.2 dᵢ.
+> `psc_reconnection_comparable`: mᵢ/mₑ = 200, caja 40×40 dᵢ, 28.8 celdas/dᵢ,
+> igualado a los casos bigbox40 de anisotropía (única diferencia: ωpe/ωce = 2;
+> ver `ESCALADO_INESTABILIDADES.md`, apéndice).
 
 ---
 

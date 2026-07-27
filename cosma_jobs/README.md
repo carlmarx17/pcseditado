@@ -18,8 +18,8 @@ Raíz del repo en COSMA: `/cosma7/data/dp433/dc-mart18/pcseditado`
 | `sim_mirror_bimaxwellian_strong_MSbM.sh` | Mirror fuerte Bi-Maxwelliana (legacy `psc_M_S_bM`) | 20 d_i | — |
 | `sim_mirror_kappa3.sh` | Mirror Kappa-3 (`psc_mirror_kappa3`) | 20 d_i | — |
 | `sim_mirror_bikappa3_moderate.sh` | Mirror Bi-Kappa-3 moderate (compara vs bimaxwellian moderate) | 20 d_i | ngrid 576 |
-| `sim_firehose_bimaxwellian_moderate_40di.sh` | **NUEVO** — Firehose moderate Bi-Maxwelliana, caja grande | **40 d_i** | ngrid 576 |
-| `sim_firehose_bikappa3_40di.sh` | **NUEVO** — Firehose Bi-Kappa-3, caja grande | **40 d_i** | ngrid 576 |
+| `sim_firehose_bimaxwellian_moderate_40di.sh` | Firehose moderate Bi-Maxwelliana, caja grande | **40 d_i** | ngrid 1152 |
+| `sim_firehose_bikappa3_40di.sh` | Firehose Bi-Kappa-3, caja grande | **40 d_i** | ngrid 1152 |
 
 ### `analisis/` — pipeline Python sobre corridas ya terminadas
 
@@ -27,11 +27,41 @@ Raíz del repo en COSMA: `/cosma7/data/dp433/dc-mart18/pcseditado`
 |---|---|---|
 | `analisis_mirror_bimaxwellian_moderate_pauper.sh` | Mirror bimaxwellian moderate | cosma7-rp-pauper / 24h |
 | `analisis_mirror_bimaxwellian_moderate_rp.sh` | Mirror bimaxwellian moderate (más prioridad) | cosma7-rp / 72h |
-| `analisis_mirror_bikappa3_moderate_pauper.sh` | **NUEVO** — Mirror **bikappa3** moderate | cosma7-rp-pauper / 24h |
+| `analisis_mirror_bikappa3_moderate_pauper.sh` | Mirror **bikappa3** moderate | cosma7-rp-pauper / 24h |
+| `analisis_firehose_bimaxwellian_moderate_bigbox40_pauper.sh` | **NUEVO** — Firehose bimaxwellian moderate, caja 40 d_i | cosma7-rp-pauper / 24h |
+| `analisis_firehose_bikappa3_bigbox40_pauper.sh` | **NUEVO** — Firehose bikappa3, caja 40 d_i | cosma7-rp-pauper / 24h |
 
 > Cada job de análisis reparte las 8 etapas independientes del target
 > `common` del Makefile (`brazil fields particles spectral diamagnetic
 > heatflux validate physics`) en 8 nodos, una etapa por nodo.
+
+#### Cuántas figuras genera cada etapa
+
+`fields` y `diamagnetic` filtran los snapshots con `paso % SNAPSHOT_EVERY == 0`
+(más siempre el primero y el último). Con la cadencia de salida de PSC
+(`PSC_FIELDS_EVERY_DEFAULT = 500`) y `nmax = 1 200 000`, una corrida deja
+~2400 snapshots de campos:
+
+| `SNAPSHOT_EVERY` | PNG guardados por panel |
+|---|---|
+| 500 (= toda la salida) | ~2400 |
+| 10 000 | 121 |
+| **100 000** (default) | **13** |
+| 200 000 | 7 |
+
+`GIF_EVERY` (default 10 000) es independiente: esos frames se renderizan
+en memoria y solo quedan dentro del `.gif`, no como PNG sueltos. Ambos se
+pueden pasar al job sin editarlo:
+
+```bash
+sbatch --export=ALL,SNAPSHOT_EVERY=200000,GIF_EVERY=20000 \
+  cosma_jobs/analisis/analisis_firehose_bikappa3_bigbox40_pauper.sh
+```
+
+> Si un análisis viejo dejó miles de PNG, es que el checkout de COSMA es
+> anterior al commit que introdujo este filtro (`c18f8dd6e` /
+> `2ec0e39a0`). Hacer `git pull` en `/cosma7/data/dp433/dc-mart18/pcseditado`
+> antes de volver a enviar.
 
 ---
 
@@ -114,15 +144,30 @@ Cada job crea su carpeta en
 > `PSC_NGRID=1152` (≈4× más caro) — se puede pasar por entorno:
 > `sbatch --export=ALL,PSC_NGRID=1152 cosma_jobs/simulacion/sim_firehose_bikappa3_40di.sh`.
 
-### C) Análisis de las corridas firehose 40 d_i (más adelante)
+### C) Análisis de las corridas firehose 40 d_i
 
-Cuando terminen, para analizarlas hace falta:
-1. Un perfil en `CodeforAnalisys/psc_units.py` para
-   `firehose_bimaxwellian_moderate_bigbox40` / `firehose_bikappa3_bigbox40`
-   con **domain = 40 d_i** y **ngrid = 576** (si no, `check_resolution`
-   del Makefile falla).
-2. Un script de análisis copiado de los de `analisis/` cambiando
-   `DATA_DIR` y `CASE`.
+Los dos requisitos ya están hechos: los perfiles
+`firehose_bimaxwellian_moderate_bigbox40` y `firehose_bikappa3_bigbox40`
+existen en `CodeforAnalisys/psc_units.py` (domain 40 d_i, ngrid 1152), y
+los scripts de análisis están en `analisis/`.
+
+```bash
+sbatch cosma_jobs/analisis/analisis_firehose_bimaxwellian_moderate_bigbox40_pauper.sh
+sbatch cosma_jobs/analisis/analisis_firehose_bikappa3_bigbox40_pauper.sh
+```
+
+> **bikappa3 tiene tres carpetas de corrida** (`_11654252`, `_11657054`,
+> `_11657093`) porque `sim_firehose_bikappa3_40di.sh` crea un `RUN_DIR`
+> nuevo por `SLURM_JOB_ID` en cada envío; los snapshots quedan repartidos
+> y ninguna carpeta tiene la corrida completa. Sin `DATA_DIR` el job elige
+> la que tenga más snapshots y deja las tres listadas en el log. Revisar
+> los `.out`/`.err` de cada job id antes de dar el resultado por bueno, y
+> si hace falta forzar la carpeta:
+>
+> ```bash
+> sbatch --export=ALL,DATA_DIR=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/psc_firehose_bikappa3_bigbox40_11657093 \
+>   cosma_jobs/analisis/analisis_firehose_bikappa3_bigbox40_pauper.sh
+> ```
 
 ---
 
