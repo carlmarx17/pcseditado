@@ -1,38 +1,38 @@
-# Plan de análisis: inestabilidades por anisotropía
+# Analysis plan: temperature-anisotropy instabilities
 
-Este documento resume qué debe comprobar el análisis para cada familia de
-simulaciones. Los comandos concretos están en `CodeforAnalisys/README.md`.
+This document summarizes what the analysis must check for each family of
+simulations. The concrete commands are in `CodeforAnalisys/README.md`.
 
-## Variables centrales
+## Central variables
 
-Para cada especie:
+For each species:
 
 ```text
 A = T_perp / T_parallel
 beta_parallel = 2 P_parallel / |B|^2
 ```
 
-En los scripts de análisis, `P_parallel` se proyecta sobre la dirección local de
-`B`, no solo sobre el eje `z`. Esto evita interpretar como relajación térmica
-una rotación local del campo.
+In the analysis scripts, `P_parallel` is projected onto the local direction of
+`B`, not just onto the `z` axis. This avoids interpreting a local rotation of the
+field as thermal relaxation.
 
 ## Mirror
 
-Condición física:
+Physical condition:
 
 ```text
 A_i > 1
 beta_i_parallel * (A_i - 1) > 1
 ```
 
-Firmas esperadas:
+Expected signatures:
 
-- crecimiento de fluctuaciones compresivas en `|B|`;
-- estructuras tipo hoyo o espejo magnético;
-- anticorrelación entre densidad y magnitud del campo;
-- trayectoria global que se acerca al umbral marginal.
+- growth of compressive fluctuations in `|B|`;
+- hole-like or magnetic-mirror structures;
+- anticorrelation between density and field magnitude;
+- global trajectory approaching the marginal threshold.
 
-Casos:
+Cases:
 
 ```text
 psc_mirror_bimaxwellian_strong, psc_mirror_bimaxwellian_moderate, psc_mirror_bimaxwellian_weak, psc_mirror_bikappa3, psc_mirror_bikappa5
@@ -40,21 +40,21 @@ psc_mirror_bimaxwellian_strong, psc_mirror_bimaxwellian_moderate, psc_mirror_bim
 
 ## Firehose
 
-Condición física:
+Physical condition:
 
 ```text
 A_i < 1
 beta_i_parallel * (1 - A_i) > 2
 ```
 
-Firmas esperadas:
+Expected signatures:
 
-- crecimiento de fluctuaciones transversales;
-- reducción del exceso de presión paralela;
-- `A_i` aumenta hacia 1 si se usa `T_perp/T_parallel`;
-- el inverso `T_parallel/T_perp` disminuye hacia 1.
+- growth of transverse fluctuations;
+- reduction of the parallel pressure excess;
+- `A_i` increases towards 1 if `T_perp/T_parallel` is used;
+- the inverse `T_parallel/T_perp` decreases towards 1.
 
-Casos:
+Cases:
 
 ```text
 psc_firehose_bimaxwellian_strong, psc_firehose_bimaxwellian_moderate, psc_firehose_bimaxwellian_weak, psc_firehose_bikappa3, psc_firehose_bikappa5
@@ -62,28 +62,28 @@ psc_firehose_bimaxwellian_strong, psc_firehose_bimaxwellian_moderate, psc_fireho
 
 ## Whistler
 
-Condición práctica:
+Practical condition:
 
 ```text
 A_e > 1 + 0.21 / beta_e_parallel^0.6
 ```
 
-Firmas esperadas:
+Expected signatures:
 
-- crecimiento en escalas electrónicas;
-- anisotropía electrónica decreciendo hacia el umbral;
-- espectro dominado por modos compatibles con propagación paralela u oblicua.
+- growth at electron scales;
+- electron anisotropy decreasing towards the threshold;
+- spectrum dominated by modes compatible with parallel or oblique propagation.
 
-Casos:
+Cases:
 
 ```text
 psc_whistler_bimaxwellian_strong, psc_whistler_bimaxwellian_moderate, psc_whistler_bimaxwellian_weak
 ```
 
-## Diagnósticos mínimos
+## Minimum diagnostics
 
-Una corrida no debe evaluarse con una sola figura. El paquete de análisis debe
-producir como mínimo:
+A run must not be judged from a single figure. The analysis package must produce
+at least:
 
 ```text
 anisotropy_evolution.csv
@@ -94,9 +94,9 @@ spectrum_2d_final_*.png
 particle_anisotropy_evolution.csv
 ```
 
-Para comparar casos, usar siempre:
+To compare cases, always keep:
 
-- misma definición de `A`;
-- misma especie impulsora;
-- mismo intervalo temporal normalizado a `Omega_ci`;
-- mismo criterio de selección de snapshots.
+- the same definition of `A`;
+- the same driving species;
+- the same time interval normalized to `Omega_ci`;
+- the same snapshot selection criterion.

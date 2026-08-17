@@ -1,32 +1,32 @@
-# PSC con ADIOS2 en COSMA7
+# PSC with ADIOS2 on COSMA7
 
-Procedimiento operativo para compilar, validar, ejecutar y reiniciar los casos
-de anisotropía de PSC con checkpoints ADIOS2.
+Operational procedure to build, validate, run and restart the PSC
+anisotropy cases with ADIOS2 checkpoints.
 
-## Estado validado
+## Validated state
 
-Configuración comprobada el 24 de junio de 2026:
+Configuration verified on June 24, 2026:
 
 ```text
-Repositorio: /cosma7/data/dp433/dc-mart18/pcseditado
-Build único: /cosma7/data/dp433/dc-mart18/pcseditado/build
-ADIOS2:      $HOME/adios2 (versión 2.12.0.182)
-Partición:   cosma7-rp
-Cuenta:      dp433
-Compilador:  gnu_comp/14.1.0
+Repository:  /cosma7/data/dp433/dc-mart18/pcseditado
+Single build: /cosma7/data/dp433/dc-mart18/pcseditado/build
+ADIOS2:      $HOME/adios2 (version 2.12.0.182)
+Partition:   cosma7-rp
+Account:     dp433
+Compiler:    gnu_comp/14.1.0
 MPI:         openmpi/5.0.3
 HDF5:        parallel_hdf5/1.14.4
 Launcher:    mpirun
 ```
 
-ADIOS2 está realmente activado porque:
+ADIOS2 is actually enabled because:
 
 ```bash
 grep -n PSC_HAVE_ADIOS2 build/src/include/PscConfig.h
 ldd build/src/psc_mirror_bikappa3 | grep adios2
 ```
 
-La salida esperada contiene:
+The expected output contains:
 
 ```text
 #define PSC_HAVE_ADIOS2
@@ -34,15 +34,15 @@ libadios2_cxx_mpi.so
 libadios2_core_mpi.so
 ```
 
-También se validaron:
+The following were also validated:
 
-- escritura de checkpoints BP5;
-- lectura de un checkpoint y continuación del cálculo;
-- ejecución MPI con 28 procesos en un nodo;
-- ejecución MPI con 56 procesos en dos nodos;
-- ejecución de producción con 1024 procesos en 37 nodos.
+- writing BP5 checkpoints;
+- reading a checkpoint and continuing the computation;
+- MPI run with 28 processes on one node;
+- MPI run with 56 processes on two nodes;
+- production run with 1024 processes on 37 nodes.
 
-## Archivos importantes
+## Important files
 
 ```text
 src/cosma_adios2_env.sh
@@ -53,10 +53,10 @@ adios2cfg.xml
 build/
 ```
 
-Solo debe existir una carpeta de compilación llamada `build`. No usar
-`build-adios2` ni `build-adios2-nohdf5`.
+Only one build folder named `build` should exist. Do not use
+`build-adios2` or `build-adios2-nohdf5`.
 
-## 1. Entrar y cargar el entorno
+## 1. Log in and load the environment
 
 ```bash
 ssh dc-mart18@login7.cosma.dur.ac.uk
@@ -64,7 +64,7 @@ cd /cosma7/data/dp433/dc-mart18/pcseditado
 source src/cosma_adios2_env.sh
 ```
 
-Comprobar el entorno:
+Check the environment:
 
 ```bash
 adios2-config --version
@@ -73,36 +73,36 @@ command -v h5pcc
 module list
 ```
 
-El script limpia Conda, carga los módulos compatibles y configura
-`ADIOS2_DIR`, `PATH` y `LD_LIBRARY_PATH`.
+The script cleans Conda, loads the compatible modules and sets
+`ADIOS2_DIR`, `PATH` and `LD_LIBRARY_PATH`.
 
-## 2. Instalar ADIOS2 si falta
+## 2. Install ADIOS2 if missing
 
-Este paso no es necesario mientras exista:
+This step is not necessary as long as the following exists:
 
 ```text
 $HOME/adios2/bin/adios2-config
 ```
 
-Comprobar:
+Check:
 
 ```bash
 test -x "$HOME/adios2/bin/adios2-config"
 $HOME/adios2/bin/adios2-config --version
 ```
 
-Si no existe:
+If it does not exist:
 
 ```bash
 cd /cosma7/data/dp433/dc-mart18/pcseditado
 BUILD_JOBS=4 src/cosma_adios2_setup.sh
 ```
 
-No mezclar esta instalación con módulos antiguos de ADIOS2, OpenMPI o HDF5.
+Do not mix this installation with old ADIOS2, OpenMPI or HDF5 modules.
 
-## 3. Crear el build único
+## 3. Create the single build
 
-Para una reconstrucción limpia:
+For a clean rebuild:
 
 ```bash
 cd /cosma7/data/dp433/dc-mart18/pcseditado
@@ -110,7 +110,7 @@ rm -rf build
 BUILD_JOBS=4 src/cosma_build_psc_adios2.sh
 ```
 
-El script configura CMake con:
+The script configures CMake with:
 
 ```text
 PSC_USE_ADIOS2=ON
@@ -119,18 +119,18 @@ USE_VPIC=OFF
 BUILD_TESTING=OFF
 ```
 
-Nota de COSMA7: actualmente `cmake` está disponible en el login, pero no
-necesariamente en los nodos de cómputo. Un job de compilación puede fallar con:
+COSMA7 note: `cmake` is currently available on the login node, but not
+necessarily on the compute nodes. A build job may fail with:
 
 ```text
 cmake: command not found
 ```
 
-No confundir ese problema de entorno con un fallo de ADIOS2. Si se quiere
-compilar completamente en un nodo, primero debe instalarse o exponerse una
-versión de CMake accesible desde ese nodo.
+Do not confuse this environment issue with an ADIOS2 failure. If you want
+to build entirely on a compute node, a version of CMake accessible from
+that node must first be installed or exposed.
 
-## 4. Verificar la compilación
+## 4. Verify the build
 
 ```bash
 cd /cosma7/data/dp433/dc-mart18/pcseditado
@@ -140,7 +140,7 @@ grep -n PSC_HAVE_ADIOS2 build/src/include/PscConfig.h
 ldd build/src/psc_mirror_bikappa3 | grep -i adios
 ```
 
-Comprobar los ejecutables:
+Check the executables:
 
 ```bash
 ls -l \
@@ -153,37 +153,38 @@ ls -l \
   build/src/psc_whistler_bimaxwellian_strong
 ```
 
-No enviar producción si falta `PSC_HAVE_ADIOS2` o si `ldd` muestra
-`not found`.
+Do not submit production runs if `PSC_HAVE_ADIOS2` is missing or if `ldd`
+shows `not found`.
 
-## 5. Por qué se usa mpirun
+## 5. Why mpirun is used
 
-El launcher validado es:
+The validated launcher is:
 
 ```text
 mpirun -np $SLURM_NTASKS
 ```
 
-No usar `srun --mpi=pmi2` con OpenMPI 5. En una prueba anterior produjo:
+Do not use `srun --mpi=pmi2` with OpenMPI 5. In an earlier test it
+produced:
 
 ```text
 No PMIx server was reachable, but a PMI1/2 was detected.
 1024 singletons will be started.
 ```
 
-Eso inicia rangos MPI independientes, consume memoria masivamente y termina
-en OOM. `src/cosma_adios2_env.sh` usa `mpirun` por defecto.
+That starts independent MPI ranks, consumes memory massively and ends up
+in OOM. `src/cosma_adios2_env.sh` uses `mpirun` by default.
 
-## 6. Enviar un caso
+## 6. Submit a case
 
-El target por defecto es `psc_mirror_bikappa3`:
+The default target is `psc_mirror_bikappa3`:
 
 ```bash
 cd /cosma7/data/dp433/dc-mart18/pcseditado
 sbatch src/submit_anisotropy_adios2.slurm
 ```
 
-Otros casos:
+Other cases:
 
 ```bash
 sbatch --export=ALL,PSC_TARGET=psc_mirror_bikappa5 \
@@ -199,22 +200,22 @@ sbatch --export=ALL,PSC_TARGET=psc_mirror_bimaxwellian_strong \
   src/submit_anisotropy_adios2.slurm
 ```
 
-El script solicita:
+The script requests:
 
 ```text
-37 nodos
-28 procesos por nodo
-1024 procesos MPI
-48 horas
-partición cosma7-rp
-cuenta dp433
+37 nodes
+28 processes per node
+1024 MPI processes
+48 hours
+partition cosma7-rp
+account dp433
 ```
 
-No fija un `--nodelist`: Slurm selecciona nodos libres.
+It does not set a `--nodelist`: Slurm selects free nodes.
 
-## 7. Fallos de prólogo de Slurm
+## 7. Slurm prolog failures
 
-Si un job termina inmediatamente con:
+If a job terminates immediately with:
 
 ```text
 State=CANCELLED
@@ -222,10 +223,10 @@ Reason=Prolog
 ExitCode=0:0
 ```
 
-y no genera `.out` ni `.err`, el script PSC nunca llegó a ejecutarse. Es un
-fallo del prólogo del nodo, no de ADIOS2.
+and does not generate `.out` or `.err`, the PSC script never got to run.
+It is a node prolog failure, not an ADIOS2 failure.
 
-Consultar:
+Check:
 
 ```bash
 scontrol show job -dd JOBID
@@ -233,17 +234,17 @@ sacct -j JOBID \
   --format=JobID,State,ExitCode,Elapsed,NodeList,Reason -X
 ```
 
-Si COSMA todavía no ha reparado los nodos afectados, se pueden excluir
-temporalmente al enviar:
+If COSMA has not yet fixed the affected nodes, they can be temporarily
+excluded when submitting:
 
 ```bash
 sbatch --exclude='m[7031-7043]' src/submit_anisotropy_adios2.slurm
 ```
 
-La exclusión debe ser temporal y basarse en fallos de prólogo observados; no
-se debe convertir en una lista fija permanente.
+The exclusion should be temporary and based on observed prolog failures;
+it should not become a permanent fixed list.
 
-## 8. Confirmar que el job usa ADIOS2
+## 8. Confirm that the job is using ADIOS2
 
 ```bash
 JOBID=12345678
@@ -252,7 +253,7 @@ LOG=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/psc_aniso_${JOBID}.out
 grep -E '^(target|job|nodes|ntasks|adios2_dir|adios2_config|launcher)=' "$LOG"
 ```
 
-Debe mostrar:
+It should show:
 
 ```text
 adios2_dir=/cosma/home/dp433/dc-mart18/adios2
@@ -261,7 +262,7 @@ launcher=mpirun
 launcher=mpirun -np 1024 ./psc_mirror_bikappa3
 ```
 
-Verificar además el binario copiado al directorio de ejecución:
+Also verify the binary copied to the run directory:
 
 ```bash
 TARGET=psc_mirror_bikappa3
@@ -270,37 +271,37 @@ RUN=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/${TARGET}_${JOBID}
 ldd "$RUN/$TARGET" | grep -i adios
 ```
 
-## 9. Confirmar la escritura de checkpoints
+## 9. Confirm checkpoint writing
 
-Para todos los casos de anisotropía mirror/firehose/whistler:
+For all mirror/firehose/whistler anisotropy cases:
 
 ```text
-campos y momentos: cada 500 pasos
-partículas:        cada 10000 pasos
-checkpoint:        cada 5000 pasos
-grilla:            1024x1024
-partículas/celda:  1500
-mi/me:             200
-nmax:              depende de saturación; defecto 1200000
-balanceo:          cada 2500 pasos
-continuidad:       cada 5000 pasos
-energía:           cada 5000 pasos en diag.asc
+fields and moments: every 500 steps
+particles:          every 10000 steps
+checkpoint:         every 5000 steps
+grid:               1024x1024
+particles/cell:     1500
+mi/me:              200
+nmax:               depends on saturation; default 1200000
+load balancing:     every 2500 steps
+continuity:         every 5000 steps
+energy:             every 5000 steps in diag.asc
 ```
 
-Usar `PSC_NMAX` en `--export` para fijar el tope de pasos de cada corrida según
-la saturación observada.
+Use `PSC_NMAX` in `--export` to set the step cap for each run according
+to the observed saturation.
 
-Antes del primer intervalo no habrá una carpeta `checkpoint_*.bp`. Eso no
-significa que ADIOS2 esté desactivado.
+Before the first interval there will be no `checkpoint_*.bp` folder. That
+does not mean ADIOS2 is disabled.
 
-Cuando se alcance el intervalo:
+Once the interval is reached:
 
 ```bash
 find "$RUN" -maxdepth 1 -type d -name 'checkpoint_*.bp' -print
 find "$RUN" -maxdepth 2 -type f -path '*.bp/*' -ls | head
 ```
 
-Una carpeta BP5 válida contiene archivos como:
+A valid BP5 folder contains files such as:
 
 ```text
 data.0
@@ -309,14 +310,14 @@ md.idx
 profiling.json
 ```
 
-## 10. Monitorizar
+## 10. Monitor
 
 ```bash
 squeue -j "$JOBID" -o '%.18i %.16P %.24j %.2t %.10M %.4D %R'
 tail -f "$LOG"
 ```
 
-Diagnóstico y resultados:
+Diagnostics and results:
 
 ```bash
 tail -f "$RUN/diag.asc"
@@ -324,11 +325,11 @@ ls -ltr "$RUN" | tail
 du -sh "$RUN"
 ```
 
-No ejecutar la simulación directamente en el login.
+Do not run the simulation directly on the login node.
 
-## 11. Reiniciar desde un checkpoint
+## 11. Restart from a checkpoint
 
-Ejemplo:
+Example:
 
 ```bash
 export PSC_RESTART=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/psc_mirror_bikappa3_JOBID/checkpoint_5000.bp
@@ -338,17 +339,17 @@ sbatch \
   src/submit_anisotropy_adios2.slurm
 ```
 
-El ejecutable debe imprimir:
+The executable should print:
 
 ```text
 **** Reading checkpoint...
 ```
 
-y continuar desde el paso almacenado.
+and continue from the stored step.
 
-## 12. Prueba corta opcional
+## 12. Optional short test
 
-Las variables de entorno permiten reducir el problema:
+The environment variables allow the problem to be reduced:
 
 ```bash
 sbatch \
@@ -356,21 +357,22 @@ sbatch \
   src/submit_anisotropy_adios2.slurm
 ```
 
-Para una prueba hay que ajustar también los recursos Slurm. No enviar esa
-configuración con 37 nodos.
+For a test, the Slurm resources must also be adjusted. Do not submit this
+configuration with 37 nodes.
 
-La prueba correcta debe:
+A correct test should:
 
-1. terminar con código cero;
-2. crear `checkpoint_2.bp`;
-3. contener `data.0`, `md.0` y `md.idx`;
-4. permitir un restart con `PSC_RESTART`.
+1. finish with exit code zero;
+2. create `checkpoint_2.bp`;
+3. contain `data.0`, `md.0` and `md.idx`;
+4. allow a restart with `PSC_RESTART`.
 
-## Problemas frecuentes
+## Common issues
 
 ### `write_checkpoint not available without adios2`
 
-El ejecutable fue compilado sin ADIOS2 o se tomó de otro build:
+The executable was built without ADIOS2 or was taken from a different
+build:
 
 ```bash
 grep PSC_HAVE_ADIOS2 build/src/include/PscConfig.h
@@ -385,22 +387,22 @@ echo "$ADIOS2_DIR"
 echo "$LD_LIBRARY_PATH"
 ```
 
-### OOM inmediato con 1024 procesos
+### Immediate OOM with 1024 processes
 
-Buscar en el error:
+Search the error for:
 
 ```text
 1024 singletons will be started
 ```
 
-Si aparece, se usó `srun --mpi=pmi2`. Volver a `mpirun`.
+If it appears, `srun --mpi=pmi2` was used. Switch back to `mpirun`.
 
-### Job cancelado sin logs
+### Job cancelled with no logs
 
-Consultar `Reason=Prolog`. Si aparece, revisar o excluir temporalmente los
-nodos afectados.
+Check `Reason=Prolog`. If it appears, review or temporarily exclude the
+affected nodes.
 
-### No aparece todavía `checkpoint_*.bp`
+### `checkpoint_*.bp` has not appeared yet
 
-Comprobar el paso actual y el intervalo de checkpoint. Por ejemplo,
-`psc_mirror_bikappa3` no escribe el primer checkpoint hasta el paso 5000.
+Check the current step and the checkpoint interval. For example,
+`psc_mirror_bikappa3` does not write the first checkpoint until step 5000.

@@ -1,13 +1,13 @@
-# Simulaciones de anisotropía PSC
+# PSC anisotropy simulations
 
-Catálogo de casos listos para compilar y sus parámetros físicos.
-La guía de ejecución con ADIOS2 en COSMA está en `ADIOS2_COSMA_RUNBOOK.md`.
+Catalogue of build-ready cases and their physical parameters.
+The ADIOS2 execution guide on COSMA is in `ADIOS2_COSMA_RUNBOOK.md`.
 
-## Estructura del código
+## Code structure
 
-Todos los casos comparten `psc_anisotropy_case.hxx`. Cada archivo de caso solo
-define la etiqueta, la distribución, `PSC_KAPPA` cuando aplica y los parámetros
-físicos del régimen:
+All cases share `psc_anisotropy_case.hxx`. Each case file only
+defines the label, the distribution, `PSC_KAPPA` when applicable, and the
+physical parameters of the regime:
 
 ```text
 psc_mirror_bikappa3.cxx
@@ -16,8 +16,8 @@ psc_firehose_bikappa3.cxx
 psc_firehose_bikappa5.cxx
 ```
 
-Los casos bi-Kappa activan `PSC_USE_KAPPA=1` y especifican `PSC_KAPPA`.
-Los bi-Maxwellianos usan el valor por defecto `PSC_USE_KAPPA=0`.
+Bi-Kappa cases enable `PSC_USE_KAPPA=1` and specify `PSC_KAPPA`.
+Bi-Maxwellian cases use the default value `PSC_USE_KAPPA=0`.
 
 ```
 PSC_BETA_E_PAR / PSC_BETA_I_PAR
@@ -25,33 +25,33 @@ PSC_TI_PERP_OVER_TI_PAR / PSC_TE_PERP_OVER_TE_PAR
 PSC_KAPPA
 ```
 
-Los defaults comunes están centralizados para que todos los ejecutables usen la
-misma malla, salidas e intervalos, salvo que se sobreescriban por entorno.
+The common defaults are centralized so that all executables use the
+same grid, outputs and intervals, unless overridden via the environment.
 
-## Configuración común
+## Common configuration
 
-| Parámetro | Valor |
+| Parameter | Value |
 |---|---:|
-| Configuración PSC | `PscConfig1vbecSingle<dim_yz>` |
-| Campo de fondo | `B0 = 0.08` |
+| PSC configuration | `PscConfig1vbecSingle<dim_yz>` |
+| Background field | `B0 = 0.08` |
 | `vA/c` | 0.08 |
 | `mi/me` | 200 |
 | `lambda0` | 20 |
-| Densidad inicial | 1.0 |
-| Dominio | `20 d_i × 20 d_i` |
-| Grilla | `576×576` |
-| Resolución | `28.8 celdas/d_i` (`dx = dz = 0.034722 d_i` ≈ `0.491 d_e`, `dx/λ_De ≈ 3.78`) |
-| Partículas por celda | 1000 (defecto) |
-| Pasos máximos | Dependen de la saturación (`PSC_NMAX`, defecto 1,200,000) |
-| Fronteras | Periódicas |
-| Campos/momentos | cada 500 pasos |
-| Partículas | cada 10,000 pasos |
-| Checkpoint ADIOS2 | cada 5000 pasos |
-| Continuidad de carga | cada 5000 pasos |
-| Diagnóstico de energía | cada 5000 pasos (`diag.asc`) |
-| Balanceo de carga | cada 2500 pasos |
+| Initial density | 1.0 |
+| Domain | `20 d_i × 20 d_i` |
+| Grid | `576×576` |
+| Resolution | `28.8 cells/d_i` (`dx = dz = 0.034722 d_i` ≈ `0.491 d_e`, `dx/λ_De ≈ 3.78`) |
+| Particles per cell | 1000 (default) |
+| Maximum steps | Depend on saturation (`PSC_NMAX`, default 1,200,000) |
+| Boundaries | Periodic |
+| Fields/moments | every 500 steps |
+| Particles | every 10,000 steps |
+| ADIOS2 checkpoint | every 5000 steps |
+| Continuity check | every 5000 steps |
+| Energy diagnostic | every 5000 steps (`diag.asc`) |
+| Load balancing | every 2500 steps |
 
-El campo paralelo es `z`:
+The parallel field is `z`:
 ```
 T_parallel = T_z
 T_perp = (T_x + T_y) / 2
@@ -60,10 +60,10 @@ A = T_perp / T_parallel
 
 ## Mirror
 
-Iones con exceso de temperatura perpendicular. Electrones isotrópicos.
-Criterio: `beta_i_parallel * (A_i - 1) > 1`
+Ions with excess perpendicular temperature. Isotropic electrons.
+Criterion: `beta_i_parallel * (A_i - 1) > 1`
 
-| Ejecutable | Archivo | Régimen | beta_i_par | A_i | beta_e_par | A_e | Grilla |
+| Executable | File | Regime | beta_i_par | A_i | beta_e_par | A_e | Grid |
 |---|---|---|---:|---:|---:|---:|---:|
 | `psc_mirror_bimaxwellian_strong` | `psc_mirror_bimaxwellian_strong.cxx` | Strong | 5.0 | 3.0 | 1.0 | 1.0 | 576×576 |
 | `psc_mirror_bimaxwellian_moderate` | `psc_mirror_bimaxwellian_moderate.cxx` | Moderate | 5.0 | 2.0 | 1.0 | 1.0 | 576×576 |
@@ -71,10 +71,10 @@ Criterio: `beta_i_parallel * (A_i - 1) > 1`
 
 ## Firehose
 
-Iones con exceso de temperatura paralela. Electrones isotrópicos.
-Criterio: `beta_i_parallel * (1 - A_i) > 2`
+Ions with excess parallel temperature. Isotropic electrons.
+Criterion: `beta_i_parallel * (1 - A_i) > 2`
 
-| Ejecutable | Archivo | Régimen | beta_i_par | A_i | beta_e_par | A_e | Grilla |
+| Executable | File | Regime | beta_i_par | A_i | beta_e_par | A_e | Grid |
 |---|---|---|---:|---:|---:|---:|---:|
 | `psc_firehose_bimaxwellian_strong` | `psc_firehose_bimaxwellian_strong.cxx` | Strong | 10.0 | 0.1 | 1.0 | 1.0 | 576×576 |
 | `psc_firehose_bimaxwellian_moderate` | `psc_firehose_bimaxwellian_moderate.cxx` | Moderate | 6.0 | 0.3 | 1.0 | 1.0 | 576×576 |
@@ -82,10 +82,10 @@ Criterio: `beta_i_parallel * (1 - A_i) > 2`
 
 ## Whistler
 
-Electrones con exceso de temperatura perpendicular. Iones isotrópicos.
-Criterio: `A_e > 1 + 0.21 / beta_e_parallel^0.6`
+Electrons with excess perpendicular temperature. Isotropic ions.
+Criterion: `A_e > 1 + 0.21 / beta_e_parallel^0.6`
 
-| Ejecutable | Archivo | Régimen | beta_i_par | A_i | beta_e_par | A_e | Grilla |
+| Executable | File | Regime | beta_i_par | A_i | beta_e_par | A_e | Grid |
 |---|---|---|---:|---:|---:|---:|---:|
 | `psc_whistler_bimaxwellian_strong` | `psc_whistler_bimaxwellian_strong.cxx` | Strong | 1.0 | 1.0 | 0.5 | 3.0 | 576×576 |
 | `psc_whistler_bimaxwellian_moderate` | `psc_whistler_bimaxwellian_moderate.cxx` | Moderate | 1.0 | 1.0 | 0.5 | 2.0 | 576×576 |
@@ -93,31 +93,31 @@ Criterio: `A_e > 1 + 0.21 / beta_e_parallel^0.6`
 
 ## Bi-Kappa
 
-| Ejecutable | Archivo | κ | beta_i_par | A_i | beta_e_par | A_e | Grilla |
+| Executable | File | κ | beta_i_par | A_i | beta_e_par | A_e | Grid |
 |---|---|---|---:|---:|---:|---:|---:|
 | `psc_mirror_bikappa3` | `psc_mirror_bikappa3.cxx` | 3 | 5.0 | 3.0 | 1.0 | 1.0 | 576×576 |
 | `psc_mirror_bikappa5` | `psc_mirror_bikappa5.cxx` | 5 | 5.0 | 3.0 | 1.0 | 1.0 | 576×576 |
 | `psc_firehose_bikappa3` | `psc_firehose_bikappa3.cxx` | 3 | 10.0 | 0.1 | 1.0 | 1.0 | 576×576 |
 | `psc_firehose_bikappa5` | `psc_firehose_bikappa5.cxx` | 5 | 10.0 | 0.1 | 1.0 | 1.0 | 576×576 |
 
-## Salidas
+## Outputs
 
-Los casos escriben campos, momentos y partículas:
+The cases write fields, moments and particles:
 ```
 pfd.<step>_p<rank>.h5
 pfd_moments.<step>_p<rank>.h5
-prt_<basename>.<step>.h5        # región central ~20% de cada dirección
-checkpoint_<step>.bp/            # solo con ADIOS2
+prt_<basename>.<step>.h5        # central region ~20% of each direction
+checkpoint_<step>.bp/            # ADIOS2 only
 ```
 
-## Compilación local
+## Local build
 
 ```bash
 cmake --build build --target psc_mirror_bimaxwellian_strong
 cmake --build build --target psc_mirror_bikappa3
 ```
 
-Todos los targets:
+All targets:
 ```bash
 cmake --build build --target \
   psc_mirror_bimaxwellian_strong psc_mirror_bimaxwellian_moderate psc_mirror_bimaxwellian_weak \
@@ -127,7 +127,7 @@ cmake --build build --target \
   psc_firehose_bikappa3 psc_firehose_bikappa5
 ```
 
-## Compilación y ejecución con ADIOS2 en COSMA
+## Build and run with ADIOS2 on COSMA
 
 ```bash
 cd /cosma7/data/dp433/dc-mart18/pcseditado
@@ -135,27 +135,27 @@ BUILD_JOBS=4 src/cosma_build_psc_adios2.sh
 sbatch src/submit_anisotropy_adios2.slurm
 ```
 
-Para otro target:
+For another target:
 ```bash
 sbatch --export=ALL,PSC_TARGET=psc_firehose_bikappa3 src/submit_anisotropy_adios2.slurm
 ```
 
-Los parámetros editables de la simulación pueden modificarse sin recompilar:
+The simulation's editable parameters can be changed without recompiling:
 
 ```bash
 sbatch --export=ALL,PSC_TARGET=psc_mirror_bikappa3,PSC_NMAX=1200000,PSC_BALANCE_INTERVAL=2500,PSC_CONTINUITY_EVERY=5000,PSC_ENERGIES_EVERY=5000 \
   src/submit_anisotropy_adios2.slurm
 ```
 
-`PSC_NMAX` no se usa para estandarizar la física: es el límite máximo de pasos
-que se ajusta por caso según cuándo se observe saturación.
+`PSC_NMAX` is not used to standardize the physics: it is the maximum step
+limit, adjusted per case according to when saturation is observed.
 
-Overrides disponibles: `PSC_NMAX`, `PSC_NGRID`, `PSC_NP_Y`, `PSC_NP_Z`,
+Available overrides: `PSC_NMAX`, `PSC_NGRID`, `PSC_NP_Y`, `PSC_NP_Z`,
 `PSC_NICELL`, `PSC_CHECKPOINT_EVERY`, `PSC_FIELDS_EVERY`,
 `PSC_PARTICLES_EVERY`, `PSC_BALANCE_INTERVAL`, `PSC_CONTINUITY_EVERY`,
-`PSC_ENERGIES_EVERY` y `PSC_RESTART`.
+`PSC_ENERGIES_EVERY` and `PSC_RESTART`.
 
-Los scripts limpian Conda y usan `srun` por defecto para evitar fallos de
-`prted` al arrancar OpenMPI desde Slurm.
+The scripts clean up Conda and use `srun` by default to avoid `prted`
+failures when starting OpenMPI from Slurm.
 
-Detalles operativos en `ADIOS2_COSMA_RUNBOOK.md`.
+Operational details are in `ADIOS2_COSMA_RUNBOOK.md`.

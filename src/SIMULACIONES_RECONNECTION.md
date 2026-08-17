@@ -1,83 +1,83 @@
-# Documentación de Simulaciones PSC — Reconexión Magnética
+# PSC Simulation Documentation — Magnetic Reconnection
 
-## Visión general
+## Overview
 
-Simulaciones PIC de **reconexión magnética colisionless** con **doble hoja de corriente
-Harris** (double Harris current sheet). El plano de reconexión es YZ, con X como dirección
-out-of-plane. Todas usan `PscConfig1vbecSingle` en 2D (dim_yz), full PIC,
-condiciones de frontera **totalmente periódicas**.
+PIC simulations of **collisionless magnetic reconnection** with a **double Harris
+current sheet**. The reconnection plane is YZ, with X as the out-of-plane
+direction. All of them use `PscConfig1vbecSingle` in 2D (dim_yz), full PIC,
+**fully periodic** boundary conditions.
 
-Referencia base para ideas de plasmoides y fluctuaciones: Agudelo Rueda et al.,
+Base reference for plasmoid and fluctuation ideas: Agudelo Rueda et al.,
 ApJ 971, 109 (2024), doi:10.3847/1538-4357/ad5e73.
 
 ---
 
-## Catálogo de códigos de reconexión
+## Catalog of reconnection codes
 
-| Archivo | Distribución | Grilla | ppc | nmax | MPI ranks | RAM | Uso |
+| File | Distribution | Grid | ppc | nmax | MPI ranks | RAM | Use |
 |---|---|---|---|---|---|---|---|
-| `psc_reconnection` | Kappa (κ=3) | 256×512 | 100 | 10M | 8 | ~30 GB | Producción |
-| `psc_reconnection_local` | Maxwellian | 64×256 | 10 | 5,000 | 1 | ~1 GB | PC local |
-| `psc_reconnection_mini` | Maxwellian | 32×128 | 4 | 200 | 1 | ~50 MB | Test rápido |
-| `psc_reconnection_comparable` | Kappa (κ=3) | 1152×1152 | 1000 | 250k | 2304 | ~40 GB | Comparativa con anisotropía |
+| `psc_reconnection` | Kappa (κ=3) | 256×512 | 100 | 10M | 8 | ~30 GB | Production |
+| `psc_reconnection_local` | Maxwellian | 64×256 | 10 | 5,000 | 1 | ~1 GB | Local PC |
+| `psc_reconnection_mini` | Maxwellian | 32×128 | 4 | 200 | 1 | ~50 MB | Quick test |
+| `psc_reconnection_comparable` | Kappa (κ=3) | 1152×1152 | 1000 | 250k | 2304 | ~40 GB | Comparison with anisotropy |
 
-> Los tres primeros con mᵢ/mₑ = 25, ωpe/ωce = 2, Ti/Te = 5, Ly = 25.6 dᵢ, Lz = 51.2 dᵢ.
-> `psc_reconnection_comparable`: mᵢ/mₑ = 200, caja 40×40 dᵢ, 28.8 celdas/dᵢ,
-> igualado a los casos bigbox40 de anisotropía (única diferencia: ωpe/ωce = 2;
-> ver `ESCALADO_INESTABILIDADES.md`, apéndice).
+> The first three use mᵢ/mₑ = 25, ωpe/ωce = 2, Ti/Te = 5, Ly = 25.6 dᵢ, Lz = 51.2 dᵢ.
+> `psc_reconnection_comparable`: mᵢ/mₑ = 200, box 40×40 dᵢ, 28.8 cells/dᵢ,
+> matched to the bigbox40 anisotropy cases (the only difference: ωpe/ωce = 2;
+> see `ESCALADO_INESTABILIDADES.md`, appendix).
 
 ---
 
-## ¿Qué es la reconexión magnética?
+## What is magnetic reconnection?
 
-La reconexión magnética es el proceso por el cual líneas de campo magnético
-antiparalelas se "rompen" y se reconectan, convirtiendo energía magnética en
-energía cinética y térmica del plasma. Es fundamental en:
-- Erupciones solares
-- Tormentas geomagnéticas
-- Calentamiento de la corona solar
-- Disipación de turbulencia en el viento solar
+Magnetic reconnection is the process by which antiparallel magnetic field
+lines "break" and reconnect, converting magnetic energy into kinetic and
+thermal energy of the plasma. It is fundamental in:
+- Solar flares
+- Geomagnetic storms
+- Coronal heating
+- Turbulence dissipation in the solar wind
 
 ### Harris current sheet
 
-El equilibrio de Harris es una solución analítica donde una hoja de corriente
-separa regiones con campo magnético antiparalelo:
+The Harris equilibrium is an analytical solution where a current sheet
+separates regions with antiparallel magnetic field:
 
 ```
-B_z(y) = B₀ · tanh(y / L)          ← campo magnético
-n(y)   = n₀ · sech²(y / L) + n_bg  ← densidad de plasma
-J_x(y) = (B₀/μ₀L) · sech²(y / L)  ← corriente out-of-plane
+B_z(y) = B₀ · tanh(y / L)          ← magnetic field
+n(y)   = n₀ · sech²(y / L) + n_bg  ← plasma density
+J_x(y) = (B₀/μ₀L) · sech²(y / L)  ← out-of-plane current
 ```
 
-La corriente es sostenida por partículas que driftan en la dirección x
-(out-of-plane): iones en +x, electrones en −x.
+The current is sustained by particles drifting in the x direction
+(out-of-plane): ions in +x, electrons in −x.
 
 ---
 
-## ¿Por qué doble hoja de corriente?
+## Why a double current sheet?
 
-Jefferson indicó: *"si quieres que sea periódico necesitas dos hojas de corriente"*.
+Jefferson noted: *"if you want it to be periodic you need two current sheets."*
 
-Con **una sola hoja** + BCs periódicas en Y, el campo magnético tiene
-una discontinuidad en los bordes (pasa de +B₀ en un borde a +B₀ en el otro,
-sin reversión). Con **dos hojas antiparalelas**, el campo se cierra de forma
-continua a través de los bordes periódicos:
+With a **single sheet** + periodic BCs in Y, the magnetic field has a
+discontinuity at the boundaries (it goes from +B₀ at one edge to +B₀ at the
+other, with no reversal). With **two antiparallel sheets**, the field closes
+continuously across the periodic boundaries:
 
 ```
       ┌────────────────────────────────────────────┐
-      │  B→    hoja 1     B←     hoja 2    B→      │
+      │  B→    sheet 1    B←    sheet 2    B→      │
       │ +B₀  ──── 0 ──── −B₀  ──── 0 ──── +B₀     │
       │      y=−Ly/4            y=+Ly/4            │
-      └──────────────── periódico ─────────────────┘
+      └──────────────── periodic ──────────────────┘
 ```
 
-El campo de la doble hoja es:
+The double-sheet field is:
 
 ```
 B_z(y) = B₀ · [tanh((y + Ly/4)/L) − tanh((y − Ly/4)/L) − 1]
 ```
 
-Y la densidad:
+And the density:
 
 ```
 n(y) = n₀ · [sech²((y + Ly/4)/L) + sech²((y − Ly/4)/L)] + n_bg
@@ -85,120 +85,121 @@ n(y) = n₀ · [sech²((y + Ly/4)/L) + sech²((y − Ly/4)/L)] + n_bg
 
 ---
 
-## Balance de presión total
+## Total pressure balance
 
-Jefferson enfatizó: *"asegurarse que P_total = Pᵢ + Pₑ + P_m = constante"*.
+Jefferson emphasized: *"make sure P_total = Pᵢ + Pₑ + P_m = constant."*
 
-En un corte vertical (dirección y), la presión total debe ser constante
-**sin incluir la perturbación**:
+On a vertical cut (y direction), the total pressure must be constant
+**without including the perturbation**:
 
 ```
-P_total(y) = n(y)·(Tᵢ + Tₑ) + B(y)²/(2μ₀) = constante
+P_total(y) = n(y)·(Tᵢ + Tₑ) + B(y)²/(2μ₀) = constant
 ```
 
-### Verificación numérica
+### Numerical verification
 
-El código imprime `P_total(y)` en 6 puntos del corte vertical al inicio:
+The code prints `P_total(y)` at 6 points along the vertical cut at start-up:
 
-| Posición | n_Harris | |B| | P_plasma | P_mag | P_total |
+| Position | n_Harris | \|B\| | P_plasma | P_mag | P_total |
 |---|---|---|---|---|---|
-| y = −Ly/4 (centro hoja 1) | ~2.0 | ~0 | alto | ~0 | P₀ |
-| y = 0 (entre hojas) | ~0 | ~B₀ | bajo | alto | P₀ |
-| y = +Ly/4 (centro hoja 2) | ~2.0 | ~0 | alto | ~0 | P₀ |
+| y = −Ly/4 (center of sheet 1) | ~2.0 | ~0 | high | ~0 | P₀ |
+| y = 0 (between sheets) | ~0 | ~B₀ | low | high | P₀ |
+| y = +Ly/4 (center of sheet 2) | ~2.0 | ~0 | high | ~0 | P₀ |
 
-El error debe ser < 1% en todos los puntos. Si no, hay un bug.
+The error must be < 1% at every point. If not, there is a bug.
 
-### ¿Cómo se logra el balance?
+### How is the balance achieved?
 
-La relación Harris `n₀(Tᵢ + Tₑ) = B₀²/(2μ₀)` se satisface automáticamente
-por la fórmula de temperatura:
+The Harris relation `n₀(Tᵢ + Tₑ) = B₀²/(2μ₀)` is automatically satisfied
+by the temperature formula:
 
 ```cpp
 TTe = me·c² / (2·ε₀·(ωpe/ωce)²·(1 + Ti/Te))
 TTi = TTe · Ti/Te
 ```
 
-Las temperaturas del fondo son iguales a las de Harris (`Tib_Ti = 1, Teb_Te = 1`)
-para que la presión del fondo `n_bg·(Tᵢ + Tₑ)` sea una constante aditiva
-que no rompe el equilibrio.
+The background temperatures equal the Harris temperatures (`Tib_Ti = 1, Teb_Te = 1`)
+so that the background pressure `n_bg·(Tᵢ + Tₑ)` is an additive constant
+that does not break the equilibrium.
 
 ---
 
-## Perturbación inicial
+## Initial perturbation
 
-Jefferson indicó: *"usualmente se pone una perturbación en el centro para que
-empiece la reconexión. El balance de presión se calcula sin poner la perturbación."*
+Jefferson noted: *"a perturbation is usually placed in the center so
+reconnection starts. The pressure balance is computed without the
+perturbation applied."*
 
-La perturbación se aplica **solo en la hoja de y = +Ly/4** usando un potencial
-vectorial que garantiza ∇·B = 0 por construcción:
+The perturbation is applied **only to the sheet at y = +Ly/4** using a
+vector potential that guarantees ∇·B = 0 by construction:
 
 ```
 δA_x = ε · cos(k_z·(z − Lz/2)) / cosh((y − Ly/4) / σ)
 
-δB_y = ∂(δA_x)/∂z   → perturbación en B_y
-δB_z = −∂(δA_x)/∂y  → perturbación en B_z  (∇·B = 0 garantizado)
+δB_y = ∂(δA_x)/∂z   → perturbation in B_y
+δB_z = −∂(δA_x)/∂y  → perturbation in B_z  (∇·B = 0 guaranteed)
 ```
 
-Con `σ = L` (= grosor de la hoja) y `ε = 0.03·B₀·σ` (3% de B₀).
-La envolvente `1/cosh` hace que la perturbación decaiga exponencialmente
-lejos de la hoja perturbada, dejando la otra hoja sin perturbar.
+With `σ = L` (= sheet thickness) and `ε = 0.03·B₀·σ` (3% of B₀).
+The `1/cosh` envelope makes the perturbation decay exponentially away from
+the perturbed sheet, leaving the other sheet unperturbed.
 
 ---
 
-## Ideas tomadas de Agudelo Rueda et al. 2024
+## Ideas taken from Agudelo Rueda et al. 2024
 
-El artículo estudia cómo fluctuaciones magnéticas inducidas, parecidas a
-turbulencia, modifican una hoja de corriente Harris y la formación de
-plasmoides. La idea central para mi simulación es esta: no basta con iniciar
-la reconexión; debo distinguir si las islas magnéticas crecen por tearing normal
-o si el sistema queda dominado por fluctuaciones pequeñas que rompen la hoja sin
-formar plasmoides coherentes.
+The paper studies how induced magnetic fluctuations, similar to turbulence,
+modify a Harris current sheet and plasmoid formation. The central idea for
+my simulation is this: it is not enough to start reconnection; I must
+distinguish whether magnetic islands grow via normal tearing or whether the
+system ends up dominated by small fluctuations that break the sheet without
+forming coherent plasmoids.
 
-### Diferencias con nuestro caso actual
+### Differences with our current case
 
-| Punto | Artículo 2024 | Nuestro `psc_reconnection` |
+| Point | 2024 paper | Our `psc_reconnection` |
 |---|---|---|
-| Plasma | Par electrón-positrón, `m_i/m_e = 1` | Ión-electrón artificial, `m_i/m_e = 25` |
-| Dominio | Una hoja Harris con fronteras conductoras en `y` | Doble hoja Harris para fronteras periódicas |
-| Resolución | `dy = dz = 0.11 d_e` | `dy = dz = 0.50 d_e` en producción |
+| Plasma | Electron-positron pair, `m_i/m_e = 1` | Artificial ion-electron, `m_i/m_e = 25` |
+| Domain | Single Harris sheet with conducting boundaries in `y` | Double Harris sheet for periodic boundaries |
+| Resolution | `dy = dz = 0.11 d_e` | `dy = dz = 0.50 d_e` in production |
 | ppc | 400 | 100 |
-| Grosor de hoja | `Delta = 4 d_e` | `L = 0.5 d_i = 1.25 d_e` |
-| Forzamiento | Antena de Langevin y modos `k, omega` | Perturbación localizada tipo semilla en una hoja |
-| Pregunta científica | Cuándo se suprime tearing/plasmoides | Primero validar reconexión y plasmoides; luego probar fluctuaciones |
+| Sheet thickness | `Delta = 4 d_e` | `L = 0.5 d_i = 1.25 d_e` |
+| Forcing | Langevin antenna and `k, omega` modes | Localized seed-type perturbation on one sheet |
+| Scientific question | When tearing/plasmoids are suppressed | First validate reconnection and plasmoids; then test fluctuations |
 
-Por eso no debo copiar los parámetros literalmente. El artículo sirve como guía
-física y de diagnóstico, pero mi caso tiene otra separación de masas, otro
-grosor de hoja y otra condición de frontera.
+For this reason I should not copy the parameters literally. The paper serves
+as physical and diagnostic guidance, but my case has a different mass ratio,
+a different sheet thickness and a different boundary condition.
 
-### Qué puedo usar directamente como criterio físico
+### What I can use directly as a physical criterion
 
-1. **Caso de control:** una corrida sin fluctuaciones turbulentas fuertes debe
-   formar puntos-X, puntos-O, hojas de corriente elongadas y plasmoides.
-2. **Perturbación grande de escala larga:** una perturbación tipo pinch central
-   puede acelerar la llegada al estado de reconexión, pero no necesariamente
-   representa turbulencia.
-3. **Fluctuaciones grandes de escala pequeña:** el resultado más importante del
-   artículo es que fluctuaciones con longitud de onda comparable o menor que el
-   grosor de la hoja (`lambda <= Delta`) y amplitud sobre un umbral crítico
-   pueden suprimir el crecimiento de islas magnéticas.
-4. **Umbral dependiente de escala:** la amplitud crítica `delta B_c` no es
-   universal; depende de la longitud de onda. Escalas más pequeñas pueden afectar
-   más directamente las órbitas de partículas.
-5. **Energía y distribución de velocidades:** cuando se suprimen plasmoides, la
-   energía inyectada tiende a calentar el plasma y a modificar la distribución
-   de velocidades en lugar de alimentar islas magnéticas grandes.
+1. **Control case:** a run without strong turbulent fluctuations must form
+   X-points, O-points, elongated current sheets and plasmoids.
+2. **Large, long-scale perturbation:** a central pinch-type perturbation
+   can accelerate the arrival at the reconnection state, but does not
+   necessarily represent turbulence.
+3. **Small-scale, large fluctuations:** the paper's most important result
+   is that fluctuations with a wavelength comparable to or smaller than the
+   sheet thickness (`lambda <= Delta`) and amplitude above a critical
+   threshold can suppress the growth of magnetic islands.
+4. **Scale-dependent threshold:** the critical amplitude `delta B_c` is not
+   universal; it depends on the wavelength. Smaller scales can more directly
+   affect particle orbits.
+5. **Energy and velocity distribution:** when plasmoids are suppressed, the
+   injected energy tends to heat the plasma and modify the velocity
+   distribution instead of feeding large magnetic islands.
 
-### Traducción a nuestro código
+### Translation into our code
 
-El código actual implementa una semilla localizada:
+The current code implements a localized seed:
 
 ```
 delta A_x = epsilon * cos(k_z*(z - Lz/2)) / cosh((y - Ly/4)/sigma)
 ```
 
-Esto es útil para iniciar reconexión en una hoja concreta. No es todavía una
-antena de Langevin. Una extensión futura inspirada en el artículo sería sumar
-modos de potencial vectorial fuera del plano:
+This is useful for starting reconnection in a specific sheet. It is not yet
+a Langevin antenna. A future extension inspired by the paper would be to add
+out-of-plane vector potential modes:
 
 ```
 delta A_x(y,z,t) = Re[ sum_j b_j(t) / k_j * exp(i k_j · r) ]
@@ -206,50 +207,52 @@ delta B_ext = curl(delta A_x xhat)
 delta J_ext = curl(delta B_ext) / mu0
 ```
 
-y actualizar `b_j(t)` con una fase/fuerza aleatoria, una frecuencia de excitación
-`omega_0` y una tasa de decorrelación `gamma_0`. Esa corriente externa debería
-sumarse al avance de campos, no a la condición inicial solamente.
+and update `b_j(t)` with a random phase/force, an excitation frequency
+`omega_0` and a decorrelation rate `gamma_0`. That external current should
+be added to the field advance, not only to the initial condition.
 
-### Barrido recomendado para tesis
+### Recommended sweep for the thesis
 
-Para no gastar recursos antes de validar el caso base, el orden razonable es:
+To avoid spending resources before validating the base case, the reasonable
+order is:
 
-1. **Control:** `psc_reconnection` actual con perturbación 3%, sin forzamiento
-   turbulento. Confirmar presión, X-point, outflows e islas.
-2. **Semilla débil:** bajar `dby_b0` para ver si el tearing aparece
-   espontáneamente o si depende demasiado de la semilla.
-3. **Pinch central:** probar una perturbación de escala larga tipo artículo para
-   acelerar el estado estacionario sin introducir ruido de escala cinética.
-4. **Fluctuaciones multi-modo:** implementar después una antena externa con
-   modos grandes y amplitud pequeña. Este caso debería parecerse al control si
-   el artículo aplica.
-5. **Prueba de supresión:** usar modos con `lambda <= L` y amplitud mayor.
-   Buscar si baja el crecimiento de `J_x,max` y si dejan de formarse puntos-O.
+1. **Control:** the current `psc_reconnection` with 3% perturbation, no
+   turbulent forcing. Confirm pressure, X-point, outflows and islands.
+2. **Weak seed:** lower `dby_b0` to see whether tearing appears
+   spontaneously or depends too heavily on the seed.
+3. **Central pinch:** try a long-scale perturbation like the paper's to
+   accelerate the steady state without introducing kinetic-scale noise.
+4. **Multi-mode fluctuations:** implement an external antenna afterward
+   with large modes and small amplitude. This case should resemble the
+   control if the paper's result applies.
+5. **Suppression test:** use modes with `lambda <= L` and larger amplitude.
+   Check whether the growth of `J_x,max` decreases and whether O-points stop
+   forming.
 
-Para nuestro caso de producción `L = 0.5 d_i = 1.25 d_e`. Entonces una prueba de
-supresión inspirada en el artículo debería usar longitudes de onda del orden de
-`lambda <= 1.25 d_e`, no solo modos grandes del tamaño del dominio.
+For our production case `L = 0.5 d_i = 1.25 d_e`. So a suppression test
+inspired by the paper should use wavelengths on the order of
+`lambda <= 1.25 d_e`, not just large modes the size of the domain.
 
 ---
 
-## Velocidad out-of-plane
+## Out-of-plane velocity
 
-Jefferson indicó: *"en la dirección que sale del plano, se debe poner una
-velocidad en las partículas"*.
+Jefferson noted: *"in the direction out of the plane, a velocity must be
+given to the particles."*
 
-Esta es la **velocidad drift** que sostiene la corriente J_x de cada hoja Harris.
-En la doble hoja, los drifts se invierten entre las dos hojas:
+This is the **drift velocity** that sustains the J_x current of each Harris
+sheet. In the double sheet, the drifts reverse between the two sheets:
 
 ```
-Hoja 1 (y = −Ly/4):  J_x > 0  →  iones driftan en +x, electrones en −x
-Hoja 2 (y = +Ly/4):  J_x < 0  →  iones driftan en −x, electrones en +x
+Sheet 1 (y = −Ly/4):  J_x > 0  →  ions drift in +x, electrons in −x
+Sheet 2 (y = +Ly/4):  J_x < 0  →  ions drift in −x, electrons in +x
 ```
 
-Implementación: el drift se pondera por la contribución de densidad local:
+Implementation: the drift is weighted by the local density contribution:
 
 ```cpp
 drift_weight = (n_sheet1 − n_sheet2) / (n_sheet1 + n_sheet2)
-// +1 cerca de hoja 1, −1 cerca de hoja 2, 0 entre hojas
+// +1 near sheet 1, −1 near sheet 2, 0 between sheets
 
 v_drift_ion = +2·Tᵢ/(B₀·L) × drift_weight
 v_drift_ele = −2·Tₑ/(B₀·L) × drift_weight
@@ -257,25 +260,25 @@ v_drift_ele = −2·Tₑ/(B₀·L) × drift_weight
 
 ---
 
-## Parámetros físicos
+## Physical parameters
 
-| Parámetro | Símbolo | Valor | Descripción |
+| Parameter | Symbol | Value | Description |
 |---|---|---|---|
-| Razón de masas | mᵢ/mₑ | 25 | Artificial (real ≈ 1836) |
-| Ratio de frecuencias | ωpe/ωce | 2.0 | |
-| Razón de temperaturas | Tᵢ/Tₑ | 5.0 | |
-| Grosor de hoja | L/dᵢ | 0.5 | Half-thickness |
-| Dominio Y | Ly/dᵢ | 25.6 | Separación entre hojas: 12.8 dᵢ |
-| Dominio Z | Lz/dᵢ | 51.2 | Espacio para outflows |
-| Densidad de fondo | nb/n₀ | 0.20 | 20% del pico Harris |
-| Guide field | bg | 0.0 | Anti-parallel (sin guide) |
-| Perturbación | δBy/B₀ | 0.03 | 3% solo en una hoja |
+| Mass ratio | mᵢ/mₑ | 25 | Artificial (real ≈ 1836) |
+| Frequency ratio | ωpe/ωce | 2.0 | |
+| Temperature ratio | Tᵢ/Tₑ | 5.0 | |
+| Sheet thickness | L/dᵢ | 0.5 | Half-thickness |
+| Domain Y | Ly/dᵢ | 25.6 | Separation between sheets: 12.8 dᵢ |
+| Domain Z | Lz/dᵢ | 51.2 | Space for outflows |
+| Background density | nb/n₀ | 0.20 | 20% of the Harris peak |
+| Guide field | bg | 0.0 | Anti-parallel (no guide) |
+| Perturbation | δBy/B₀ | 0.03 | 3% on only one sheet |
 
-### Cantidades derivadas (en unidades de código)
+### Derived quantities (in code units)
 
 ```
 dᵢ = √(mᵢ/mₑ) / (ωpe/ωce) = √25 / 2 = 2.5 dₑ
-B₀ = ωce·mₑ/e = 0.5  (en unidades PSC)
+B₀ = ωce·mₑ/e = 0.5  (in PSC units)
 Tₑ = 1 / (2·(ωpe/ωce)²·(1+Ti/Te)) = 1/(2·4·6) = 0.02083
 Tᵢ = 5·Tₑ = 0.1042
 λ_De = √Tₑ ≈ 0.144
@@ -283,120 +286,147 @@ Tᵢ = 5·Tₑ = 0.1042
 
 ---
 
-## Resolución y escalas
+## Resolution and scales
 
-| Código | Grid | dy/dₑ | dz/dₑ | dy/dᵢ | ppc | Partículas totales |
+| Code | Grid | dy/dₑ | dz/dₑ | dy/dᵢ | ppc | Total particles |
 |---|---|---|---|---|---|---|
 | `psc_reconnection` | 256×512 | 0.50 | 0.50 | 0.20 | 100 | ~26M |
 | `psc_reconnection_local` | 64×256 | 2.0 | 1.0 | 0.80 | 10 | ~330K |
 | `psc_reconnection_mini` | 32×128 | 4.0 | 1.0 | 1.60 | 4 | ~33K |
 
-> **Nota de Jefferson**: si la resolución o el número de partículas es muy bajo,
-> la inestabilidad tearing aparece muy rápido (numéricamente, no físicamente).
-> `psc_reconnection` (256×512, 100 ppc) está diseñado para evitar esto.
+> **Note from Jefferson**: if the resolution or particle count is too low,
+> the tearing instability appears too fast (numerically, not physically).
+> `psc_reconnection` (256×512, 100 ppc) is designed to avoid this.
 
-### Comparativa de Resolución con la Literatura y Simulaciones de Anisotropía
+### Resolution comparison with the literature and anisotropy simulations
 
-En las simulaciones Full PIC, resolver adecuadamente las escalas inerciales (dₑ, dᵢ) y la longitud de Debye (λ_De) es un desafío computacional. A continuación se presenta una comparativa técnica:
+In Full PIC simulations, adequately resolving the inertial scales (dₑ, dᵢ)
+and the Debye length (λ_De) is a computational challenge. A technical
+comparison follows:
 
-| Simulación / Estudio | mᵢ/mₑ | dx/dₑ | dx/dᵢ | dx/λ_De | ppc | Distribución |
+| Simulation / Study | mᵢ/mₑ | dx/dₑ | dx/dᵢ | dx/λ_De | ppc | Distribution |
 |---|---|---|---|---|---|---|
-| **Reconexión (Producción)** | 25 | 0.25 | 0.10 | 1.73 | 100 | Kappa / Max |
-| **Reconexión (Local)** | 25 | 1.00 | 0.40 | 6.94 | 10 | Maxwellian |
-| **Anisotropías (Mirror/Firehose)** | 100-200 | 0.20 | 0.014-0.02 | 1.53 | 1000-2000 | Kappa / Max |
-| *Daughton et al. 2011 (Reconexión)* | 25-100 | 0.1-0.2 | ~0.02-0.04 | ~1.0 | ~100 | Maxwellian |
+| **Reconnection (Production)** | 25 | 0.25 | 0.10 | 1.73 | 100 | Kappa / Max |
+| **Reconnection (Local)** | 25 | 1.00 | 0.40 | 6.94 | 10 | Maxwellian |
+| **Anisotropies (Mirror/Firehose)** | 100-200 | 0.20 | 0.014-0.02 | 1.53 | 1000-2000 | Kappa / Max |
+| *Daughton et al. 2011 (Reconnection)* | 25-100 | 0.1-0.2 | ~0.02-0.04 | ~1.0 | ~100 | Maxwellian |
 | *Agudelo Rueda et al. 2024* | Pair (1) | 0.1-0.5 | 0.1-0.5 | ~1.0 | 500-1000 | Maxwellian |
 
-**Análisis Científico:**
-1. **Resolución de la piel inercial:** En nuestro caso de reconexión de producción (`psc_reconnection`), `dx = 0.25 dₑ`, lo cual es lo suficientemente fino para capturar la física electrónica en la capa de difusión, estando en total concordancia con el estándar de la literatura (ej. Daughton et al., que usa típicamente `dx ~ 0.1-0.2 dₑ`).
-2. **Sub-resolución de Debye:** Para nuestro plasma de reconexión, λ_De ≈ 0.144 dₑ, lo que implica `dx/λ_De ≈ 1.73`. Al igual que en nuestras simulaciones de anisotropías (donde `dx/λ_De ≈ 1.53`), la longitud de Debye está ligeramente sub-resuelta. Este compromiso es común y aceptado en simulaciones PIC con masa artificial para poder abarcar un dominio físico (Lz = 51.2 dᵢ) suficientemente grande que permita el desarrollo de los flujos de reconexión (outflows). El ruido de grilla (aliasing) derivado de esto se mitiga mediante el uso de partículas con formas de orden superior y un número de partículas por celda razonable (100 ppc).
-3. **Escala Iónica:** La separación de escalas `dᵢ = 5 dₑ` en reconexión (debido a mᵢ/mₑ=25) permite tener `dx = 0.1 dᵢ`. En anisotropías (donde se usan dominios más grandes y masas mayores, mᵢ/mₑ=100-200), se alcanza `dx ≈ 0.02 dᵢ`. Ambos enfoques garantizan una excelente resolución de la física iónica.
+**Scientific analysis:**
+1. **Skin-depth resolution:** in our production reconnection case
+   (`psc_reconnection`), `dx = 0.25 dₑ`, which is fine enough to capture
+   the electron physics in the diffusion layer, fully consistent with the
+   literature standard (e.g., Daughton et al., who typically use
+   `dx ~ 0.1-0.2 dₑ`).
+2. **Debye under-resolution:** for our reconnection plasma, λ_De ≈ 0.144 dₑ,
+   which implies `dx/λ_De ≈ 1.73`. As in our anisotropy simulations (where
+   `dx/λ_De ≈ 1.53`), the Debye length is slightly under-resolved. This
+   trade-off is common and accepted in PIC simulations with artificial mass,
+   in order to cover a physical domain (Lz = 51.2 dᵢ) large enough to allow
+   the reconnection outflows to develop. The resulting grid noise (aliasing)
+   is mitigated by using higher-order particle shapes and a reasonable
+   number of particles per cell (100 ppc).
+3. **Ion scale:** the scale separation `dᵢ = 5 dₑ` in reconnection (due to
+   mᵢ/mₑ=25) yields `dx = 0.1 dᵢ`. In anisotropy runs (which use larger
+   domains and larger mass ratios, mᵢ/mₑ=100-200), `dx ≈ 0.02 dᵢ` is
+   reached. Both approaches guarantee excellent resolution of the ion
+   physics.
 
 ---
 
-## Recursos del Cluster y Mejores Opciones
+## Cluster resources and best options
 
-El consumo de memoria de estas simulaciones de reconexión es sustancialmente menor que las de anisotropía, ya que el dominio 2D es mucho más pequeño.
+The memory consumption of these reconnection simulations is substantially
+lower than that of the anisotropy simulations, since the 2D domain is much
+smaller.
 
-| Ejecutable | Entorno recomendado | CPUs y RAM requeridos | Pasos |
+| Executable | Recommended environment | Required CPUs and RAM | Steps |
 |---|---|---|---|
-| `psc_reconnection` | **feynman-00**, **pauli**, o **planck** | 8 CPUs, ~30 GB RAM | 10M |
-| `psc_reconnection_local` | PC local o nodo de test (`maxwell`) | 1 CPU, ~1 GB RAM | 5,000 |
-| `psc_reconnection_mini` | PC local para debug | 1 CPU, <100 MB RAM | 200 |
+| `psc_reconnection` | **feynman-00**, **pauli**, or **planck** | 8 CPUs, ~30 GB RAM | 10M |
+| `psc_reconnection_local` | Local PC or test node (`maxwell`) | 1 CPU, ~1 GB RAM | 5,000 |
+| `psc_reconnection_mini` | Local PC for debugging | 1 CPU, <100 MB RAM | 200 |
 
-**Recomendación de ejecución:**
-Para observar el *steady-state* y la formación de plasmoides, ejecutar `psc_reconnection` en el nodo **feynman-00**. Dado que requiere solo 8 ranks y 30 GB de memoria, puede ejecutarse fácilmente incluso si el nodo está parcialmente ocupado, a diferencia de las simulaciones de anisotropía (Mirror/Firehose) que demandan bloques de 64-128 CPUs y >150 GB de RAM.
+**Execution recommendation:**
+To observe the *steady-state* and plasmoid formation, run `psc_reconnection`
+on the **feynman-00** node. Since it requires only 8 ranks and 30 GB of
+memory, it can run easily even if the node is partially occupied, unlike the
+anisotropy simulations (Mirror/Firehose) which demand blocks of 64-128 CPUs
+and >150 GB of RAM.
 
 ---
 
-## Condiciones de frontera
+## Boundary conditions
 
 ```
-Campos:     {PERIODIC, PERIODIC, PERIODIC}  en {x, y, z}
-Partículas: {PERIODIC, PERIODIC, PERIODIC}  en {x, y, z}
+Fields:     {PERIODIC, PERIODIC, PERIODIC}  in {x, y, z}
+Particles:  {PERIODIC, PERIODIC, PERIODIC}  in {x, y, z}
 ```
 
-Totalmente periódicas. La doble hoja Harris permite esto sin discontinuidades.
+Fully periodic. The double Harris sheet allows this without discontinuities.
 
 ---
 
-## Qué observar (steady state)
+## What to observe (steady state)
 
-Jefferson indicó: *"importante que la reconexión alcance el steady state, donde
-tienes una hoja de corriente elongada y los outflows son horizontales."*
+Jefferson noted: *"it is important for reconnection to reach steady state,
+where you have an elongated current sheet and the outflows are horizontal."*
 
-Al analizar los resultados, buscar:
+When analyzing the results, look for:
 
-1. **Hoja elongada**: La hoja perturbada (y = +Ly/4) se adelgaza en el centro
-2. **X-point**: Punto donde B_z ≈ 0 y B_y ≈ 0 (el punto de reconexión)
-3. **Outflows horizontales**: Jets de plasma saliendo en ±z desde el X-point
-4. **Inflows verticales**: Plasma entrando desde ±y hacia el X-point
-5. **Islas magnéticas**: Posible formación de plasmoides/islas
-6. **Hoja 2 estable**: La hoja no perturbada (y = −Ly/4) debe permanecer estable
+1. **Elongated sheet**: the perturbed sheet (y = +Ly/4) thins at the center
+2. **X-point**: point where B_z ≈ 0 and B_y ≈ 0 (the reconnection point)
+3. **Horizontal outflows**: plasma jets exiting in ±z from the X-point
+4. **Vertical inflows**: plasma entering from ±y toward the X-point
+5. **Magnetic islands**: possible formation of plasmoids/islands
+6. **Stable sheet 2**: the unperturbed sheet (y = −Ly/4) must remain stable
 
-### Diagnósticos inspirados en el artículo
+### Diagnostics inspired by the paper
 
-Para conectar el análisis con Agudelo Rueda et al. 2024, conviene medir:
+To connect the analysis with Agudelo Rueda et al. 2024, it is useful to
+measure:
 
-1. **`B_y(z,t)` en el centro de la hoja perturbada:** construir un stack plot.
-   Patrones alternados azul-rojo indican puntos-X y crecimiento de islas.
-2. **`max(|J_x|)` normalizado:** si crecen plasmoides, debe aparecer una fase de
-   crecimiento fuerte; si se suprime tearing, `J_x,max` no debe crecer igual.
-3. **`max(|B_y|)` y tasa `gamma_By`:** usarlo como proxy del modo de tearing, con
-   cuidado de separar crecimiento real de islas y respuesta directa al forcing.
-4. **Energía electromagnética, cinética y térmica:** en corridas forzadas la
-   energía no tiene por qué conservarse; lo importante es ver si la energía
-   alimenta islas o calienta el plasma.
-5. **Conteo de puntos-O/puntos-X:** para distinguir reconexión con plasmoides
-   de una hoja fragmentada sin islas coherentes.
-6. **Distribuciones de velocidad cerca del X-point y outflow:** si el forcing
-   suprime islas, buscar aumento térmico y anisotropía en vez de flujo coherente.
+1. **`B_y(z,t)` at the center of the perturbed sheet:** build a stack plot.
+   Alternating blue-red patterns indicate X-points and island growth.
+2. **Normalized `max(|J_x|)`:** if plasmoids grow, a strong growth phase
+   should appear; if tearing is suppressed, `J_x,max` should not grow the
+   same way.
+3. **`max(|B_y|)` and rate `gamma_By`:** use it as a proxy for the tearing
+   mode, taking care to separate real island growth from a direct response
+   to the forcing.
+4. **Electromagnetic, kinetic and thermal energy:** in forced runs energy
+   need not be conserved; what matters is whether the energy feeds islands
+   or heats the plasma.
+5. **O-point/X-point count:** to distinguish reconnection with plasmoids
+   from a fragmented sheet without coherent islands.
+6. **Velocity distributions near the X-point and outflow:** if the forcing
+   suppresses islands, look for thermal increase and anisotropy instead of
+   coherent flow.
 
 ---
 
-## Ejecución
+## Execution
 
-### Test rápido
+### Quick test
 ```bash
 mpirun -n 1 ../build/src/psc_reconnection_mini
-# Debe imprimir "Pressure Balance" con err < 1% y terminar con "Test completed!"
+# Should print "Pressure Balance" with err < 1% and finish with "Test completed!"
 ```
 
-### Desarrollo local
+### Local development
 ```bash
 mpirun -n 1 ../build/src/psc_reconnection_local
-# Genera pfd.*.h5 y pfd_moments.*.h5 cada 50 pasos
+# Generates pfd.*.h5 and pfd_moments.*.h5 every 50 steps
 ```
 
-### Producción (servidor, 8 MPI ranks, ~30 GB):
+### Production (server, 8 MPI ranks, ~30 GB):
 ```bash
 mpirun -n 8 ./psc_reconnection
-# 256×512, 100 ppc, Kappa κ=3, 10M pasos
+# 256×512, 100 ppc, Kappa κ=3, 10M steps
 ```
 
 ---
 
-## Script SLURM para producción
+## SLURM script for production
 
 ```bash
 #!/bin/bash -l
@@ -427,15 +457,15 @@ echo "=========================================================="
 echo "  PSC Reconnection — Double Harris + Kappa κ=3"
 echo "=========================================================="
 echo "Job ID      : ${SLURM_JOB_ID}"
-echo "Nodo        : ${SLURM_JOB_NODELIST}"
-echo "Tareas MPI  : ${SLURM_NTASKS}"
-echo "Ejecutable  : ${EXECUTABLE}"
-echo "Directorio  : ${WORKDIR}"
-echo "Inicio      : $(date)"
+echo "Node        : ${SLURM_JOB_NODELIST}"
+echo "MPI tasks   : ${SLURM_NTASKS}"
+echo "Executable  : ${EXECUTABLE}"
+echo "Directory   : ${WORKDIR}"
+echo "Start       : $(date)"
 echo "=========================================================="
 
 if [ ! -f "${EXECUTABLE}" ]; then
-    echo "ERROR: Ejecutable no encontrado: ${EXECUTABLE}"
+    echo "ERROR: Executable not found: ${EXECUTABLE}"
     exit 1
 fi
 
@@ -445,7 +475,7 @@ mpirun -np 8 \
 
 EXIT_CODE=$?
 echo "=========================================================="
-echo "Fin         : $(date)"
+echo "End         : $(date)"
 echo "mpirun exit : ${EXIT_CODE}"
 echo "=========================================================="
 exit ${EXIT_CODE}
@@ -453,7 +483,7 @@ exit ${EXIT_CODE}
 
 ---
 
-## Referencias
+## References
 
 - Agudelo Rueda, Liu, Germaschewski, Hesse & Bessho 2024 (ApJ 971, 109): "On the Effect of Inducing Turbulence-like Fluctuations in a Harris Current Sheet Configuration and Plasmoid Formation"
 - Harris 1962: Original Harris current sheet equilibrium

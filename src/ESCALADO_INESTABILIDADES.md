@@ -1,284 +1,284 @@
-# De la reconexión a corridas grandes de inestabilidades por anisotropía
+# From reconnection to large runs of anisotropy instabilities
 
-Análisis basado en (a) lectura directa de este repositorio (`src/psc_reconnection.cxx`,
-`src/psc_anisotropy_case.hxx`, `src/include/setup_particles.hxx`, jobs de COSMA) y
-(b) literatura verificada (enlaces al final). Lo que es lectura de código está marcado
-**[código]**; lo verificado en papers, **[lit]**; lo que es práctica general no
-verificada en una fuente concreta, **[general]**. Lo que no pude verificar lo digo.
+Analysis based on (a) direct reading of this repository (`src/psc_reconnection.cxx`,
+`src/psc_anisotropy_case.hxx`, `src/include/setup_particles.hxx`, COSMA jobs) and
+(b) verified literature (links at the end). What comes from reading the code is marked
+**[code]**; what is verified in papers, **[lit.]**; general practice not
+verified against a specific source, **[general]**. Where I could not verify something, I say so.
 
 ---
 
-## 1. Punto de partida: lo que ya hay en el repo **[código]**
+## 1. Starting point: what's already in the repo **[code]**
 
-Contrario a la premisa de "adaptar el deck de reconexión", el repo **ya contiene** un
-framework de inestabilidades (`psc_anisotropy_case.hxx` + casos firehose/mirror
-bi-Maxwellian y bi-kappa). La pregunta correcta ya no es "cómo convertir el Harris en
-plasma homogéneo" (hecho), sino **si el setup actual escala bien y qué corregir antes
-de quemar horas en COSMA**. Comparación de los dos decks:
+Contrary to the premise of "adapting the reconnection deck," the repo **already contains** an
+instability framework (`psc_anisotropy_case.hxx` + bi-Maxwellian and bi-kappa firehose/mirror
+cases). The right question is no longer "how to convert the Harris sheet into a
+homogeneous plasma" (done), but **whether the current setup scales well and what needs fixing before
+burning hours on COSMA**. Comparison of the two decks:
 
-| Parámetro | `psc_reconnection.cxx` | `psc_anisotropy_case.hxx` |
+| Parameter | `psc_reconnection.cxx` | `psc_anisotropy_case.hxx` |
 |---|---|---|
-| Geometría | 2D `dim_yz`, doble Harris | 2D `dim_yz`, homogéneo, B₀ = ẑ |
-| Caja | 25.6 × 51.2 d_i | 20 × 20 d_i (bigbox: 40 × 40) |
-| Grilla | 256 × 512 → Δx = 0.1 d_i | 576² → Δx = 0.0347 d_i (bigbox 1152²) |
+| Geometry | 2D `dim_yz`, double Harris | 2D `dim_yz`, homogeneous, B₀ = ẑ |
+| Box | 25.6 × 51.2 d_i | 20 × 20 d_i (bigbox: 40 × 40) |
+| Grid | 256 × 512 → Δx = 0.1 d_i | 576² → Δx = 0.0347 d_i (bigbox 1152²) |
 | m_i/m_e | 25 | 200 |
-| ω_pe/Ω_ce | 2 | 12.5 (ver §5, naming de `vA_over_c`) |
-| ppc (`nicell`) | 100 × 4 especies | 1000 × 2 especies |
+| ω_pe/Ω_ce | 2 | 12.5 (see §5, naming of `vA_over_c`) |
+| ppc (`nicell`) | 100 × 4 species | 1000 × 2 species |
 | CFL | 0.99 | 0.95 |
-| Distribución | κ = 3 multivariada | bi-Maxwellian o bi-kappa (T⊥ ≠ T∥ vía `npt.T[]`) |
-| Fronteras | Periódicas | Periódicas |
-| Balance | cada 500 | cada 2500 |
-| Duración por defecto | nmax 10⁷ (tope manual) | nmax 1.2 × 10⁶ ≈ 158 Ω_ci⁻¹ (calculado abajo) |
+| Distribution | κ = 3 multivariate | bi-Maxwellian or bi-kappa (T⊥ ≠ T∥ via `npt.T[]`) |
+| Boundaries | Periodic | Periodic |
+| Balance | every 500 | every 2500 |
+| Default duration | nmax 10⁷ (manual cap) | nmax 1.2 × 10⁶ ≈ 158 Ω_ci⁻¹ (computed below) |
 
-La inicialización anisotrópica ya es correcta en su estructura: `npt.T[0]=T[1]=T⊥`,
-`npt.T[2]=T∥` con B₀ en z, ejes de malla alineados con B₀ — que es el único caso en
-que `T[3]` por ejes de malla equivale a bi-Maxwelliana giroscópica. Si algún día
-inclinas B₀, hay que rotar la matriz de temperaturas a mano (el sampler no conoce B).
+The anisotropic initialization is already structurally correct: `npt.T[0]=T[1]=T⊥`,
+`npt.T[2]=T∥` with B₀ along z, grid axes aligned with B₀ — which is the only case in
+which `T[3]` by grid axes is equivalent to a gyrotropic bi-Maxwellian. If you ever
+tilt B₀, the temperature matrix has to be rotated by hand (the sampler doesn't know about B).
 
-El sampler `createKappaMultivariate` **[código]** usa mezcla de escala
-Gaussiana‑Gamma: `Y ~ Gamma(κ−0.5)`, `S = √((κ−1.5)/Y)`, `p_i = Z_i·S·√(T_i/m)`.
-Eso genera la bi‑kappa estándar f ∝ [1 + Q/(κ−3/2)]^−(κ+1) en la convención
-"temperature‑preserving": la varianza es exactamente T_i (E[S²] = 1). Es la
-convención correcta para comparar con NHDS/LEOPARD/ALPS **si** les pasas la misma T
-física; verifica qué convención de θ vs T usa cada solver (algunos parametrizan con
+The `createKappaMultivariate` sampler **[code]** uses a Gaussian-Gamma scale
+mixture: `Y ~ Gamma(κ−0.5)`, `S = √((κ−1.5)/Y)`, `p_i = Z_i·S·√(T_i/m)`.
+That generates the standard bi-kappa f ∝ [1 + Q/(κ−3/2)]^−(κ+1) in the
+"temperature-preserving" convention: the variance is exactly T_i (E[S²] = 1). This is the
+correct convention for comparing with NHDS/LEOPARD/ALPS **if** you pass them the same physical
+T; check which θ vs T convention each solver uses (some parametrize with
 θ² = (1−3/(2κ))·2T/m).
 
-## 2. Qué hace la literatura en corridas grandes **[lit]**
+## 2. What the literature does in large runs **[lit.]**
 
-Parámetros extraídos de los papers (leídos, no de memoria):
+Parameters extracted from the papers (read directly, not from memory):
 
-**Micera et al. 2020, ApJ 893:130** (firehose protónico paralelo, full PIC
-semi-implícito ECsim, 1D): caja L = 60 d_i elegida explícitamente para que quepan
-**>20 longitudes de onda del modo más inestable**; Δx ≈ 0.074 d_i;
-Δt = 0.5 ω_pe⁻¹; **10⁴ ppc por especie**; periódicas; masa realista;
-ω_pe/Ω_ce = 63.24. Reportan que corridas con distinta resolución y ppc dan
-resultados similares (test de convergencia explícito). Ojo: ECsim es
-energy-conserving semi-implícito y **no** está obligado a resolver λ_De — PSC
-explícito sí (§3).
+**Micera et al. 2020, ApJ 893:130** (parallel proton firehose, full PIC
+semi-implicit ECsim, 1D): box L = 60 d_i chosen explicitly to fit
+**>20 wavelengths of the most unstable mode**; Δx ≈ 0.074 d_i;
+Δt = 0.5 ω_pe⁻¹; **10⁴ ppc per species**; periodic; realistic mass;
+ω_pe/Ω_ce = 63.24. They report that runs with different resolution and ppc give
+similar results (explicit convergence test). Note: ECsim is
+semi-implicit energy-conserving and is **not** required to resolve λ_De — explicit
+PSC is (§3).
 
-**Hellinger et al. 2019, ApJ 883:178** (firehose vs turbulencia, híbrido expanding
-box, 3D): grilla 512 × 512 × 256; Δx = Δy = 0.25 d_i, Δz = 0.5 d_i (caja
-128 × 128 × 128 d_i); **400 ppc** (protones); Δt = 0.05 Ω_ci⁻¹ con subciclado del
-campo B a Δt/10; resistividad η = 10⁻³ μ₀v_A²/ω_ci para evitar acumulación de
-energía en la escala de grilla; expansión t_exp = 10⁴ Ω_ci⁻¹; periódicas. Híbrido:
-sin escala electrónica que resolver, por eso pueden usar Δx de 0.25–0.5 d_i.
+**Hellinger et al. 2019, ApJ 883:178** (firehose vs turbulence, hybrid expanding
+box, 3D): grid 512 × 512 × 256; Δx = Δy = 0.25 d_i, Δz = 0.5 d_i (box
+128 × 128 × 128 d_i); **400 ppc** (protons); Δt = 0.05 Ω_ci⁻¹ with subcycling of the
+B field at Δt/10; resistivity η = 10⁻³ μ₀v_A²/ω_ci to avoid energy
+accumulation at the grid scale; expansion t_exp = 10⁴ Ω_ci⁻¹; periodic. Hybrid:
+no electron scale to resolve, which is why they can use Δx of 0.25–0.5 d_i.
 
-**Riquelme, Quataert & Verscharen 2015, ApJ 800:27** (mirror + IC driven por shear,
-full PIC TRISTAN-MP, β ~ 1–100): el estado no lineal lo domina mirror; la
-anisotropía satura cerca del umbral lineal de mirror; δB ~ 0.3⟨B⟩ en la fase
-secular; μ deja de conservarse cuando δB ≳ 0.1⟨B⟩. No extraje su tabla de
-resolución numérica — si necesitas sus Δx/ppc, hay que leer su sección 2 en detalle.
+**Riquelme, Quataert & Verscharen 2015, ApJ 800:27** (mirror + shear-driven IC,
+full PIC TRISTAN-MP, β ~ 1–100): the nonlinear state is dominated by mirror; the
+anisotropy saturates near the mirror linear threshold; δB ~ 0.3⟨B⟩ in the
+secular phase; μ stops being conserved when δB ≳ 0.1⟨B⟩. I did not extract their
+numerical-resolution table — if you need their Δx/ppc, their section 2 has to be read in detail.
 
-**Relevantes para tu caso kappa** (existencia verificada, setups no extraídos):
-López et al. 2019, ApJL 873:L20 (firehose electrónico bi-kappa, PIC); López et al.
-2022, ApJ 930:158 (firehose 2D PIC acoplando escalas p⁺/e⁻); "Hybrid Simulation and
-Quasi-linear Theory of Bi-Kappa Proton Instabilities" (ApJ 2023); y un método de
-rejection sampling para kappa en PIC (arXiv:2512.04272) contra el que puedes
-contrastar tu sampler.
+**Relevant to your kappa case** (existence verified, setups not extracted):
+López et al. 2019, ApJL 873:L20 (electron bi-kappa firehose, PIC); López et al.
+2022, ApJ 930:158 (2D PIC firehose coupling p⁺/e⁻ scales); "Hybrid Simulation and
+Quasi-linear Theory of Bi-Kappa Proton Instabilities" (ApJ 2023); and a
+rejection-sampling method for kappa in PIC (arXiv:2512.04272) against which you can
+benchmark your sampler.
 
-**Patrones de diseño que se repiten** **[general, consistente con lo anterior]**:
+**Recurring design patterns** **[general, consistent with the above]**:
 
-- 1D basta para modos con k ∥ B (firehose paralelo, EMIC paralelo); 2D es el mínimo
-  para mirror y firehose oblicuo; 3D solo cuando compites modos paralelos vs
-  oblicuos simultáneamente o añades turbulencia. Tu `dim_yz` con B₀ = ẑ captura
-  k∥ (z) y k⊥ (y) en un plano: correcto para mirror y firehose oblicuo, con la
-  limitación 2D de un solo plano de k.
-- Caja: la regla operativa es L ≳ 10–20 λ_peak del modo dominante, es decir
-  k_min = 2π/L ≲ k_peak/10–20. Full PIC iónico: cajas de 20–100 d_i. Tu 20 d_i da
-  k_min·d_i ≈ 0.31 — para firehose/mirror con k_peak·d_i ~ 0.3–0.8 eso deja el pico
-  apenas en el 1er–3er armónico: **poco**. El bigbox40 (k_min·d_i ≈ 0.157) es lo
-  mínimo defendible; para el inverse cascade post-saturación y modos oblicuos de k
-  bajo, más grande aún es mejor.
-- ppc en full PIC explícito: 100–1000 típico, 10⁴ en 1D de lujo. Tus 1000 están bien
-  situados; el ruido en energía escala ∝ 1/ppc y en amplitud ∝ 1/√ppc.
-- Duración: crecimiento con γ/Ω_ci ~ 10⁻³–10⁻¹ según cercanía al umbral →
-  saturación en decenas–cientos de Ω_ci⁻¹; la relajación cuasilineal hacia el umbral
-  marginal (lo que se compara con el plano β∥–T⊥/T∥) requiere cientos a ~10³ Ω_ci⁻¹.
+- 1D is enough for modes with k ∥ B (parallel firehose, parallel EMIC); 2D is the minimum
+  for mirror and oblique firehose; 3D only when you're pitting parallel against
+  oblique modes simultaneously or adding turbulence. Your `dim_yz` with B₀ = ẑ captures
+  k∥ (z) and k⊥ (y) in one plane: correct for mirror and oblique firehose, with the
+  2D limitation of a single k-plane.
+- Box: the operative rule is L ≳ 10–20 λ_peak of the dominant mode, i.e.
+  k_min = 2π/L ≲ k_peak/10–20. Full ion PIC: boxes of 20–100 d_i. Your 20 d_i gives
+  k_min·d_i ≈ 0.31 — for firehose/mirror with k_peak·d_i ~ 0.3–0.8 that leaves the peak
+  barely at the 1st–3rd harmonic: **thin**. The bigbox40 (k_min·d_i ≈ 0.157) is the
+  minimum defensible choice; for the post-saturation inverse cascade and low-k
+  oblique modes, even larger is better.
+- ppc in explicit full PIC: 100–1000 typical, 10⁴ in luxury 1D setups. Your 1000 are well
+  positioned; noise in energy scales ∝ 1/ppc and in amplitude ∝ 1/√ppc.
+- Duration: growth with γ/Ω_ci ~ 10⁻³–10⁻¹ depending on proximity to the threshold →
+  saturation in tens–hundreds of Ω_ci⁻¹; the quasilinear relaxation toward the
+  marginal threshold (what gets compared against the β∥–T⊥/T∥ plane) requires hundreds to ~10³ Ω_ci⁻¹.
 
-## 3. Numérica crítica al pasar de reconexión a inestabilidades
+## 3. Critical numerics when moving from reconnection to instabilities
 
-**Grid heating / λ_De** **[lit + código]**. PIC explícito con interpolación lineal
-calienta numéricamente si Δx ≳ 3–3.5 λ_De (Birdsall & Langdon; ver también
-arXiv:2606.25528 sobre termalización numérica y arXiv:2503.05123 sobre smoothing).
-Números de tus decks:
+**Grid heating / λ_De** **[lit. + code]**. Explicit PIC with linear interpolation
+heats numerically if Δx ≳ 3–3.5 λ_De (Birdsall & Langdon; see also
+arXiv:2606.25528 on numerical thermalization and arXiv:2503.05123 on smoothing).
+Numbers from your decks:
 
-- Reconexión: T_e = 1/48 → λ_De = 0.144 d_e; Δx = 0.5 d_e → **Δx/λ_De ≈ 3.5**. Al límite pero defendible.
-- Anisotropía: T_e∥ = β_e∥·B₀²/2 = 0.0032 (β_e∥ = 1) → λ_De = 0.057 d_e;
-  Δx = 0.491 d_e → **Δx/λ_De ≈ 8.7**. El comentario en `psc_anisotropy_case.hxx`
-  dice "dx/lambda_De ~ 3.78", pero ese número solo sale usando una temperatura
-  iónica (√T_i∥ con β_i = 5 da 3.9); con la λ_De **electrónica** — que es la que
-  manda para grid heating — estás ~2.5× por encima del criterio clásico. Esto es lo
-  primero que verificaría (checklist §6): puede estar inyectando calentamiento
-  espurio en los electrones a lo largo de 10⁶ pasos, y un T_e(t) que sube solo
-  contamina directamente tu plano β∥–T⊥/T∥.
+- Reconnection: T_e = 1/48 → λ_De = 0.144 d_e; Δx = 0.5 d_e → **Δx/λ_De ≈ 3.5**. At the limit but defensible.
+- Anisotropy: T_e∥ = β_e∥·B₀²/2 = 0.0032 (β_e∥ = 1) → λ_De = 0.057 d_e;
+  Δx = 0.491 d_e → **Δx/λ_De ≈ 8.7**. The comment in `psc_anisotropy_case.hxx`
+  says "dx/lambda_De ~ 3.78", but that number only comes out when using an
+  ionic temperature (√T_i∥ with β_i = 5 gives 3.9); with the **electron** λ_De — which is the one
+  that governs grid heating — you're ~2.5× above the classical criterion. This is the
+  first thing I'd check (checklist §6): it may be injecting spurious heating
+  into the electrons over the course of 10⁶ steps, and a T_e(t) that only rises
+  directly contaminates your β∥–T⊥/T∥ plane.
 
-Mitigaciones si el control run confirma heating: subir β_e∥ (electrones más
-calientes → λ_De mayor), refinar grilla (caro: coste ∝ N²·pasos en 2D), o smoothing
-de corriente. **No encontré en el PSC público un filtro binomial/smoothing de
-corriente configurable** — si tu versión editada no lo añadió, no cuentes con él.
+Mitigations if the control run confirms heating: raise β_e∥ (hotter electrons
+→ larger λ_De), refine the grid (expensive: cost ∝ N²·steps in 2D), or current
+smoothing. **I did not find a configurable binomial filter / current smoothing in
+public PSC** — if your edited version didn't add one, don't count on it.
 
-**Ruido de partículas y semilla de los modos** **[general + código]**. En un plasma
-homogéneo la inestabilidad crece desde el ruido térmico de las macropartículas. Con
-más ppc el piso de ruido baja (∝ 1/ppc en energía), la fase lineal dura más y el
-ajuste de γ es más limpio; con pocos ppc los modos arrancan de amplitudes ya
-no-lineales o el ruido tapa los γ pequeños. Detalle de tu código: PSC inicializa
-todas las partículas en el **centro de la celda** (`x_cc`), no uniformemente — el
-espectro inicial de ruido de densidad no es el de un plasma térmico y tarda ~ un
-periodo de plasma en termalizar. No es un problema para γ (mide después de los
-primeros Ω_ci⁻¹) pero explica transientes iniciales. Además `createKappaMultivariate`
-usa `std::random_device` por hilo **[código]**: las corridas no son reproducibles
-bit a bit; para comparar γ entre corridas idénticas considera una semilla fija.
+**Particle noise and mode seeding** **[general + code]**. In a homogeneous
+plasma the instability grows from the thermal noise of the macroparticles. With
+more ppc the noise floor drops (∝ 1/ppc in energy), the linear phase lasts longer and
+the γ fit is cleaner; with few ppc the modes start from already-nonlinear
+amplitudes or the noise buries small γ. Detail of your code: PSC initializes
+all particles at the **cell center** (`x_cc`), not uniformly — the
+initial density-noise spectrum is not that of a thermal plasma and takes ~ one
+plasma period to thermalize. It's not a problem for γ (you measure after the
+first few Ω_ci⁻¹) but it explains initial transients. Also, `createKappaMultivariate`
+uses `std::random_device` per thread **[code]**: runs are not bit-for-bit
+reproducible; to compare γ between identical runs, consider a fixed seed.
 
-**k discreto y comparación con teoría lineal** **[general]**. La caja periódica solo
-admite k_n = 2πn/L. Tu γ medido para "el modo dominante" es el γ(k_n) del armónico
-más cercano al pico teórico, no γ_max del continuo. Compara con NHDS/LEOPARD/ALPS
-**evaluados exactamente en los k_n de tu caja** (y en tu dirección de k del plano
-y-z), no con el máximo de la curva. Esta es la razón física de que caja pequeña ⇒
-γ aparente menor y umbral aparente corrido — importa directamente para tus contornos
-en el plano β∥ vs T⊥/T∥.
+**Discrete k and comparison with linear theory** **[general]**. The periodic box
+only admits k_n = 2πn/L. Your measured γ for "the dominant mode" is the γ(k_n) of the
+harmonic closest to the theoretical peak, not the continuum γ_max. Compare against
+NHDS/LEOPARD/ALPS **evaluated exactly at the k_n of your box** (and in your k
+direction within the y-z plane), not against the maximum of the curve. This is the
+physical reason why a small box ⇒ a smaller apparent γ and a shifted apparent
+threshold — it matters directly for your contours in the β∥ vs T⊥/T∥ plane.
 
-**CFL y dispersión** **[general + código]**. `cfl = 0.99` (reconexión) deja margen
-casi nulo; el 0.95 del caso de anisotropía es lo habitual. Cerca del límite de
-Courant el error de dispersión EM del esquema de Yee es máximo justo en los k altos;
-para corridas de 10⁶ pasos con whistlers/EMIC en juego, 0.75–0.95 es más prudente.
-Micera et al. usan un esquema distinto (semi-implícito), su Δt no es comparable.
+**CFL and dispersion** **[general + code]**. `cfl = 0.99` (reconnection) leaves
+almost no margin; the anisotropy case's 0.95 is the usual choice. Near the Courant
+limit the EM dispersion error of the Yee scheme is largest precisely at high k;
+for 10⁶-step runs with whistlers/EMIC in play, 0.75–0.95 is more prudent.
+Micera et al. use a different (semi-implicit) scheme, so their Δt is not comparable.
 
-**Fronteras e inicialización** — ya resuelto en tu caso: periódicas + homogéneo sin
-drifts (el deck de reconexión necesitaba doble Harris precisamente para ser
-periódico; el homogéneo no tiene esa restricción). La perturbación inicial de campo
-tampoco se necesita: se siembra del ruido.
+**Boundaries and initialization** — already settled in your case: periodic +
+homogeneous with no drifts (the reconnection deck needed a double Harris sheet
+precisely to be periodic; the homogeneous case has no such restriction). No initial
+field perturbation is needed either: it seeds itself from the noise.
 
-**Conservación y correctores** **[código]**. Marder cada 100 + check de Gauss cada
-100 están activos en el caso de anisotropía (en el de reconexión el check de Gauss
-está desactivado, intervalo negativo). `DiagEnergies` tiene default 0 en el header
-(`PSC_ENERGIES_EVERY_DEFAULT 0`) aunque tu runbook dice 5000 vía entorno: para
-inestabilidades esa serie temporal es tu diagnóstico principal (γ del crecimiento
-de δB² sale de ahí gratis) — actívala SIEMPRE y con cadencia alta (50–100 pasos;
-es barata, un reduce global).
+**Conservation and correctors** **[code]**. Marder every 100 + Gauss check
+every 100 are active in the anisotropy case (in the reconnection case the Gauss
+check is disabled, negative interval). `DiagEnergies` defaults to 0 in the header
+(`PSC_ENERGIES_EVERY_DEFAULT 0`) even though your runbook says 5000 via the
+environment: for instabilities that time series is your primary diagnostic (γ of
+the δB² growth comes out of it for free) — turn it on ALWAYS and at high cadence
+(50–100 steps; it's cheap, a single global reduce).
 
-## 4. Escalas de tiempo y costo (números de tu setup) **[código, aritmética]**
+## 4. Timescales and cost (numbers from your setup) **[code, arithmetic]**
 
-Con m_i/m_e = 200, B₀ = 0.08 (unidades ω_pe): Ω_ci⁻¹ = m_i/B₀ = 2500 ω_pe⁻¹.
-Δt = 0.95 · (0.491/√2) ≈ 0.33 ω_pe⁻¹ → **~7600 pasos por Ω_ci⁻¹**.
+With m_i/m_e = 200, B₀ = 0.08 (ω_pe units): Ω_ci⁻¹ = m_i/B₀ = 2500 ω_pe⁻¹.
+Δt = 0.95 · (0.491/√2) ≈ 0.33 ω_pe⁻¹ → **~7600 steps per Ω_ci⁻¹**.
 
-- nmax 1.2 × 10⁶ ≈ 158 Ω_ci⁻¹: suficiente para crecimiento y saturación de drives
-  moderados/fuertes (γ/Ω_ci ≳ 10⁻²); **corto** para drives débiles cerca del umbral
-  y para la relajación cuasilineal larga. Calcula nmax por caso: t_fin ≈ 10/γ + 200–500 Ω_ci⁻¹.
-- Salidas: fields cada 500 pasos = 0.066 Ω_ci⁻¹ (≈15 muestras por Ω_ci⁻¹ — sobra
-  para γ; el criterio es ≥10 muestras por e-folding, es decir intervalo ≤ 1/(10γ)).
-- Checkpoint cada 5000 pasos = 0.66 Ω_ci⁻¹ → 240 checkpoints en una corrida. Cada
-  checkpoint serializa ~6.6 × 10⁸ partículas (≥20 GB): es mucho I/O. Con el límite
-  de 48 h de cosma7-rp basta checkpointear cada ~2–4 h de wallclock (equivalente a
-  cada 5–10 × 10⁴ pasos).
+- nmax 1.2 × 10⁶ ≈ 158 Ω_ci⁻¹: enough for growth and saturation of
+  moderate/strong drives (γ/Ω_ci ≳ 10⁻²); **short** for weak drives near the threshold
+  and for the long quasilinear relaxation. Compute nmax per case: t_fin ≈ 10/γ + 200–500 Ω_ci⁻¹.
+- Outputs: fields every 500 steps = 0.066 Ω_ci⁻¹ (≈15 samples per Ω_ci⁻¹ — plenty
+  for γ; the criterion is ≥10 samples per e-folding, i.e. interval ≤ 1/(10γ)).
+- Checkpoint every 5000 steps = 0.66 Ω_ci⁻¹ → 240 checkpoints in one run. Each
+  checkpoint serializes ~6.6 × 10⁸ particles (≥20 GB): that's a lot of I/O. With the
+  48 h limit of cosma7-rp, checkpointing every ~2–4 h of wallclock is enough
+  (equivalent to every 5–10 × 10⁴ steps).
 
-**Memoria**: N_prt = n_celdas × nicell × n_especies. Estándar: 576² × 1000 × 2 =
-6.6 × 10⁸ partículas; a ~32–64 B/partícula (single precision + overhead de sorting)
-→ 25–45 GB agregados + campos (despreciables en comparación). Bigbox40: ×4.
+**Memory**: N_prt = n_cells × nicell × n_species. Standard: 576² × 1000 × 2 =
+6.6 × 10⁸ particles; at ~32–64 B/particle (single precision + sorting overhead)
+→ 25–45 GB aggregate + fields (negligible in comparison). Bigbox40: ×4.
 
-**Horas-núcleo** (fórmula, no promesa): coste ≈ N_prt × n_pasos / R, con
-R ≈ 3–10 × 10⁶ particle-pushes/s/core en CPU **[general]**. Estándar:
-6.6 × 10⁸ × 1.2 × 10⁶ / (5 × 10⁶) ≈ 4 × 10⁴ core-h (~40 h en 1024 ranks). Bigbox40:
-~1.6 × 10⁵ core-h — consistente con tu job de 83 nodos × 28 × 48 h que ya prevé
-reanudar desde checkpoint. La descomposición 48 × 48 con parches de 24² celdas está
-bien; nota que en plasma **homogéneo** el load balancing casi no trabaja (a
-diferencia de la lámina de Harris que concentra partículas): puedes subir
-`PSC_BALANCE_INTERVAL` o desactivarlo y ahorrarte ese overhead.
+**Core-hours** (formula, not a promise): cost ≈ N_prt × n_steps / R, with
+R ≈ 3–10 × 10⁶ particle-pushes/s/core on CPU **[general]**. Standard:
+6.6 × 10⁸ × 1.2 × 10⁶ / (5 × 10⁶) ≈ 4 × 10⁴ core-h (~40 h on 1024 ranks). Bigbox40:
+~1.6 × 10⁵ core-h — consistent with your job of 83 nodes × 28 × 48 h, which already
+plans to resume from checkpoint. The 48 × 48 decomposition with 24²-cell patches is
+fine; note that in a **homogeneous** plasma the load balancer barely does anything
+(unlike the Harris sheet, which concentrates particles): you can raise
+`PSC_BALANCE_INTERVAL` or disable it and save that overhead.
 
-**Diagnósticos — qué guardar**: prioriza (1) serie de energías densa (barata),
-(2) campos B a cadencia fija para espectros δB(k,t) y ajuste de γ por modo,
-(3) momentos (n, v, P⊥, P∥ por especie) a la misma cadencia — de P⊥/P∥ sale tu
-trayectoria en el plano β∥–T⊥/T∥, (4) partículas crudas solo en subregión y rara vez
-— tu deck ya restringe a la ventana 0.4–0.6 de la caja **[código]**, bien. Los f(v)
-para comparar con la teoría kappa se reconstruyen de esos dumps escasos.
+**Diagnostics — what to save**: prioritize (1) a dense energy time series (cheap),
+(2) B fields at fixed cadence for δB(k,t) spectra and per-mode γ fitting,
+(3) moments (n, v, P⊥, P∥ per species) at the same cadence — your trajectory in the
+β∥–T⊥/T∥ plane comes out of P⊥/P∥, (4) raw particles only in a subregion and rarely
+— your deck already restricts to the 0.4–0.6 window of the box **[code]**, good. The f(v)
+for comparison with kappa theory are reconstructed from those sparse dumps.
 
-## 5. Checks específicos de tu código (lectura directa) **[código]**
+## 5. Specific checks on your code (direct reading) **[code]**
 
-1. **`vA_over_c` no es v_A/c.** El código hace `g.B0 = g.vA_over_c` con B en
-   unidades donde Ω_ce = B. Eso fija ω_ce/ω_pe = 0.08 (ω_pe/Ω_ce = 12.5); el v_A/c
-   físico resultante es B₀/√(m_i n) = 0.08/√200 ≈ 5.7 × 10⁻³. Las betas están bien
-   (se definen desde B₀² directamente), pero cualquier interpretación de
-   velocidades en unidades de "v_A del input" está mal por un factor √m_i.
-2. **Δx/λ_De ≈ 8.7 con la λ_De electrónica** (§3) vs el 3.78 comentado en el
-   header. Verificar con control run.
-3. **`DiagEnergies` default 0** — asegúrate de que todos los jobs exportan
-   `PSC_ENERGIES_EVERY` (y bájalo a 50–100).
-4. **Semilla RNG no reproducible** (`std::random_device` en el sampler kappa).
-5. **Checkpoint cada 5000 pasos** = I/O excesivo (§4).
-6. **CFL**: 0.95 OK; no heredar el 0.99 del deck de reconexión.
-7. El deck de reconexión inicializa kappa **isótropa** (T[0]=T[1]=T[2]); tu caso de
-   anisotropía ya hace la bi-kappa correctamente vía T[] — nada que portar de vuelta.
+1. **`vA_over_c` is not v_A/c.** The code does `g.B0 = g.vA_over_c` with B in
+   units where Ω_ce = B. That fixes ω_ce/ω_pe = 0.08 (ω_pe/Ω_ce = 12.5); the resulting
+   physical v_A/c is B₀/√(m_i n) = 0.08/√200 ≈ 5.7 × 10⁻³. The betas are fine
+   (they're defined directly from B₀²), but any interpretation of
+   velocities in units of "input v_A" is off by a factor of √m_i.
+2. **Δx/λ_De ≈ 8.7 with the electron λ_De** (§3) vs. the 3.78 commented in the
+   header. Verify with a control run.
+3. **`DiagEnergies` defaults to 0** — make sure all jobs export
+   `PSC_ENERGIES_EVERY` (and set it down to 50–100).
+4. **Non-reproducible RNG seed** (`std::random_device` in the kappa sampler).
+5. **Checkpoint every 5000 steps** = excessive I/O (§4).
+6. **CFL**: 0.95 OK; don't inherit the 0.99 from the reconnection deck.
+7. The reconnection deck initializes an **isotropic** kappa (T[0]=T[1]=T[2]); your
+   anisotropy case already does the bi-kappa correctly via T[] — nothing to port back.
 
-## 6. Checklist de decisiones antes de la próxima campaña grande
+## 6. Decision checklist before the next large campaign
 
-1. Para cada punto (β∥, T⊥/T∥, κ): correr NHDS/LEOPARD/ALPS primero → k_peak,
-   γ_max, dirección del modo. De ahí: L ≥ 10–20·(2π/k_peak) y nmax ≥
-   (10/γ_max + 300 Ω_ci⁻¹)/Δt. La caja se decide con el solver, no al revés.
-2. Control run isotrópico (T⊥/T∥ = 1, mismo todo): mide grid heating puro
-   (T_e(t), T_i(t) seculares) y el piso de ruido δB²(k). Si T_e sube
-   apreciablemente en ~100 Ω_ci⁻¹ → §3 mitigaciones antes de producir.
-3. Convergencia en ppc (250/500/1000) y en Δx (×2) en caja pequeña, un solo punto
-   físico, comparando γ del modo dominante. Micera et al. hacen exactamente esto.
-4. γ por modo: fit exponencial de log|δB_k|² en la fase lineal, por cada armónico
-   k_n; comparar con el solver evaluado en esos mismos k_n.
-5. Energía total conservada a <1% en toda la corrida (con Marder activo el ΔE es
-   diagnóstico, no corrección de energía).
-6. Presupuesto: coste ≈ N_prt·n_pasos/R (§4); añade 20% por diagnósticos e I/O y
-   planifica reanudaciones para >48 h.
-7. Decidir 2D vs 3D por física, no por defecto: mirror vs EMIC en competencia
-   (tu plano β∥–T⊥/T∥ con T⊥ > T∥) es sensible a la dimensionalidad; Riquelme et
-   al. 2015 (2D/3D PIC) y Hellinger et al. 2019 (3D híbrido) son las referencias de
-   contraste.
+1. For each point (β∥, T⊥/T∥, κ): run NHDS/LEOPARD/ALPS first → k_peak,
+   γ_max, mode direction. From there: L ≥ 10–20·(2π/k_peak) and nmax ≥
+   (10/γ_max + 300 Ω_ci⁻¹)/Δt. The box is decided from the solver, not the other way around.
+2. Isotropic control run (T⊥/T∥ = 1, everything else the same): measure pure
+   grid heating (secular T_e(t), T_i(t)) and the δB²(k) noise floor. If T_e rises
+   appreciably over ~100 Ω_ci⁻¹ → apply §3 mitigations before producing.
+3. Convergence in ppc (250/500/1000) and in Δx (×2) in a small box, a single
+   physical point, comparing γ of the dominant mode. Micera et al. do exactly this.
+4. γ per mode: exponential fit of log|δB_k|² in the linear phase, for each
+   harmonic k_n; compare against the solver evaluated at those same k_n.
+5. Total energy conserved to <1% over the whole run (with Marder active, ΔE is
+   diagnostic, not an energy correction).
+6. Budget: cost ≈ N_prt·n_steps/R (§4); add 20% for diagnostics and I/O and
+   plan resumptions for >48 h.
+7. Decide 2D vs 3D based on the physics, not by default: mirror vs EMIC in
+   competition (your β∥–T⊥/T∥ plane with T⊥ > T∥) is sensitive to dimensionality;
+   Riquelme et al. 2015 (2D/3D PIC) and Hellinger et al. 2019 (3D hybrid) are the
+   reference points for comparison.
 
-## No verificado / pendiente
+## Unverified / pending
 
-- Detalles de resolución de Riquelme et al. 2015 y de los setups de López et al.
-  2019/2022 (los papers existen y son los relevantes; no extraje sus tablas).
-- Si el PSC público (o tu fork) tiene smoothing de corriente configurable: no lo
-  encontré en la documentación ni en los fuentes que revisé.
-- Propiedades exactas de conservación del pusher `1vbec` de PSC (es
-  charge-conserving por construcción Villasenor–Buneman; sobre su comportamiento
-  de grid heating no hay caracterización publicada que haya encontrado).
-- El factor exacto "3.4–5" citado en tu header como límite seguro de Δx/λ_De: el
-  criterio clásico de Birdsall & Langdon es del orden de 3; el valor preciso depende
-  del orden de interpolación y del esquema. Trátalo como orden de magnitud.
+- Resolution details from Riquelme et al. 2015 and from the López et al.
+  2019/2022 setups (the papers exist and are the relevant ones; I did not extract their tables).
+- Whether public PSC (or your fork) has configurable current smoothing: I did not
+  find it in the documentation or in the sources I reviewed.
+- Exact conservation properties of PSC's `1vbec` pusher (it is
+  charge-conserving by Villasenor–Buneman construction; regarding its grid-heating
+  behavior, I found no published characterization).
+- The exact "3.4–5" factor cited in your header as the safe limit for Δx/λ_De: the
+  classical Birdsall & Langdon criterion is of order 3; the precise value depends on
+  the interpolation order and the scheme. Treat it as an order of magnitude.
 
-## Apéndice: caso `psc_reconnection_comparable` **[código]**
+## Appendix: `psc_reconnection_comparable` case **[code]**
 
-Creado para la comparativa reconexión ↔ inestabilidades con parámetros igualados a
-los casos de anisotropía (convención bigbox40):
+Created for the reconnection ↔ instabilities comparison with parameters matched to
+the anisotropy cases (bigbox40 convention):
 
-| Parámetro | Valor | Estado |
+| Parameter | Value | Status |
 |---|---|---|
-| m_i/m_e | 200 | igualado |
-| Caja | 40 × 40 d_i (hojas en ±10 d_i) | igualado |
-| Grilla | 1152² → 28.8 celdas/d_i, Δx = 0.491 d_e | igualado |
-| `nicell` | 1000 | igualado |
-| CFL | 0.95 | igualado |
-| κ | 3.0 | igualado |
-| np | 48 × 48 (2304 ranks, parches 24²) | igualado |
-| Salidas/checks/balance/energías | mismos intervalos y mismos env-overrides | igualado |
-| ω_pe/Ω_ce | **2.0** (anisotropía: 12.5) | **diferencia deliberada** |
+| m_i/m_e | 200 | matched |
+| Box | 40 × 40 d_i (sheets at ±10 d_i) | matched |
+| Grid | 1152² → 28.8 cells/d_i, Δx = 0.491 d_e | matched |
+| `nicell` | 1000 | matched |
+| CFL | 0.95 | matched |
+| κ | 3.0 | matched |
+| np | 48 × 48 (2304 ranks, 24² patches) | matched |
+| Outputs/checks/balance/energies | same intervals and same env-overrides | matched |
+| ω_pe/Ω_ce | **2.0** (anisotropy: 12.5) | **deliberate difference** |
 
-La razón de la única diferencia: en Harris el balance de presión fija
-T_e = 1/(2(ω_pe/Ω_ce)²(1+T_i/T_e)); con 12.5 saldría λ_De = 0.023 d_e →
-Δx/λ_De ≈ 21 (calentamiento de grilla seguro). Con 2.0: λ_De = 0.144 d_e →
-Δx/λ_De = 3.4, igual de sano que los casos de anisotropía corregidos. Consecuencia:
-comparar en unidades iónicas (d_i, Ω_ci, v_A, B₀), no en ω_pe ni en c.
+The reason for the single difference: in Harris, pressure balance fixes
+T_e = 1/(2(ω_pe/Ω_ce)²(1+T_i/T_e)); with 12.5 you'd get λ_De = 0.023 d_e →
+Δx/λ_De ≈ 21 (guaranteed grid heating). With 2.0: λ_De = 0.144 d_e →
+Δx/λ_De = 3.4, just as sound as the corrected anisotropy cases. Consequence:
+compare in ionic units (d_i, Ω_ci, v_A, B₀), not in ω_pe or c.
 
-Escalas del caso: Ω_ci⁻¹ = 400 ω_pe⁻¹ ≈ 1212 pasos (Δt ≈ 0.33 ω_pe⁻¹);
-nmax por defecto 250 000 ≈ 206 Ω_ci⁻¹ (`PSC_NMAX` para cambiarlo). Partículas
-≈ 1152² × 1000 × Σn ≈ 6–7 × 10⁸ (similar al caso estándar de anisotropía).
-Costo ≈ 250k pasos: ~6× más barato por Ω_ci⁻¹ que anisotropía en pasos, total del
-orden de 3–5 × 10⁴ core-h con R ~ 5 × 10⁶ pushes/s/core.
+Case scales: Ω_ci⁻¹ = 400 ω_pe⁻¹ ≈ 1212 steps (Δt ≈ 0.33 ω_pe⁻¹);
+default nmax 250,000 ≈ 206 Ω_ci⁻¹ (`PSC_NMAX` to change it). Particles
+≈ 1152² × 1000 × Σn ≈ 6–7 × 10⁸ (similar to the standard anisotropy case).
+Cost ≈ 250k steps: ~6× cheaper per Ω_ci⁻¹ than anisotropy in step count, total on the
+order of 3–5 × 10⁴ core-h with R ~ 5 × 10⁶ pushes/s/core.
 
-Advertencia encontrada al revisar los bigbox **[código]**: `psc_firehose_*_bigbox40`
-tiene `PSC_DOMAIN_DI=40` en compile-time pero `ngrid` por defecto **576** (heredado
-del header); la resolución correcta depende de exportar `PSC_NGRID=1152` en el job.
-Si se lanza sin esa variable, corre en silencio a la mitad de resolución
-(14.4 celdas/d_i, Δx/λ_De ×2 peor). El caso comparable de reconexión ya trae 1152
-como default para evitar ese modo de fallo.
+Warning found while reviewing the bigbox cases **[code]**: `psc_firehose_*_bigbox40`
+has `PSC_DOMAIN_DI=40` at compile time but `ngrid` defaults to **576** (inherited
+from the header); getting the correct resolution depends on exporting `PSC_NGRID=1152`
+in the job. If launched without that variable, it silently runs at half resolution
+(14.4 cells/d_i, Δx/λ_De ×2 worse). The comparable reconnection case already ships with 1152
+as the default to avoid that failure mode.
 
-## Referencias consultadas
+## References consulted
 
 - Micera et al. 2020, ApJ 893:130 — [IOPscience](https://iopscience.iop.org/article/10.3847/1538-4357/ab7faa) · [arXiv:1907.08502](https://arxiv.org/abs/1907.08502)
 - Hellinger et al. 2019, ApJ 883:178 — [IOPscience](https://iopscience.iop.org/article/10.3847/1538-4357/ab3e01) · [arXiv:1908.07760](https://arxiv.org/abs/1908.07760)

@@ -1,21 +1,21 @@
-# Presentación
+# Presentation
 
-Material auxiliar para una presentación de progreso. No forma parte del flujo de
-simulación o análisis de producción.
+Auxiliary material for a progress presentation. It is not part of the production
+simulation or analysis workflow.
 
-Compilar desde esta carpeta:
+Build from this folder:
 
 ```bash
 make
 ```
 
-Archivos principales:
+Main files:
 
 ```text
 thesis_progress.tex
 thesis_progress.pdf
 ```
 
-Las figuras usadas aquí deben generarse desde corridas validadas antes de
-usarse en una presentación final. Las figuras preliminares o locales no deben
-mezclarse con resultados de producción.
+The figures used here must be generated from validated runs before being used in
+a final presentation. Preliminary or local figures must not be mixed with
+production results.
