@@ -355,6 +355,93 @@ class PICDataReader:
         return q, m, px, py, pz, w
 
     @staticmethod
+    def read_particles_with_positions(
+        filepath: str, max_particles: int, rng=None
+    ) -> dict[str, np.ndarray]:
+        """Read one particle snapshot keeping the (x, y, z) positions.
+
+        `read_particles_snapshot` drops the positions, which makes every
+        velocity-space diagnostic global over the prt window. PSC does write
+        them: `hdf5_prt` in `output_particles_hdf5_impl.hxx` stores
+        x/y/z/px/py/pz/q/m/w. Positions come in code units (d_e) with the
+        origin at the domain centre, so the caller converts to cells or d_i.
+
+        Returns a dict of equal-length arrays; 'x' is present but degenerate
+        in the 2D runs (single cell along x).
+        """
+        if rng is None:
+            rng = np.random.default_rng(20260623)
+
+        names = ("x", "y", "z", "px", "py", "pz", "q", "m", "w")
+
+        if PICDataReader.is_adios2_path(filepath):
+            arrays: dict[str, np.ndarray] = {}
+            with PICDataReader.open_data_file(filepath) as data_file:
+                keys = data_file.keys()
+                for name in names:
+                    resolved = PICDataReader.resolve_variable_path(
+                        keys, f"particles/p0/1d/{name}"
+                    )
+                    if resolved is None:
+                        if name in ("w", "x"):
+                            continue
+                        raise KeyError(
+                            f"Particle variable '{name}' not found in '{filepath}'. "
+                            "Spatial VDF analysis needs the position fields."
+                        )
+                    arrays[name] = np.asarray(data_file.read(resolved))
+            n_total = len(arrays["q"])
+            idx = (
+                np.sort(rng.choice(n_total, max_particles, replace=False))
+                if n_total > max_particles
+                else slice(None)
+            )
+            out = {k: np.asarray(v[idx], dtype=float) for k, v in arrays.items()}
+        else:
+            with h5py.File(filepath, "r") as handle:
+                dataset = handle["particles"]["p0"]["1d"]
+                available = dataset.dtype.names or ()
+                missing = [n for n in ("y", "z", "px", "py", "pz", "q", "m")
+                           if n not in available]
+                if missing:
+                    raise KeyError(
+                        f"Missing particle fields {missing} in '{filepath}'. "
+                        "Spatial VDF analysis needs the position fields."
+                    )
+                n_total = len(dataset)
+                idx = (
+                    np.sort(rng.choice(n_total, max_particles, replace=False))
+                    if n_total > max_particles
+                    else slice(None)
+                )
+                out = {
+                    name: np.asarray(dataset[name][idx], dtype=float)
+                    for name in names
+                    if name in available
+                }
+
+        if "w" not in out:
+            out["w"] = np.ones_like(out["q"])
+        return out
+
+    @staticmethod
+    def read_prt_window(filepath: str) -> tuple[np.ndarray, np.ndarray]:
+        """Return the (lo, hi) cell bounds of the particle output window.
+
+        Read from the file's own attributes rather than trusting the
+        `psc_units` fallback, which has drifted from the executables.
+        """
+        if PICDataReader.is_adios2_path(filepath):
+            with PICDataReader.open_data_file(filepath) as data_file:
+                lo = np.asarray(data_file.read("particles/lo"), dtype=int)
+                hi = np.asarray(data_file.read("particles/hi"), dtype=int)
+            return lo, hi
+        with h5py.File(filepath, "r") as handle:
+            group = handle["particles"]
+            return (np.asarray(group.attrs["lo"], dtype=int),
+                    np.asarray(group.attrs["hi"], dtype=int))
+
+    @staticmethod
     def flatten_2d_slice(data_3d: np.ndarray) -> np.ndarray:
         """Remove a singleton dimension from a nominally 2D PSC output."""
         data = np.asarray(data_3d)

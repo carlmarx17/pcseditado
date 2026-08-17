@@ -20,6 +20,10 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+import plot_style as ps
+
+ps.apply()
 import matplotlib.colors as mcolors
 import matplotlib.cm as cm
 from pathlib import Path
@@ -39,6 +43,17 @@ POSTER_LABEL = 18
 POSTER_TITLE = 19
 POSTER_TICK = 15
 POSTER_LEGEND = 14
+
+# Brazil plots: tipografia mas grande (se leen impresos / en poster)
+BRAZIL_LABEL = 26
+BRAZIL_TITLE = 26
+BRAZIL_TICK = 20
+BRAZIL_LEGEND = 19
+BRAZIL_ANNOT = 18
+# Grid de snapshots (paneles pequenos)
+BRAZIL_GRID_LABEL = 20
+BRAZIL_GRID_TITLE = 20
+BRAZIL_GRID_TICK = 16
 
 plt.rcParams.update({
     "font.size": POSTER_FONT,
@@ -67,11 +82,11 @@ def output_path(outdir: Path, stem: str, suffix: str = ".png") -> Path:
     return outdir / f"{OUTPUT_PREFIX}{stem}{suffix}"
 
 # ── Colores ───────────────────────────────────────────────────────────────────
-DARK_BG  = "#0d1117"
-PANEL_BG = "#161b22"
-TEXT_CLR = "#e6edf3"
-GRID_CLR = "#21262d"
-ACCENT   = "#58a6ff"
+DARK_BG  = ps.c("#0d1117")
+PANEL_BG = ps.c("#161b22")
+TEXT_CLR = ps.c("#e6edf3")
+GRID_CLR = ps.c("#21262d")
+ACCENT   = ps.c("#58a6ff")
 
 
 # ── Umbrales de inestabilidad ─────────────────────────────────────────────────
@@ -209,52 +224,52 @@ def _draw_thresholds(ax, xmin, xmax, ymin, ymax):
     if INSTABILITY == "whistler":
         wh = whistler_threshold(b)
         ok = (wh >= ymin * 0.7) & (wh <= ymax * 1.5)
-        ax.plot(b[ok], wh[ok], "--", color="#c084fc", lw=2.2, zorder=8,
+        ax.plot(b[ok], wh[ok], "--", color=ps.c("#c084fc"), lw=2.2, zorder=8,
                 label=r"Whistler  $1+0.21/\beta_{e\parallel}^{0.6}$")
         ax.fill_between(b, np.clip(wh, ymin, ymax * 2), ymax * 2,
-                        alpha=0.08, color="#c084fc", zorder=2)
+                        alpha=0.08, color=ps.c("#c084fc"), zorder=2)
         ax.axhline(1.0, color=TEXT_CLR, alpha=0.25, lw=0.9, ls=":")
         return
 
     # Mirror
     m = mirror_threshold(b)
     ok = (m >= ymin * 0.7) & (m <= ymax * 1.5)
-    ax.plot(b[ok], m[ok], "--", color="#ff6b6b", lw=2.2, zorder=8, alpha=0.9,
+    ax.plot(b[ok], m[ok], "--", color=ps.c("#ff6b6b"), lw=2.2, zorder=8, alpha=0.9,
             label=r"Mirror  $1+1/\beta_\parallel$")
     ax.fill_between(b, np.clip(m, ymin, ymax * 2), ymax * 2,
-                    alpha=0.08, color="#ff4444", zorder=2)
+                    alpha=0.08, color=ps.c("#ff4444"), zorder=2)
 
     # Firehose (fluid and oblique kinetic approximations)
     bf = b[b > 2.05]
     fh = firehose_threshold(bf)
     ok = (fh >= ymin * 0.5) & (fh <= ymax * 1.5)
-    ax.plot(bf[ok], fh[ok], "--", color="#74b9ff", lw=2.2, zorder=8, alpha=0.9,
+    ax.plot(bf[ok], fh[ok], "--", color=ps.c("#74b9ff"), lw=2.2, zorder=8, alpha=0.9,
             label=r"Firehose  $1-2/\beta_\parallel$")
     ax.fill_between(bf, ymin * 0.3, np.clip(fh, ymin * 0.3, ymax),
-                    alpha=0.08, color="#0984e3", zorder=2)
+                    alpha=0.08, color=ps.c("#0984e3"), zorder=2)
     bfo = b[b > 0.12]
     ofh = oblique_firehose_threshold(bfo)
     ok = np.isfinite(ofh) & (ofh >= ymin * 0.5) & (ofh <= ymax * 1.5)
-    ax.plot(bfo[ok], ofh[ok], "-.", color="#c084fc", lw=1.7, zorder=8,
+    ax.plot(bfo[ok], ofh[ok], "-.", color=ps.c("#c084fc"), lw=1.7, zorder=8,
             alpha=0.9, label="Oblique firehose")
 
     # Ion-cyclotron
     ic = ic_threshold(b)
     ok = (ic >= ymin * 0.7) & (ic <= ymax * 1.5)
-    ax.plot(b[ok], ic[ok], ":", color="#55efc4", lw=1.8, zorder=8, alpha=0.85,
+    ax.plot(b[ok], ic[ok], ":", color=ps.c("#55efc4"), lw=1.8, zorder=8, alpha=0.85,
             label=r"IC  $1+0.43/\beta_\parallel^{0.42}$")
 
     ax.axhline(1.0, color=TEXT_CLR, alpha=0.25, lw=0.9, ls=":")
 
 
-def _style_ax(ax, title=""):
+def _style_ax(ax, title="", tick_size=POSTER_TICK, title_size=POSTER_TITLE):
     ax.set_facecolor(PANEL_BG)
-    ax.tick_params(which="both", colors=TEXT_CLR, direction="in", top=True, right=True, labelsize=POSTER_TICK)
+    ax.tick_params(which="both", colors=TEXT_CLR, direction="in", top=True, right=True, labelsize=tick_size)
     for sp in ax.spines.values():
         sp.set_edgecolor(GRID_CLR)
     ax.grid(True, which="both", alpha=0.18, color=GRID_CLR, ls=":")
     if title:
-        ax.set_title(title, fontsize=POSTER_TITLE, fontweight="bold", color=TEXT_CLR, pad=8)
+        ax.set_title(title, fontsize=title_size, fontweight="bold", color=TEXT_CLR, pad=8)
 
 
 def _robust_plot_ranges(beta, aniso):
@@ -308,8 +323,8 @@ def plot_brazil_accumulated(
                         norm=mcolors.LogNorm(vmin=1, vmax=H.max()),
                         shading="flat", zorder=3)
     cbar = plt.colorbar(pcm, ax=ax, pad=0.02)
-    cbar.set_label("Point density [log]", fontsize=POSTER_LABEL - 1, color=TEXT_CLR)
-    cbar.ax.yaxis.set_tick_params(color=TEXT_CLR)
+    cbar.set_label("Point density [log]", fontsize=BRAZIL_LABEL, color=TEXT_CLR)
+    cbar.ax.yaxis.set_tick_params(color=TEXT_CLR, labelsize=BRAZIL_TICK)
     plt.setp(cbar.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
 
     _draw_thresholds(ax, xmin, xmax, ymin, ymax)
@@ -317,7 +332,7 @@ def plot_brazil_accumulated(
     # Condicion inicial
     beta_init = ACTIVE_BETA_INITIAL
     aniso_init = ACTIVE_ANISOTROPY_INITIAL
-    ax.plot(beta_init, aniso_init, "*", color="#ffd700",
+    ax.plot(beta_init, aniso_init, "*", color=ps.c("#ffd700"),
             markeredgecolor="white", markeredgewidth=0.7,
             markersize=20, zorder=12,
             label=rf"CI  ($\beta_{{{SPECIES_SYMBOL}\parallel}}={beta_init:g}$, "
@@ -326,47 +341,48 @@ def plot_brazil_accumulated(
     ax.set_xscale("log"); ax.set_yscale("log")
     ax.set_xlim(xmin, xmax); ax.set_ylim(ymin, ymax)
     ax.set_xlabel(rf"$\beta_{{{SPECIES_SYMBOL}\parallel}}$ — parallel pressure / magnetic pressure",
-                  fontsize=POSTER_LABEL, color=TEXT_CLR, labelpad=8)
+                  fontsize=BRAZIL_LABEL, color=TEXT_CLR, labelpad=8)
     ax.set_ylabel(rf"$T_{{{SPECIES_SYMBOL}\perp}}/T_{{{SPECIES_SYMBOL}\parallel}}$",
-                  fontsize=POSTER_LABEL, color=TEXT_CLR, labelpad=8)
+                  fontsize=BRAZIL_LABEL, color=TEXT_CLR, labelpad=8)
 
     if snap_stats:
         beta_med = np.array([s["beta_global"] for s in snap_stats])
         aniso_med = np.array([s["aniso_global"] for s in snap_stats])
         time_med = np.array([s["toci"] for s in snap_stats])
-        ax.plot(beta_med, aniso_med, color="white", lw=2.0, alpha=0.9, zorder=10)
+        ax.plot(beta_med, aniso_med, color=ps.TEXT_CLR, lw=2.0, alpha=0.9, zorder=10)
         ax.scatter(
             beta_med, aniso_med, c=time_med, cmap="cool", s=46,
             edgecolors="white", linewidths=0.4, zorder=11,
             label="Global state per snapshot",
         )
         ax.scatter(beta_med[0], aniso_med[0], marker="D", s=90,
-                   color="#2ecc71", edgecolor="white", zorder=12, label="Measured start")
+                   color=ps.c("#2ecc71"), edgecolor="white", zorder=12, label="Measured start")
         ax.scatter(beta_med[-1], aniso_med[-1], marker="*", s=190,
-                   color="#f1c40f", edgecolor="white", zorder=12, label="Measured end")
+                   color=ps.c("#f1c40f"), edgecolor="white", zorder=12, label="Measured end")
         for idx in np.unique(np.linspace(0, len(beta_med) - 1, min(6, len(beta_med)), dtype=int)):
             ax.annotate(
                 rf"{time_med[idx]:.2f}",
                 (beta_med[idx], aniso_med[idx]),
                 xytext=(5, 5), textcoords="offset points",
-                fontsize=13, color=TEXT_CLR,
+                fontsize=BRAZIL_ANNOT, color=TEXT_CLR,
             )
 
-    _style_ax(ax, rf"Brazil Plot — {PROFILE_LABEL}  ($m_i/m_e={int(MASS_RATIO)}$)")
+    _style_ax(ax, rf"Brazil Plot — {PROFILE_LABEL}  ($m_i/m_e={int(MASS_RATIO)}$)",
+              tick_size=BRAZIL_TICK, title_size=BRAZIL_TITLE)
 
     t_max_oci = step_to_omegaci(steps[-1]) if steps else 0
     ax.text(0.98, 0.02,
             f"{len(bv):,} points  |  {len(steps)} snapshots  |  "
             rf"$t_{{max}} = {t_max_oci:.1f}\,\Omega_{{ci}}^{{-1}}$",
             transform=ax.transAxes, ha="right", va="bottom",
-            fontsize=13, color="#8b949e")
+            fontsize=BRAZIL_ANNOT, color=ps.c("#8b949e"))
 
-    ax.legend(fontsize=POSTER_LEGEND, framealpha=0.55,
-              facecolor="#1c2128", edgecolor="#30363d", labelcolor=TEXT_CLR,
+    ax.legend(fontsize=BRAZIL_LEGEND, framealpha=0.55,
+              facecolor=ps.c("#1c2128"), edgecolor=ps.c("#30363d"), labelcolor=TEXT_CLR,
               loc="upper right")
 
     out = output_path(outdir, "brazil_trayectoria")
-    plt.savefig(out, dpi=200, bbox_inches="tight", facecolor=DARK_BG)
+    ps.save(fig, out)
     plt.close()
     print(f"  Guardado → {out}")
 
@@ -396,23 +412,23 @@ def plot_temporal_evolution(snap_data: list, outdir: Path):
 
     # ─ Panel superior: anisotropia ─
     ax1.set_facecolor(PANEL_BG)
-    ax1.fill_between(toci, a_p25, a_p75, alpha=0.25, color="#ff6b6b")
-    ax1.plot(toci, a_global, color="#ff6b6b", marker="o", ms=3.5, lw=2.2,
+    ax1.fill_between(toci, a_p25, a_p75, alpha=0.25, color=ps.c("#ff6b6b"))
+    ax1.plot(toci, a_global, color=ps.c("#ff6b6b"), marker="o", ms=3.5, lw=2.2,
              label=r"global $\langle P_\perp\rangle/\langle P_\parallel\rangle$")
-    ax1.plot(toci, a_med, color="#ffb4b4", lw=1.0, alpha=0.75,
+    ax1.plot(toci, a_med, color=ps.c("#ffb4b4"), lw=1.0, alpha=0.75,
              label="per-cell median")
     ax1.axhline(1.0, color=TEXT_CLR, alpha=0.3, lw=0.9, ls="--", label="Isotropy A=1")
 
     dynamic_threshold = instability_threshold(b_global)
     if INSTABILITY == "firehose":
         threshold_label = r"Firehose threshold $1-2/\beta_\parallel(t)$"
-        threshold_color = "#74b9ff"
+        threshold_color = ps.c("#74b9ff")
     elif INSTABILITY == "mirror":
         threshold_label = r"Mirror threshold $1+1/\beta_\parallel(t)$"
-        threshold_color = "#ff9999"
+        threshold_color = ps.c("#ff9999")
     else:
         threshold_label = r"Whistler threshold $1+0.21/\beta_{e\parallel}^{0.6}$"
-        threshold_color = "#c084fc"
+        threshold_color = ps.c("#c084fc")
     ax1.plot(toci, dynamic_threshold, color=threshold_color, alpha=0.9, lw=1.2,
              ls=":", label=threshold_label)
 
@@ -423,13 +439,13 @@ def plot_temporal_evolution(snap_data: list, outdir: Path):
                  np.nanpercentile(finite_a, 99) * 1.2)
     _style_ax(ax1, f"Temporal Evolution — {PROFILE_LABEL}")
     ax1.legend(fontsize=POSTER_LEGEND, framealpha=0.5,
-               facecolor="#1c2128", edgecolor="#30363d", labelcolor=TEXT_CLR)
+               facecolor=ps.c("#1c2128"), edgecolor=ps.c("#30363d"), labelcolor=TEXT_CLR)
 
     # La razón inversa evita ambigüedad en Firehose: T_par/T_perp decrece
     # mientras A=T_perp/T_par aumenta hacia la isotropía.
     ax_inv.set_facecolor(PANEL_BG)
     ax_inv.plot(
-        toci, inverse_global, color="#f9c74f", marker="o", ms=3.5, lw=2.2,
+        toci, inverse_global, color=ps.c("#f9c74f"), marker="o", ms=3.5, lw=2.2,
         label=r"global $\langle P_\parallel\rangle/\langle P_\perp\rangle$",
     )
     ax_inv.axhline(1.0, color=TEXT_CLR, alpha=0.3, lw=0.9, ls="--")
@@ -437,21 +453,21 @@ def plot_temporal_evolution(snap_data: list, outdir: Path):
     ax_inv.set_xlabel(r"$t\,\Omega_{ci}$", fontsize=POSTER_LABEL, color=TEXT_CLR, labelpad=6)
     _style_ax(ax_inv)
     ax_inv.legend(fontsize=POSTER_LEGEND, framealpha=0.5,
-                  facecolor="#1c2128", edgecolor="#30363d", labelcolor=TEXT_CLR)
+                  facecolor=ps.c("#1c2128"), edgecolor=ps.c("#30363d"), labelcolor=TEXT_CLR)
 
     # ─ Panel inferior: beta_par ─
     ax2.set_facecolor(PANEL_BG)
-    ax2.fill_between(toci, b_p25, b_p75, alpha=0.25, color="#58a6ff")
-    ax2.plot(toci, b_global, color="#58a6ff", marker="o", ms=3.5, lw=2.2,
+    ax2.fill_between(toci, b_p25, b_p75, alpha=0.25, color=ps.c("#58a6ff"))
+    ax2.plot(toci, b_global, color=ps.c("#58a6ff"), marker="o", ms=3.5, lw=2.2,
              label=r"global $2\langle P_\parallel\rangle/\langle B^2\rangle$")
-    ax2.plot(toci, b_med, color="#a8d4ff", lw=1.0, alpha=0.75,
+    ax2.plot(toci, b_med, color=ps.c("#a8d4ff"), lw=1.0, alpha=0.75,
              label="per-cell median")
     ax2.set_ylabel(r"$\beta_{i\parallel}$", fontsize=POSTER_LABEL, color=TEXT_CLR)
     ax2.set_xlabel(r"$t\,\Omega_{ci}$", fontsize=POSTER_LABEL, color=TEXT_CLR, labelpad=6)
     ax2.set_yscale("log")
     _style_ax(ax2)
     ax2.legend(fontsize=POSTER_LEGEND, framealpha=0.5,
-               facecolor="#1c2128", edgecolor="#30363d", labelcolor=TEXT_CLR)
+               facecolor=ps.c("#1c2128"), edgecolor=ps.c("#30363d"), labelcolor=TEXT_CLR)
 
     for ax in (ax1, ax_inv, ax2):
         ax.tick_params(which="both", colors=TEXT_CLR, direction="in",
@@ -467,7 +483,7 @@ def plot_temporal_evolution(snap_data: list, outdir: Path):
     ]
     for fig, out in outputs:
         fig.tight_layout()
-        fig.savefig(out, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
+        ps.save(fig, out)
         plt.close(fig)
         print(f"  Guardado → {out}")
 
@@ -520,7 +536,7 @@ def plot_brazil_grid(snap_list: list, outdir: Path, b0_ref: float, n_cols=4):
                           shading="flat", zorder=3)
 
         _draw_thresholds(ax, xmin, xmax, ymin, ymax)
-        ax.plot(beta_init, aniso_init, "*", color="#ffd700",
+        ax.plot(beta_init, aniso_init, "*", color=ps.c("#ffd700"),
                 markeredgecolor="white", markeredgewidth=0.6,
                 markersize=14, zorder=12)
 
@@ -530,20 +546,20 @@ def plot_brazil_grid(snap_list: list, outdir: Path, b0_ref: float, n_cols=4):
         toci = snap["toci"]
         color = cmap_time(t_norm(toci))
         ax.set_title(rf"$t\,\Omega_{{ci}} = {toci:.2f}$",
-                     fontsize=14, fontweight="bold", color=color, pad=5)
+                     fontsize=BRAZIL_GRID_TITLE, fontweight="bold", color=color, pad=5)
 
         ax.tick_params(which="both", colors=TEXT_CLR, direction="in",
-                       labelsize=11, top=True, right=True)
+                       labelsize=BRAZIL_GRID_TICK, top=True, right=True)
         for sp in ax.spines.values():
             sp.set_edgecolor(GRID_CLR)
         ax.grid(True, which="both", alpha=0.15, color=GRID_CLR, ls=":")
 
         if i % n_cols == 0:
             ax.set_ylabel(rf"$T_{{{SPECIES_SYMBOL}\perp}}/T_{{{SPECIES_SYMBOL}\parallel}}$",
-                          fontsize=13, color=TEXT_CLR)
+                          fontsize=BRAZIL_GRID_LABEL, color=TEXT_CLR)
         if i >= (n_rows - 1) * n_cols:
             ax.set_xlabel(rf"$\beta_{{{SPECIES_SYMBOL}\parallel}}$",
-                          fontsize=13, color=TEXT_CLR)
+                          fontsize=BRAZIL_GRID_LABEL, color=TEXT_CLR)
 
     # Ocultar ejes sobrantes
     for j in range(n, len(axes_flat)):
@@ -551,11 +567,11 @@ def plot_brazil_grid(snap_list: list, outdir: Path, b0_ref: float, n_cols=4):
 
     fig.suptitle(
         rf"Brazil Plots per Snapshot — {PROFILE_LABEL}  ($m_i/m_e={int(MASS_RATIO)}$)",
-        fontsize=POSTER_TITLE + 1, fontweight="bold", color=TEXT_CLR, y=1.01
+        fontsize=BRAZIL_TITLE + 2, fontweight="bold", color=TEXT_CLR, y=1.01
     )
 
     out = output_path(outdir, "brazil_snapshots")
-    plt.savefig(out, dpi=180, bbox_inches="tight", facecolor=DARK_BG)
+    ps.save(fig, out)
     plt.close()
     print(f"  Guardado → {out}")
 

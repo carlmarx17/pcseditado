@@ -29,6 +29,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LogNorm, TwoSlopeNorm
+from matplotlib.patches import Rectangle
+
+import plot_style as ps
+
+ps.apply()
 
 try:
     from scipy.ndimage import gaussian_filter
@@ -52,7 +57,11 @@ from psc_units import (
     MASS_RATIO,
     M_ELEC,
     M_ION,
+    N_GRID_Y,
+    N_GRID_Z,
     PROFILE_LABEL,
+    PRT_OUTPUT_HI,
+    PRT_OUTPUT_LO,
     TE_PAR,
     TE_PERP,
     TI_PAR,
@@ -62,11 +71,23 @@ from psc_units import (
 )
 
 
-DARK_BG = "#0d1117"
-PANEL_BG = "#161b22"
-TEXT_CLR = "#e6edf3"
-GRID_CLR = "#30363d"
+DARK_BG = ps.c("#0d1117")
+PANEL_BG = ps.c("#161b22")
+TEXT_CLR = ps.c("#e6edf3")
+GRID_CLR = ps.c("#30363d")
 RNG = np.random.default_rng(20260623)
+
+# Dominio común de ajuste de la VDF, en unidades de sigma0 (velocidad térmica
+# paralela medida). Fijarlo hace que error_maxwellian, error_kappa y sus
+# versiones de cola se midan sobre el MISMO rango en todos los casos, que es
+# la condición para poder comparar bi-kappa contra bi-Maxwelliana.
+FIT_SIGMA_MAX = 6.0    # borde del histograma / ajuste
+TAIL_SIGMA = 3.0       # inicio de la región de cola
+MIN_BIN_COUNTS = 20    # cuentas mínimas por bin para entrar en el error log
+
+# Criterios de validez de un ajuste de tasa de crecimiento (ver growth_rate).
+MIN_AMPLITUDE_GAIN = 2.0   # la amplitud debe al menos duplicarse en la ventana
+MAX_ONSET_T0 = 5.0         # t*Omega_ci máximo del primer punto de la serie
 POSTER_FONT = 15
 POSTER_LABEL = 18
 POSTER_TITLE = 19
@@ -153,17 +174,29 @@ def _run_step_tasks(worker, tasks: list[tuple], jobs: int, label: str) -> list:
     return sorted(results, key=lambda item: item[0])
 
 
+def _series_style(n: int, marker: str = "o") -> dict:
+    """Estilo de línea que se adapta al número de puntos de la serie.
+
+    Las series de campos tienen 1700-2400 snapshots. Con un marcador por
+    muestra el marcador es más ancho que el espaciado entre puntos y la curva
+    se convierte en una banda sólida: se pierde la forma, que es justo lo que
+    se quiere leer (crecimiento, rodilla, saturación). Las series de partículas
+    tienen 39-121 puntos y ahí el marcador sí informa de dónde hay dato.
+    """
+    if n <= 60:
+        return {"linestyle": "-", "marker": marker, "markersize": 5}
+    if n <= 400:
+        return {"linestyle": "-", "marker": marker, "markersize": 3.5,
+                "markevery": max(1, n // 40)}
+    return {"linestyle": "-", "marker": "none", "linewidth": 1.8}
+
+
 def _savefig(fig, path: Path, pad_inches: float = 0.1):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=180, bbox_inches="tight", pad_inches=pad_inches, facecolor=fig.get_facecolor())
-    plt.close(fig)
+    ps.save(fig, path, pad_inches=pad_inches)
 
 
 def _savefig_many(fig, paths: Iterable[Path]):
-    for path in paths:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
-    plt.close(fig)
+    ps.save_many(fig, paths)
 
 
 def _write_csv(path: Path, rows: list[dict], fieldnames: list[str] | None = None):
@@ -355,7 +388,110 @@ def moment_thermal_maps(moment_file: str, field_file: str | None = None,
     }
 
 
-def field_metrics(field_file: str, b0: float = B0) -> dict:
+# ── Ventana prt (la region de la que se guardan las particulas / la VDF) ─────
+#
+# PSC solo escribe partículas dentro de la caja de celdas [lo, hi) fijada en
+# `OutputParticlesParams`. Todas las VDF salen de ahí, así que las métricas de
+# campo globales no son las que ve la VDF: si el hueco magnético que se está
+# caracterizando cae fuera de la ventana, la correlación VDF-hueco no existe.
+# Estas funciones dan la misma foto de B pero restringida a esa ventana, y la
+# dibujan sobre los mapas para que cada figura diga de dónde salen las
+# partículas.
+
+
+def prt_window_bounds(particle_file: str | None) -> tuple[np.ndarray, np.ndarray, str]:
+    """(lo, hi, origen) de la ventana prt, leída del archivo cuando se puede.
+
+    La ventana no es constante entre corridas (hay datos escritos con el 40 %
+    por eje y otros con el 20 %), por eso el fallback de `psc_units` solo se
+    usa si no hay archivo: confiar en él ubicaría la caja en el lugar
+    equivocado sin ningún síntoma visible.
+    """
+    if particle_file:
+        try:
+            lo, hi = PICDataReader.read_prt_window(particle_file)
+            return np.asarray(lo, dtype=int), np.asarray(hi, dtype=int), "archivo prt"
+        except (KeyError, OSError, ValueError) as exc:
+            print(f"[WARN] no se pudo leer la ventana prt de {particle_file}: {exc}; "
+                  "usando el fallback de psc_units.")
+    return (np.asarray(PRT_OUTPUT_LO, dtype=int),
+            np.asarray(PRT_OUTPUT_HI, dtype=int), "fallback psc_units")
+
+
+def _prt_cell_slices(shape: tuple[int, ...], lo, hi) -> tuple[slice, slice] | None:
+    """Traduce (lo, hi) en índices (x,y,z) a slices del mapa 2D aplanado.
+
+    Los arrays PSC llegan como (Nz, Ny) en el plano yz, pero no se asume: se
+    decide comparando la forma real contra la malla del perfil, porque una
+    transposición silenciosa pondría la caja rotada 90 grados sobre el mapa.
+    """
+    iy0, iy1 = int(lo[1]), int(hi[1])
+    iz0, iz1 = int(lo[2]), int(hi[2])
+    if shape == (N_GRID_Z, N_GRID_Y):
+        return slice(iz0, iz1), slice(iy0, iy1)
+    if shape == (N_GRID_Y, N_GRID_Z):
+        return slice(iy0, iy1), slice(iz0, iz1)
+    print(f"[WARN] forma de campo {shape} no coincide con la malla "
+          f"({N_GRID_Z}, {N_GRID_Y}); se omiten las métricas en la ventana prt.")
+    return None
+
+
+def prt_window_extent_di(lo, hi) -> dict:
+    """Bordes de la ventana en d_i, en la convención de `plot_map` (Z, Y)."""
+    z0 = float(lo[2]) / N_GRID_Z * DOMAIN_DI_Z
+    z1 = float(hi[2]) / N_GRID_Z * DOMAIN_DI_Z
+    y0 = float(lo[1]) / N_GRID_Y * DOMAIN_DI_Y
+    y1 = float(hi[1]) / N_GRID_Y * DOMAIN_DI_Y
+    return {"z_di": (z0, z1), "y_di": (y0, y1),
+            "area_fraction": ((z1 - z0) * (y1 - y0)) / (DOMAIN_DI_Z * DOMAIN_DI_Y)}
+
+
+def _window_field_scalars(bx, by, bz, lo, hi, b0: float) -> dict:
+    """Las mismas métricas escalares de `field_metrics`, sólo dentro del prt."""
+    flat = PICDataReader.flatten_2d_slice(np.asarray(bx))
+    slices = _prt_cell_slices(flat.shape, lo, hi)
+    if slices is None:
+        return {}
+    sz, sy = slices
+
+    def _win(arr):
+        return PICDataReader.flatten_2d_slice(np.asarray(arr))[sz, sy]
+
+    wbx, wby, wbz = _win(bx), _win(by), _win(bz)
+    if wbx.size == 0:
+        print("[WARN] la ventana prt quedó vacía sobre la malla de campos.")
+        return {}
+    bmag = np.sqrt(wbx**2 + wby**2 + wbz**2)
+    delta_b = bmag - b0
+    # Las medias se toman DENTRO de la ventana: restar la media global metería
+    # el offset del resto del dominio en una region que no lo comparte.
+    dbx = wbx - np.nanmean(wbx)
+    dby = wby - np.nanmean(wby)
+    dbz = wbz - b0
+    b0_abs = max(abs(b0), 1e-30)
+    sigma_b = np.nanstd(bmag)
+    return {
+        "prt_B_mean_over_B0": float(np.nanmean(bmag) / b0_abs),
+        "prt_delta_B_rms": float(np.sqrt(np.nanmean(delta_b**2))),
+        "prt_delta_B_rms_over_B0": float(np.sqrt(np.nanmean(delta_b**2)) / b0_abs),
+        "prt_delta_B_parallel_rms_over_B0": float(np.sqrt(np.nanmean(dbz**2)) / b0_abs),
+        "prt_delta_B_perp_rms_over_B0": float(np.sqrt(np.nanmean(dbx**2 + dby**2)) / b0_abs),
+        "prt_B_min_over_B0": float(np.nanmin(bmag) / b0_abs),
+        "prt_B_max_over_B0": float(np.nanmax(bmag) / b0_abs),
+        "prt_mirror_depth": float(1.0 - np.nanmin(bmag) / b0_abs),
+        "prt_mirror_area_fraction": float(np.nanmean(bmag < (b0 - sigma_b))),
+        "prt_magnetic_energy_fluct": float(0.5 * np.nanmean(dbx**2 + dby**2 + dbz**2)),
+        "prt_cells": int(bmag.size),
+    }
+
+
+def field_metrics(field_file: str, b0: float = B0,
+                  prt_window: tuple | None = None) -> dict:
+    """Métricas de |B| sobre todo el dominio.
+
+    Con ``prt_window=(lo, hi)`` añade las mismas métricas escalares medidas
+    sólo dentro de la ventana de salida de partículas, con prefijo ``prt_``.
+    """
     fld = load_fields(field_file)
     bx, by, bz = fld["Bx"], fld["By"], fld["Bz"]
     bmag = np.sqrt(bx**2 + by**2 + bz**2)
@@ -365,10 +501,20 @@ def field_metrics(field_file: str, b0: float = B0) -> dict:
     dbz = bz - b0
     sigma_b = np.nanstd(bmag)
     b0_abs = max(abs(b0), 1e-30)
+    window_scalars = (
+        _window_field_scalars(bx, by, bz, prt_window[0], prt_window[1], b0)
+        if prt_window is not None else {}
+    )
     return {
+        **window_scalars,
         "B_magnitude": bmag,
         "delta_B": delta_b,
         "delta_B_over_B0": delta_b / b0_abs,
+        # Mapas 2D de las componentes, para las correlaciones espaciales:
+        # dbz aísla la parte compresiva (mirror) y b_perp la transversal
+        # (firehose / EMIC).
+        "delta_B_parallel_map": dbz,
+        "B_perp_map": np.sqrt(dbx**2 + dby**2),
         "delta_B_rms": float(np.sqrt(np.nanmean(delta_b**2))),
         "delta_B_rms_over_B0": float(np.sqrt(np.nanmean(delta_b**2)) / b0_abs),
         "delta_B_parallel_rms": float(np.sqrt(np.nanmean(dbz**2))),
@@ -460,7 +606,7 @@ def plot_magnetic_spectrum(spectrum: dict, step: int, outdir: Path):
     fig, ax = plt.subplots(figsize=(8.5, 5.5))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    ax.loglog(k, power, color="#58a6ff", lw=2.0, label=r"$E_{B_\perp}(k)$")
+    ax.loglog(k, power, color=ps.c("#58a6ff"), lw=2.0, label=r"$E_{B_\perp}(k)$")
     fit = spectrum["fit"]
     if fit is not None and len(fit["k_fit"]) >= 3:
         fit_power = 10 ** (
@@ -470,7 +616,7 @@ def plot_magnetic_spectrum(spectrum: dict, step: int, outdir: Path):
             fit["k_fit"],
             fit_power,
             "--",
-            color="#ff7b72",
+            color=ps.c("#ff7b72"),
             lw=1.8,
             label=rf"fit: $k^{{{fit['slope']:.2f}}}$",
         )
@@ -482,7 +628,7 @@ def plot_magnetic_spectrum(spectrum: dict, step: int, outdir: Path):
         if np.any(valid):
             first = np.flatnonzero(valid)[0]
             kolmogorov = p_ref[first] * (k_ref / k_ref[first]) ** (-5.0 / 3.0)
-            ax.loglog(k_ref, kolmogorov, ":", color="#f2cc60", label=r"$k^{-5/3}$")
+            ax.loglog(k_ref, kolmogorov, ":", color=ps.c("#f2cc60"), label=r"$k^{-5/3}$")
     ax.set_xlabel(r"$k\,[d_i^{-1}]$", color=TEXT_CLR)
     ax.set_ylabel(r"$E_{B_\perp}(k)$", color=TEXT_CLR)
     ax.set_title(
@@ -547,26 +693,39 @@ def fit_distribution(snapshot: ParticleSnapshot, species: str = "ion") -> dict:
     if not np.any(mask):
         return {}
 
-    vx = snapshot.px[mask]
-    vy = snapshot.py[mask]
     vz = snapshot.pz[mask]
     weights = snapshot.w[mask]
     centered = vz - _weighted_mean(vz, weights)
     sigma0 = math.sqrt(max(_weighted_var(centered, weights), 1e-30))
-    v_abs = np.abs(centered)
-    vmax = np.nanpercentile(v_abs, 99.7)
+    # El dominio del histograma se fija en múltiplos de sigma0, NO en un
+    # percentil de |v|. Con vmax = p99.7 una bi-Maxwelliana se recorta justo
+    # en ~3*sigma0, la máscara de cola (|x| > 3*sigma0) queda vacía y
+    # error_tail_maxwellian sale NaN, de modo que el contraste kappa vs
+    # Maxwelliana se medía en rangos distintos para cada caso y no era
+    # comparable. TAIL_SIGMA marca el inicio de la cola y FIT_SIGMA_MAX el
+    # borde del ajuste; ambos son iguales para todas las distribuciones.
+    vmax = FIT_SIGMA_MAX * sigma0
     if not np.isfinite(vmax) or vmax <= 0:
         return {}
 
-    hist, edges = np.histogram(centered, bins=160, range=(-vmax, vmax),
-                               weights=weights, density=True)
+    counts, edges = np.histogram(centered, bins=160, range=(-vmax, vmax),
+                                 weights=weights)
+    widths = np.diff(edges)
+    total = float(np.sum(weights))
+    hist = counts / np.maximum(total * widths, 1e-300)
     centers = 0.5 * (edges[:-1] + edges[1:])
-    valid = np.isfinite(hist) & (hist > 0)
+    # Un bin con 1-2 partículas está a órdenes de magnitud de su valor
+    # esperado, y el error se mide en log10: sin este filtro los bins casi
+    # vacíos del extremo dominan la métrica y error_maxwellian se dispara por
+    # ruido de disparo, no por desajuste. Se registra hasta dónde llega la
+    # estadística útil para que el rango efectivo sea auditable.
+    valid = np.isfinite(hist) & (counts >= MIN_BIN_COUNTS)
     if np.count_nonzero(valid) < 12:
         return {}
 
     x = centers[valid]
     y = hist[valid]
+    v_reliable_over_sigma = float(np.max(np.abs(x)) / sigma0)
     amp0 = float(np.nanmax(y))
     if curve_fit is None:
         popt_m, popt_k = _grid_fit_distribution(x, y, sigma0)
@@ -587,14 +746,17 @@ def fit_distribution(snapshot: ParticleSnapshot, species: str = "ion") -> dict:
 
     y_m = maxwellian_pdf(x, *popt_m)
     y_k = kappa_pdf_shape(x, *popt_k)
-    tail = np.abs(x) > 3.0 * sigma0
+    tail = np.abs(x) > TAIL_SIGMA * sigma0
     err_m = float(np.sqrt(np.nanmean((np.log10(y) - np.log10(y_m + 1e-300)) ** 2)))
     err_k = float(np.sqrt(np.nanmean((np.log10(y) - np.log10(y_k + 1e-300)) ** 2)))
     err_m_tail = float(np.sqrt(np.nanmean((np.log10(y[tail]) - np.log10(y_m[tail] + 1e-300)) ** 2))) if np.any(tail) else np.nan
     err_k_tail = float(np.sqrt(np.nanmean((np.log10(y[tail]) - np.log10(y_k[tail] + 1e-300)) ** 2))) if np.any(tail) else np.nan
-    v3 = np.sqrt(vx**2 + vy**2 + vz**2)
-    vth = float(np.sqrt(_weighted_var(vx, weights) + _weighted_var(vy, weights) + _weighted_var(vz, weights)))
-    supra = float(np.sum(weights[v3 > 3.0 * vth]) / max(np.sum(weights), 1e-30))
+    # La fracción suprathermal usa el mismo umbral (TAIL_SIGMA) que la máscara
+    # de cola, sobre la velocidad 1D. Antes comparaba |v| 3D contra
+    # 3*sqrt(var_x+var_y+var_z) = 3*sqrt(3)*sigma ~ 5.2 sigma, un corte
+    # distinto del de error_tail_* y que no correspondía a su etiqueta.
+    supra = float(np.sum(weights[np.abs(centered) > TAIL_SIGMA * sigma0])
+                  / max(np.sum(weights), 1e-30))
 
     return {
         "step": snapshot.step,
@@ -607,6 +769,8 @@ def fit_distribution(snapshot: ParticleSnapshot, species: str = "ion") -> dict:
         "error_tail_maxwellian": err_m_tail,
         "error_tail_kappa": err_k_tail,
         "suprathermal_fraction": supra,
+        "tail_bins": int(np.count_nonzero(tail)),
+        "v_reliable_over_sigma": v_reliable_over_sigma,
         "hist_x": centers,
         "hist_y": hist,
         "fit_x": np.linspace(-vmax, vmax, 700),
@@ -667,7 +831,7 @@ def plot_validation(rows: list[dict], outdir: Path):
         first["R_i"],
         first["beta_parallel_i"],
     ]
-    colors = ["#58a6ff", "#ff7b72", "#f2cc60", "#d2a8ff", "#56d364"]
+    colors = [ps.c("#58a6ff"), ps.c("#ff7b72"), ps.c("#f2cc60"), ps.c("#d2a8ff"), ps.c("#56d364")]
     ax.bar(labels, values, color=colors, alpha=0.9)
     ax.axhline(1.0, color=TEXT_CLR, linestyle=":", alpha=0.45)
     ax.set_title(f"Initial validation - {PROFILE_LABEL}", color=TEXT_CLR, fontsize=15, fontweight="bold")
@@ -687,8 +851,8 @@ def plot_time_series(rows: list[dict], outdir: Path):
     fig, ax = plt.subplots(figsize=(9, 5.5))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    ax.plot(t, a, "o-", color="#ff7b72", label=r"$A_i=T_\perp/T_\parallel$")
-    ax.plot(t, r_inv, "s-", color="#f2cc60", label=r"$R_i=T_\parallel/T_\perp$")
+    ax.plot(t, a, color=ps.c("#ff7b72"), label=r"$A_i=T_\perp/T_\parallel$", **_series_style(len(t)))
+    ax.plot(t, r_inv, color=ps.c("#f2cc60"), label=r"$R_i=T_\parallel/T_\perp$", **_series_style(len(t), "s"))
     ax.axhline(1.0, color=TEXT_CLR, alpha=0.35, linestyle=":")
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
     ax.set_ylabel("anisotropy ratio", color=TEXT_CLR)
@@ -699,8 +863,8 @@ def plot_time_series(rows: list[dict], outdir: Path):
     fig, ax = plt.subplots(figsize=(9, 5.5))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    ax.plot(t, tpar, "o-", color="#58a6ff", label=r"$T_{\parallel i}$")
-    ax.plot(t, tperp, "o-", color="#ff7b72", label=r"$T_{\perp i}$")
+    ax.plot(t, tpar, color=ps.c("#58a6ff"), label=r"$T_{\parallel i}$", **_series_style(len(t)))
+    ax.plot(t, tperp, color=ps.c("#ff7b72"), label=r"$T_{\perp i}$", **_series_style(len(t)))
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
     ax.set_ylabel("temperature [code]", color=TEXT_CLR)
     ax.set_title("Parallel and perpendicular ion temperature", color=TEXT_CLR, fontweight="bold")
@@ -887,9 +1051,9 @@ def plot_fit_metrics(rows: list[dict], outdir: Path):
     fig, ax = plt.subplots(figsize=(8.5, 5))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    ax.plot(t, kfit, "o-", color="#d2a8ff")
+    ax.plot(t, kfit, color=ps.c("#d2a8ff"), **_series_style(len(t)))
     if KAPPA:
-        ax.axhline(KAPPA, color="#f2cc60", alpha=0.6, linestyle="--", label=rf"$\kappa_0={KAPPA:g}$")
+        ax.axhline(KAPPA, color=ps.c("#f2cc60"), alpha=0.6, linestyle="--", label=rf"$\kappa_0={KAPPA:g}$")
         ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
     ax.set_ylabel(r"$\kappa_{\rm fit}$", color=TEXT_CLR)
@@ -899,7 +1063,7 @@ def plot_fit_metrics(rows: list[dict], outdir: Path):
     fig, ax = plt.subplots(figsize=(8.5, 5))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    ax.plot(t, supra, "o-", color="#ff7b72")
+    ax.plot(t, supra, color=ps.c("#ff7b72"), **_series_style(len(t)))
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
     ax.set_ylabel(r"$F_{\rm supra}(|v|>3v_{th})$", color=TEXT_CLR)
     ax.set_title("Suprathermal fraction vs time", color=TEXT_CLR, fontweight="bold")
@@ -913,10 +1077,10 @@ def plot_distribution_fit(fit: dict, outdir: Path):
     fig, ax = plt.subplots(figsize=(8.5, 5.5))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    ax.step(fit["hist_x"], fit["hist_y"], where="mid", color="#ff7b72", lw=1.4, label="simulation")
-    ax.plot(x, maxwellian_pdf(x, *fit["maxwellian_params"]), "--", color="#58a6ff", lw=2.0,
+    ax.step(fit["hist_x"], fit["hist_y"], where="mid", color=ps.c("#ff7b72"), lw=1.4, label="simulation")
+    ax.plot(x, maxwellian_pdf(x, *fit["maxwellian_params"]), "--", color=ps.c("#58a6ff"), lw=2.0,
             label="Maxwellian fit")
-    ax.plot(x, kappa_pdf_shape(x, *fit["kappa_params"]), "-", color="#d2a8ff", lw=2.0,
+    ax.plot(x, kappa_pdf_shape(x, *fit["kappa_params"]), "-", color=ps.c("#d2a8ff"), lw=2.0,
             label=rf"Kappa fit, $\kappa={fit['kappa_fit']:.2f}$")
     ax.set_yscale("log")
     ax.set_xlabel(r"$v_\parallel-\langle v_\parallel\rangle$", color=TEXT_CLR)
@@ -928,7 +1092,7 @@ def plot_distribution_fit(fit: dict, outdir: Path):
 
 def plot_map(
     field: np.ndarray, path: Path, title: str, label: str, cmap="viridis", symmetric=False,
-    smooth_sigma: float | None = None,
+    smooth_sigma: float | None = None, prt_window: tuple | None = None,
 ):
     """``smooth_sigma`` applies a display-only Gaussian smoothing (matching the
     sigma=3.0 already used for the J_dia maps in compute_jdia): single-cell
@@ -959,6 +1123,17 @@ def plot_map(
     cb.set_label(label, color=TEXT_CLR)
     cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
     plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
+    if prt_window is not None:
+        # Without this box the map does not say which part of the domain the
+        # particles come from, and the VDF floats over structures that may sit
+        # outside the saved region entirely.
+        ext = prt_window_extent_di(prt_window[0], prt_window[1])
+        z0, z1 = ext["z_di"]
+        y0, y1 = ext["y_di"]
+        ax.add_patch(Rectangle((z0, y0), z1 - z0, y1 - y0, fill=False,
+                               edgecolor=ps.c("#00c000"), lw=2.0, ls="--",
+                               label="prt window (VDF)"))
+        ps.legend(ax, loc="upper right", fontsize=10)
     ax.set_xlabel(r"Z [$d_i$]", color=TEXT_CLR)
     ax.set_ylabel(r"Y [$d_i$]", color=TEXT_CLR)
     ax.set_title(title, color=TEXT_CLR, fontweight="bold")
@@ -975,8 +1150,8 @@ def plot_spatial_maps(rows: list[dict], outdir: Path):
     fig, ax = plt.subplots(figsize=(8.5, 5.2))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    ax.fill_between(t, p10, p90, color="#ff7b72", alpha=0.22, label="P10-P90")
-    ax.plot(t, mean_a, "o-", color="#ff7b72", label=r"$\langle A_i\rangle$")
+    ax.fill_between(t, p10, p90, color=ps.c("#ff7b72"), alpha=0.22, label="P10-P90")
+    ax.plot(t, mean_a, color=ps.c("#ff7b72"), label=r"$\langle A_i\rangle$", **_series_style(len(t)))
     ax.axhline(1.0, color=TEXT_CLR, linestyle=":", alpha=0.35)
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
     ax.set_ylabel(r"$A_i(x,y)$", color=TEXT_CLR)
@@ -1025,12 +1200,38 @@ def growth_rate(time: np.ndarray, delta_b: np.ndarray,
     ss_res = float(np.sum((yf - y_pred) ** 2))
     ss_tot = float(np.sum((yf - np.mean(yf)) ** 2))
     r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
+
+    gamma = float(coeff[0])
+    # Un R^2 alto sólo dice que los puntos caen sobre una recta: un decaimiento
+    # limpio da R^2 ~ 0.95 y pasaba el filtro como si fuera crecimiento. Estas
+    # comprobaciones separan "ajuste bueno" de "tasa de crecimiento válida".
+    amplitude_gain = float(np.exp(yf[-1] - yf[0]))
+    # Si la serie arranca muy después de t=0, la fase lineal pudo ocurrir antes
+    # del primer snapshot (típico de un restart): el ajuste describe entonces
+    # la fase saturada, no el crecimiento.
+    starts_late = float(t[0]) > MAX_ONSET_T0
+    reasons = []
+    if not (np.isfinite(r_squared) and r_squared >= 0.7):
+        reasons.append(f"R2={r_squared:.3f} < 0.7")
+    if not np.isfinite(gamma) or gamma <= 0:
+        reasons.append(f"gamma={gamma:.4g} no es crecimiento")
+    if amplitude_gain < MIN_AMPLITUDE_GAIN:
+        reasons.append(f"amplitud x{amplitude_gain:.2f} < x{MIN_AMPLITUDE_GAIN}")
+    if starts_late:
+        reasons.append(
+            f"la serie empieza en t={t[0]:.1f} > {MAX_ONSET_T0}: "
+            "la fase lineal puede quedar fuera de los datos")
+
     return {
-        "gamma": float(coeff[0]),
+        "gamma": gamma,
         "intercept": float(coeff[1]),
         "linear_phase_start": float(tf[0]),
         "linear_phase_end": float(tf[-1]),
         "r_squared": r_squared,
+        "amplitude_gain": amplitude_gain,
+        "series_start": float(t[0]),
+        "fit_ok": int(not reasons),
+        "fit_reject_reason": "; ".join(reasons),
         "time": t,
         "ln_delta_b": y,
         "fit_time": tf,
@@ -1057,7 +1258,7 @@ def plot_field_time(rows: list[dict], outdir: Path):
     fig, ax = plt.subplots(figsize=(8.5, 5.2))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    ax.plot(t, rms, "o-", color="#58a6ff")
+    ax.plot(t, rms, color=ps.c("#58a6ff"), **_series_style(len(t)))
     ax.set_yscale("log")
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
     ax.set_ylabel(r"$\delta B_{\rm rms}/B_0$", color=TEXT_CLR)
@@ -1067,8 +1268,8 @@ def plot_field_time(rows: list[dict], outdir: Path):
     fig, ax = plt.subplots(figsize=(8.5, 5.2))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    ax.plot(t, par, "o-", color="#ff7b72", label=r"$\delta B_\parallel/B_0$")
-    ax.plot(t, perp, "s-", color="#56d364", label=r"$\delta B_\perp/B_0$")
+    ax.plot(t, par, color=ps.c("#ff7b72"), label=r"$\delta B_\parallel/B_0$", **_series_style(len(t)))
+    ax.plot(t, perp, color=ps.c("#56d364"), label=r"$\delta B_\perp/B_0$", **_series_style(len(t), "s"))
     ax.set_yscale("log")
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
     ax.set_ylabel("RMS fluctuation", color=TEXT_CLR)
@@ -1079,13 +1280,79 @@ def plot_field_time(rows: list[dict], outdir: Path):
     fig, ax = plt.subplots(figsize=(8.5, 5.2))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    ax.plot(t, depth, "o-", color="#d2a8ff", label="depth")
-    ax.plot(t, area, "s-", color="#f2cc60", label="area fraction")
+    ax.plot(t, depth, color=ps.c("#d2a8ff"), label="depth", **_series_style(len(t)))
+    ax.plot(t, area, color=ps.c("#f2cc60"), label="area fraction", **_series_style(len(t), "s"))
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
     ax.set_ylabel("mirror-hole metric", color=TEXT_CLR)
     ax.set_title("Mirror-hole depth and area fraction", color=TEXT_CLR, fontweight="bold")
     ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
     _savefig_many(fig, [outdir / "mirror_depth_area_vs_time.png"])
+
+    plot_prt_window_field_time(rows, outdir)
+
+
+def plot_prt_window_field_time(rows: list[dict], outdir: Path):
+    """Evolución de B dentro de la ventana prt, comparada con el dominio.
+
+    Es la serie que hace falta para leer las VDF: cada VDF sale de esta
+    ventana, así que la pregunta "¿la VDF de este paso se tomó dentro de un
+    hueco magnético?" se responde con estas curvas, no con las globales. Si la
+    ventana y el dominio se separan, la region guardada no es representativa y
+    cualquier conclusión VDF-hueco vale sólo para esa caja.
+    """
+    if not rows or "prt_delta_B_rms_over_B0" not in rows[0]:
+        return
+    t = np.array([r["omega_ci_t"] for r in rows], dtype=float)
+    mask = np.isfinite(t) & (t > 0.0)
+
+    def _col(key):
+        return np.array([r.get(key, np.nan) for r in rows], dtype=float)[mask]
+
+    t = t[mask]
+    if len(t) == 0:
+        return
+    w_rms, g_rms = _col("prt_delta_B_rms_over_B0"), _col("delta_B_rms_over_B0")
+    w_min, w_max = _col("prt_B_min_over_B0"), _col("prt_B_max_over_B0")
+    w_mean = _col("prt_B_mean_over_B0")
+    w_par, w_perp = (_col("prt_delta_B_parallel_rms_over_B0"),
+                     _col("prt_delta_B_perp_rms_over_B0"))
+
+    fig, axes = plt.subplots(3, 1, figsize=(9.0, 11.0), sharex=True)
+    fig.patch.set_facecolor(DARK_BG)
+    for ax in axes:
+        _style_axes(ax)
+
+    axes[0].plot(t, w_rms, color=ps.c("#56d364"), label="prt window (VDF)",
+                 **_series_style(len(t)))
+    axes[0].plot(t, g_rms, color=ps.c("#58a6ff"), label="full domain",
+                 **_series_style(len(t), "s"))
+    axes[0].set_yscale("log")
+    axes[0].set_ylabel(r"$\delta B_{\rm rms}/B_0$", color=TEXT_CLR)
+    axes[0].set_title("Magnetic fluctuation: saved region vs full domain",
+                      color=TEXT_CLR, fontweight="bold")
+
+    # min/max delimitan el hueco y el pico dentro de la caja: son los dos
+    # extremos que la VDF puede estar muestreando en cada snapshot.
+    axes[1].fill_between(t, w_min, w_max, color=ps.c("#d2a8ff"), alpha=0.22,
+                         label=r"$[\min,\max]$ range in the window")
+    axes[1].plot(t, w_mean, color=ps.c("#d2a8ff"), label=r"$\langle|B|\rangle/B_0$",
+                 **_series_style(len(t)))
+    axes[1].axhline(1.0, color=GRID_CLR, ls=":", lw=1.0)
+    axes[1].set_ylabel(r"$|B|/B_0$ in the prt window", color=TEXT_CLR)
+
+    axes[2].plot(t, w_par, color=ps.c("#ff7b72"), label=r"$\delta B_\parallel/B_0$",
+                 **_series_style(len(t)))
+    axes[2].plot(t, w_perp, color=ps.c("#f2cc60"), label=r"$\delta B_\perp/B_0$",
+                 **_series_style(len(t), "s"))
+    axes[2].set_yscale("log")
+    axes[2].set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
+    axes[2].set_ylabel("RMS in the prt window", color=TEXT_CLR)
+
+    for ax in axes:
+        ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR,
+                  fontsize=10)
+    fig.tight_layout()
+    _savefig_many(fig, [outdir / "prt_window_B_vs_time.png"])
 
 
 def plot_growth(growth: dict, outdir: Path):
@@ -1094,11 +1361,11 @@ def plot_growth(growth: dict, outdir: Path):
     fig, ax = plt.subplots(figsize=(8.5, 5.2))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    ax.plot(growth["time"], growth["ln_delta_b"], "o-", color="#58a6ff", label=r"$\ln\delta B_{\rm rms}$")
-    ax.plot(growth["fit_time"], growth["fit_ln_delta_b"], "--", color="#ff7b72",
+    ax.plot(growth["time"], growth["ln_delta_b"], color=ps.c("#58a6ff"), label=r"$\ln\delta B_{\rm rms}$", **_series_style(len(growth["time"])))
+    ax.plot(growth["fit_time"], growth["fit_ln_delta_b"], "--", color=ps.c("#ff7b72"),
             label=rf"$\gamma={growth['gamma']:.4g}$")
     ax.axvspan(growth["linear_phase_start"], growth["linear_phase_end"],
-               color="#ff7b72", alpha=0.12)
+               color=ps.c("#ff7b72"), alpha=0.12)
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
     ax.set_ylabel(r"$\ln(\delta B_{\rm rms})$", color=TEXT_CLR)
     ax.set_title("Linear growth-rate fit", color=TEXT_CLR, fontweight="bold")
@@ -1213,9 +1480,112 @@ def localized_heat_flux_rows(
     return rows
 
 
+def secular_heating(rows: list[dict], anisotropy_rows: list[dict] | None = None) -> dict:
+    """Aísla la parte secular (lineal en t) del calentamiento electrónico.
+
+    En estas corridas la energía interna electrónica crece de forma lineal en
+    el tiempo, isótropa (A_e ~ 1) y con la MISMA pendiente para bi-kappa que
+    para bi-Maxwelliana. Ésa es la firma de calentamiento numérico de grilla
+    (longitud de Debye sub-resuelta), no de interacción onda-partícula: el
+    calentamiento físico seguiría la saturación de la inestabilidad y
+    dependería de la forma de la VDF.
+
+    Sin separar esa componente, `energy_error` llega a +44 % y +73 % en los
+    casos bi-kappa y ningún balance de energía es defendible. Se ajusta
+    E_e(t) = a + b t y se devuelve b junto con el R^2 y la anisotropía
+    electrónica media, que son los dos tests que distinguen calentamiento
+    numérico de físico.
+    """
+    t = np.array([r.get("omega_ci_t", np.nan) for r in rows], dtype=float)
+    e_e = np.array([r.get("E_internal_e", np.nan) for r in rows], dtype=float)
+    valid = np.isfinite(t) & np.isfinite(e_e)
+    if np.count_nonzero(valid) < 4:
+        return {}
+    t, e_e = t[valid], e_e[valid]
+    if np.ptp(t) <= 0:
+        return {}
+
+    slope, intercept = np.polyfit(t, e_e, 1)
+    model = slope * t + intercept
+    ss_res = float(np.sum((e_e - model) ** 2))
+    ss_tot = float(np.sum((e_e - np.mean(e_e)) ** 2))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
+
+    a_e = np.array([r.get("A_e", np.nan) for r in (anisotropy_rows or rows)],
+                   dtype=float)
+    a_e_mean = float(np.nanmean(a_e)) if np.any(np.isfinite(a_e)) else float("nan")
+
+    # Diagnóstico: lineal + isótropo => numérico; si no, hay física mezclada.
+    linear = np.isfinite(r2) and r2 > 0.9
+    isotropic = (not np.isfinite(a_e_mean)) or abs(a_e_mean - 1.0) < 0.1
+    if linear and isotropic:
+        verdict = "secular+isotropo: compatible con calentamiento numerico"
+    elif linear:
+        verdict = "lineal pero anisotropo: revisar, puede haber fisica"
+    else:
+        verdict = "no lineal: probablemente no es solo numerico"
+
+    e_e0 = float(intercept)
+    return {
+        "slope_per_omegaci": float(slope),
+        "intercept": e_e0,
+        "r_squared": float(r2),
+        "A_e_mean": a_e_mean,
+        "n_points": int(t.size),
+        "t_start": float(t[0]),
+        "t_end": float(t[-1]),
+        "spurious_gain_at_end": float(slope * (t[-1] - t[0])),
+        "relative_to_E_e0": float(slope * (t[-1] - t[0]) / e_e0)
+        if e_e0 not in (0.0,) and np.isfinite(e_e0) else float("nan"),
+        "verdict": verdict,
+    }
+
+
+def apply_heating_correction(rows: list[dict], heating: dict) -> None:
+    """Añade a cada fila el total corregido por el calentamiento secular.
+
+    La energía inyectada espuriamente hasta t es b*(t - t0). Restarla del
+    total deja un presupuesto en el que la parte NO secular del calentamiento
+    electrónico (`E_internal_e_residual`) sigue presente: si hay calentamiento
+    físico real, aparece ahí y no queda enmascarado por la deriva numérica.
+    """
+    if not heating or not rows:
+        return
+    slope = heating["slope_per_omegaci"]
+    t0 = heating["t_start"]
+    for row in rows:
+        t = row.get("omega_ci_t", np.nan)
+        if not np.isfinite(t):
+            continue
+        spurious = slope * (t - t0)
+        row["E_internal_e_secular"] = slope * t + heating["intercept"]
+        row["E_internal_e_residual"] = (
+            row.get("E_internal_e", np.nan) - row["E_internal_e_secular"])
+        row["E_total_corrected"] = row.get("E_total", np.nan) - spurious
+
+
 def correlations(a_map: np.ndarray, delta_b: np.ndarray, bmag: np.ndarray,
-                 jdia: np.ndarray, rho: np.ndarray, step: int) -> dict:
+                 jdia: np.ndarray, rho: np.ndarray, step: int,
+                 b_perp: np.ndarray | None = None,
+                 db_par: np.ndarray | None = None) -> dict:
+    """Correlaciones espaciales entre la anisotropía y el campo local.
+
+    `corr_A_deltaB` solía calcularse contra delta_B = |B| - B0. Como B0 es una
+    constante, el coeficiente de Pearson es invariante ante ese corrimiento y
+    la columna resultaba idéntica a `corr_A_Bmag` dígito a dígito en las cinco
+    corridas: no medía la fluctuación, medía |B| otra vez. Se sustituye por
+    medidas que sí son independientes de |B|:
+
+      - `corr_A_dB_abs`  : amplitud de la fluctuación, ||B| - B0|. Responde a
+        "¿la anisotropía es mayor donde el campo está más perturbado?",
+        sin importar el signo.
+      - `corr_A_dB_parallel` : componente compresiva (B_par - B0)/B0, la firma
+        del modo mirror.
+      - `corr_A_B_perp`  : amplitud transversal, la firma de firehose/EMIC.
+    """
     def corr(x, y):
+        if x is None or y is None:
+            return float("nan")
         x = np.asarray(x, dtype=float).ravel()
         y = np.asarray(y, dtype=float).ravel()
         valid = np.isfinite(x) & np.isfinite(y)
@@ -1226,8 +1596,10 @@ def correlations(a_map: np.ndarray, delta_b: np.ndarray, bmag: np.ndarray,
     return {
         "step": step,
         "omega_ci_t": step_to_omegaci(step),
-        "corr_A_deltaB": corr(a_map, delta_b),
         "corr_A_Bmag": corr(a_map, bmag),
+        "corr_A_dB_abs": corr(a_map, np.abs(np.asarray(delta_b, dtype=float))),
+        "corr_A_dB_parallel": corr(a_map, db_par),
+        "corr_A_B_perp": corr(a_map, b_perp),
         "corr_A_Jdia": corr(a_map, jdia),
         "corr_A_rho_i": corr(a_map, rho),
     }
@@ -1246,7 +1618,7 @@ def plot_scatter(x, y, path: Path, xlabel: str, ylabel: str, title: str):
     fig, ax = plt.subplots(figsize=(7.2, 5.8))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    ax.scatter(x[idx], y[idx], s=2, alpha=0.18, color="#58a6ff")
+    ax.scatter(x[idx], y[idx], s=2, alpha=0.18, color=ps.c("#58a6ff"))
     ax.set_xlabel(xlabel, color=TEXT_CLR)
     ax.set_ylabel(ylabel, color=TEXT_CLR)
     ax.set_title(title, color=TEXT_CLR, fontweight="bold")
@@ -1302,8 +1674,8 @@ def _process_particle_step_worker(args):
 
 
 def _field_metrics_worker(args):
-    step, field_file, b0 = args
-    metrics = field_metrics(field_file, b0)
+    step, field_file, b0, prt_window = args
+    metrics = field_metrics(field_file, b0, prt_window)
     return step, {
         "step": step,
         "omega_ci_t": step_to_omegaci(step),
@@ -1363,20 +1735,28 @@ def _moment_correlation_worker(args):
         jdia["J_dia_total"],
         maps["n"],
         step,
+        b_perp=PICDataReader.flatten_2d_slice(fmet["B_perp_map"]),
+        db_par=PICDataReader.flatten_2d_slice(fmet["delta_B_parallel_map"]),
     ), localized_heat_flux_rows(heat_flux, step)
 
 
 def _field_map_worker(args):
-    step, field_file, outdir = args
+    step, field_file, outdir, prt_window = args
     metrics = field_metrics(field_file, B0)
+    toci = step_to_omegaci(step)
+    # Per-cell counting noise dominates these maps at full resolution: without
+    # the display-only smoothing the mirror structures render as salt-and-
+    # pepper. Only the plotted copy is smoothed; every scalar in the tables
+    # comes from the raw array.
     plot_map(PICDataReader.flatten_2d_slice(metrics["delta_B_over_B0"]),
              outdir / f"deltaB_map_step_{step}.png",
-             rf"$\delta B/B_0$ - step {step}", r"$\delta B/B_0$",
-             cmap="RdBu_r", symmetric=True)
+             rf"$\delta B/B_0$ — $t\Omega_{{ci}} = {toci:.1f}$", r"$\delta B/B_0$",
+             cmap=ps.CMAP_DIVERGING, symmetric=True, smooth_sigma=2.0,
+             prt_window=prt_window)
     plot_map(PICDataReader.flatten_2d_slice(metrics["B_magnitude"]),
              outdir / f"mirror_holes_map_step_{step}.png",
-             rf"$|B|$ mirror structures - step {step}", r"$|B|$",
-             cmap="magma")
+             rf"$|B|$ mirror structures — $t\Omega_{{ci}} = {toci:.1f}$", r"$|B|$",
+             cmap="magma", smooth_sigma=2.0, prt_window=prt_window)
     return step, True
 
 
@@ -1504,6 +1884,9 @@ class PhysicalDiagnostics:
                         "kappa_sigma", "error_maxwellian", "error_kappa",
                         "error_tail_maxwellian", "error_tail_kappa",
                         "suprathermal_fraction",
+                        # Hasta dónde llegó la estadística útil: sin esto no se
+                        # puede saber si dos casos compararon la misma cola.
+                        "tail_bins", "v_reliable_over_sigma",
                     ]
                 })
 
@@ -1552,7 +1935,8 @@ class PhysicalDiagnostics:
             print("[INFO] No field files found; skipping magnetic diagnostics.")
             return []
         steps = sorted(self.field_files)
-        tasks = [(step, self.field_files[step], B0) for step in steps]
+        window = self.prt_window()
+        tasks = [(step, self.field_files[step], B0, window) for step in steps]
         results = _run_step_tasks(_field_metrics_worker, tasks, self.jobs, "Field diagnostics")
         rows = [row for _, row in results]
         _write_csv(self.outdir / "field_fluctuation_table.csv", rows)
@@ -1568,9 +1952,14 @@ class PhysicalDiagnostics:
                 "linear_phase_start": growth["linear_phase_start"],
                 "linear_phase_end": growth["linear_phase_end"],
                 "r_squared": growth["r_squared"],
-                "fit_ok": int(np.isfinite(growth["r_squared"])
-                              and growth["r_squared"] >= 0.7),
+                "amplitude_gain": growth["amplitude_gain"],
+                "series_start": growth["series_start"],
+                "fit_ok": growth["fit_ok"],
+                "fit_reject_reason": growth["fit_reject_reason"],
             }])
+            if not growth["fit_ok"]:
+                print(f"  [WARN] tasa de crecimiento global NO valida: "
+                      f"{growth['fit_reject_reason']}")
         self.plot_field_maps()
         self.run_magnetic_spectra()
         return rows
@@ -1588,9 +1977,32 @@ class PhysicalDiagnostics:
         rows = [row for _, row in results]
         _write_csv(self.outdir / "magnetic_spectrum_table.csv", rows)
 
+    def prt_window(self) -> tuple | None:
+        """Ventana de salida de partículas, resuelta una sola vez por corrida.
+
+        Se lee del primer archivo prt disponible; si la corrida no guardó
+        partículas no hay ventana que marcar y se devuelve ``None`` en vez de
+        dibujar la caja del fallback, que sería una region inventada.
+        """
+        if getattr(self, "_prt_window", "unset") != "unset":
+            return self._prt_window
+        if not self.particle_files:
+            self._prt_window = None
+            return None
+        first = self.particle_files[sorted(self.particle_files)[0]]
+        lo, hi, source = prt_window_bounds(first)
+        ext = prt_window_extent_di(lo, hi)
+        print(f"[INFO] ventana prt ({source}): "
+              f"Z=[{ext['z_di'][0]:.2f}, {ext['z_di'][1]:.2f}] d_i, "
+              f"Y=[{ext['y_di'][0]:.2f}, {ext['y_di'][1]:.2f}] d_i "
+              f"({100 * ext['area_fraction']:.1f} % del area)")
+        self._prt_window = (lo, hi)
+        return self._prt_window
+
     def plot_field_maps(self):
         steps = _select_steps(sorted(self.field_files), self.selected_steps, self.max_map_steps)
-        tasks = [(step, self.field_files[step], self.outdir) for step in steps]
+        window = self.prt_window()
+        tasks = [(step, self.field_files[step], self.outdir, window) for step in steps]
         _run_step_tasks(_field_map_worker, tasks, self.jobs, "Field maps")
 
     def run_moments_and_correlations(self) -> list[dict]:
@@ -1686,17 +2098,61 @@ class PhysicalDiagnostics:
         fig, ax = plt.subplots(figsize=(8, 6.5))
         fig.patch.set_facecolor(DARK_BG)
         _style_axes(ax)
-        sc = ax.scatter(beta, a, c=t, cmap="plasma", s=40, edgecolors="white", linewidths=0.3)
-        ax.plot(beta, a, color="white", alpha=0.35, lw=1.0)
+
+        # Con ~2400 puntos, s=40 con borde blanco solapa cada marcador con el
+        # siguiente y la trayectoria se ve como una banda blanca uniforme: se
+        # pierde por completo la dirección temporal, que es lo único que este
+        # gráfico existe para mostrar. El tamaño y el borde se escalan con la
+        # densidad de puntos.
+        dense = len(beta) > 300
+        ax.plot(beta, a, color=TEXT_CLR, alpha=0.25, lw=0.8, zorder=1)
+        sc = ax.scatter(beta, a, c=t, cmap="plasma", zorder=2,
+                        s=6 if dense else 40,
+                        edgecolors="none" if dense else "white",
+                        linewidths=0.0 if dense else 0.3)
+        # Inicio y final explícitos: sin ellos no se sabe hacia dónde corre.
+        ax.plot(beta[0], a[0], "o", mfc="none", mec=ps.c("#56d364"), mew=2.2,
+                ms=13, zorder=3, label=r"inicio ($t=0$)")
+        ax.plot(beta[-1], a[-1], "X", color=ps.c("#f85149"), ms=13, zorder=3,
+                label="final")
+
+        # Rango visible primero: así un umbral que queda fuera del recuadro no
+        # aparece en la leyenda prometiendo una curva que no se ve.
+        pad = 0.12 * (np.nanmax(a) - np.nanmin(a) + 1e-12)
+        y_lo = min(np.nanmin(a) - pad, 0.95)
+        y_hi = max(np.nanmax(a) + pad, 1.05)
+
         bgrid = np.logspace(np.log10(max(np.nanmin(beta) * 0.6, 0.05)),
                             np.log10(max(np.nanmax(beta) * 1.6, 0.2)), 300)
-        ax.plot(bgrid, 1.0 + 1.0 / bgrid, "--", color="#ff7b72", label="mirror")
+        # Umbrales CGL/fluido. Los contornos cinéticos ajustados (gamma_max =
+        # 1e-3 Omega) requieren el solver de linear_theory.py y no son estos.
+        mirror_curve = 1.0 + 1.0 / bgrid
+        visible = np.any((mirror_curve >= y_lo) & (mirror_curve <= y_hi))
+        ax.plot(bgrid, mirror_curve, "--", color=ps.c("#ff7b72"),
+                label="mirror (CGL)" if visible else None)
+        ax.fill_between(bgrid, mirror_curve, 1e3, color=ps.c("#ff7b72"), alpha=0.08)
         fh = bgrid[bgrid > 2.0]
         if len(fh):
-            ax.plot(fh, 1.0 - 2.0 / fh, "--", color="#58a6ff", label="firehose")
+            fh_curve = 1.0 - 2.0 / fh
+            visible = np.any((fh_curve >= y_lo) & (fh_curve <= y_hi))
+            ax.plot(fh, fh_curve, "--", color=ps.c("#58a6ff"),
+                    label="firehose (CGL)" if visible else None)
+            ax.fill_between(fh, 1e-3, fh_curve, color=ps.c("#58a6ff"), alpha=0.08)
         ax.axhline(1.0, color=TEXT_CLR, alpha=0.35, linestyle=":")
-        ax.set_xscale("log")
-        ax.set_yscale("log")
+
+        # Escala log sólo si el rango la justifica. Estas corridas cubren un
+        # factor ~2 en beta y ~1.5 en A; en log eso da ticks del tipo
+        # "3x10^0, 4x10^0" que ocupan más que la información que aportan.
+        def _span(values):
+            lo, hi = np.nanmin(values), np.nanmax(values)
+            return hi / lo if lo > 0 else np.inf
+
+        if _span(beta) > 10:
+            ax.set_xscale("log")
+        if _span(a) > 10:
+            ax.set_yscale("log")
+        ax.set_xlim(np.nanmin(beta) * 0.85, np.nanmax(beta) * 1.15)
+        ax.set_ylim(y_lo, y_hi)
         ax.set_xlabel(r"$\beta_{\parallel i}$", color=TEXT_CLR)
         ax.set_ylabel(r"$A_i$", color=TEXT_CLR)
         ax.set_title("Brazil plot from moment averages", color=TEXT_CLR, fontweight="bold")
@@ -1740,15 +2196,35 @@ class PhysicalDiagnostics:
                 "E_internal_e": e_int_e,
                 "E_B": e_b,
                 "E_total": total,
+                # A_e viaja con la fila para que secular_heating pueda usar la
+                # isotropía electrónica como test de calentamiento numérico.
+                "A_e": r.get("A_e", np.nan),
             })
+        heating = secular_heating(rows)
+        apply_heating_correction(rows, heating)
+
         if rows and np.isfinite(rows[0]["E_total"]) and rows[0]["E_total"] != 0:
             e0 = rows[0]["E_total"]
             for row in rows:
                 row["energy_error"] = (row["E_total"] - e0) / e0
-        _write_csv(self.outdir / "energy_table.csv", rows)
-        self.plot_energy(rows)
+        if rows and np.isfinite(rows[0].get("E_total_corrected", np.nan)) \
+                and rows[0]["E_total_corrected"] != 0:
+            e0c = rows[0]["E_total_corrected"]
+            for row in rows:
+                row["energy_error_corrected"] = \
+                    (row["E_total_corrected"] - e0c) / e0c
 
-    def plot_energy(self, rows: list[dict]):
+        _write_csv(self.outdir / "energy_table.csv", rows)
+        if heating:
+            _write_csv(self.outdir / "numerical_heating.csv", [heating])
+            print(f"  calentamiento electrónico secular: "
+                  f"dTe/dt = {heating['slope_per_omegaci']:.3e} por Omega_ci^-1, "
+                  f"R2 = {heating['r_squared']:.4f}, "
+                  f"A_e medio = {heating['A_e_mean']:.3f} "
+                  f"-> {heating['verdict']}")
+        self.plot_energy(rows, heating)
+
+    def plot_energy(self, rows: list[dict], heating: dict | None = None):
         if not rows:
             return
         t = np.array([r["omega_ci_t"] for r in rows])
@@ -1756,19 +2232,29 @@ class PhysicalDiagnostics:
         fig.patch.set_facecolor(DARK_BG)
         _style_axes(ax)
         for key, color, label in [
-            ("E_kin_bulk", "#58a6ff", "bulk"),
-            ("E_internal_i", "#ff7b72", "ion internal"),
-            ("E_internal_e", "#d2a8ff", "electron internal"),
-            ("E_B", "#56d364", "magnetic fluct."),
-            ("E_total", "#f2cc60", "total"),
+            ("E_kin_bulk", ps.c("#58a6ff"), "bulk"),
+            ("E_internal_i", ps.c("#ff7b72"), "ion internal"),
+            ("E_internal_e", ps.c("#d2a8ff"), "electron internal"),
+            ("E_B", ps.c("#56d364"), "magnetic fluct."),
+            ("E_total", ps.c("#f2cc60"), "total"),
+            ("E_total_corrected", ps.c("#ffa657"), "total (sin deriva secular)"),
         ]:
             y = np.array([r.get(key, np.nan) for r in rows], dtype=float)
             if np.any(np.isfinite(y)):
-                ax.plot(t, y, "o-", color=color, label=label)
+                style = _series_style(len(t))
+                if key == "E_total_corrected":
+                    style = {**style, "linestyle": "--", "marker": "none"}
+                ax.plot(t, y, color=color, label=label, **style)
+        if heating:
+            ax.plot(t, heating["slope_per_omegaci"] * t + heating["intercept"],
+                    ":", color=ps.c("#8b949e"), lw=2.0,
+                    label=(rf"deriva secular $e^-$ "
+                           rf"($R^2$={heating['r_squared']:.3f})"))
         ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
         ax.set_ylabel("energy proxy [code]", color=TEXT_CLR)
         ax.set_title("Energy partition", color=TEXT_CLR, fontweight="bold")
-        ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
+        ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR,
+                  fontsize=11)
         _savefig(fig, self.outdir / "energy_partition.png")
 
         err = np.array([r.get("energy_error", np.nan) for r in rows], dtype=float)
@@ -1776,7 +2262,7 @@ class PhysicalDiagnostics:
             fig, ax = plt.subplots(figsize=(8.8, 5.4))
             fig.patch.set_facecolor(DARK_BG)
             _style_axes(ax)
-            ax.plot(t, err, "o-", color="#d2a8ff")
+            ax.plot(t, err, color=ps.c("#d2a8ff"), **_series_style(len(t)))
             ax.axhline(0, color=TEXT_CLR, alpha=0.35, linestyle=":")
             ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
             ax.set_ylabel(r"$(E(t)-E(0))/E(0)$", color=TEXT_CLR)

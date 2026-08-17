@@ -682,8 +682,9 @@ $\kappa$ y calcula la fracción supratermal. Salidas:
 ### 7. Brazil plots
 
 Representa $\langle\beta_{\parallel i}\rangle$ frente a
-$\langle A_i\rangle$ y superpone umbrales mirror/firehose. Salidas:
-`brazil_plot_global.png` y `brazil_plot_spatial.png`.
+$\langle A_i\rangle$ y superpone umbrales mirror/firehose. Salida:
+`brazil_plot_global.png`. (`brazil_plot_spatial.png` fue un alias del mismo
+archivo en versiones anteriores; ya no se genera.)
 
 ### 8. Mapas espaciales de anisotropía
 
@@ -706,9 +707,10 @@ $\ln(\delta B_{\mathrm{rms}})$ para estimar $\gamma$. Salidas:
 ### 11. Componentes magnéticas
 
 Separa fluctuaciones paralelas y transversales respecto a
-$B_0\parallel z$. Salidas:
-`deltaB_parallel_vs_time.png`, `deltaB_perp_vs_time.png` y
-`deltaB_components_comparison.png`.
+$B_0\parallel z$. Salida: `deltaB_components_comparison.png`, que ya contiene
+ambas componentes. (`deltaB_parallel_vs_time.png` y `deltaB_perp_vs_time.png`
+eran alias byte-idénticos del mismo archivo, no gráficas separadas; ya no se
+generan.)
 
 ### 12. Espectro magnético transversal
 

@@ -1,5 +1,5 @@
 # ============================================================
-# .gitignore — Proyecto PSC Plasma Simulation
+# .gitignore — PSC Plasma Simulation project
 # ============================================================
 
 # ---- Build directories (CMake, ninja, make) ----
@@ -118,7 +118,7 @@ ENV/
 # ---- Jupyter Notebooks (checkpoints) ----
 .ipynb_checkpoints/
 
-# ---- PDFs / Informes / Presentaciones ----
+# ---- PDFs / reports / slide decks ----
 *.pdf
 Informes/
 informes/
@@ -177,11 +177,24 @@ desktop.ini
 *.7z
 *.rar
 
-# ---- Curated analysis results ARE versioned ----
-# (cleaned: per-step maps only every 100k steps; one file per figure)
-!analysis_results/**/*.png
-!analysis_results/**/*.csv
-!analysis_results/**/*.json
-!analysis_results/**/*.txt
-# GIFs stay OUT of git: ~30 MB each x 5 per case, and fully regenerable with
-# `make fields diamagnetic`. The PNG maps are the thesis figures.
+# ---- Analysis results are NOT versioned ----
+# Figures, GIFs, per-step maps and diagnostic tables are all regenerable from the
+# raw run data via the CodeforAnalisys/Makefile targets. Keeping them in git made
+# the history grow into the gigabytes, so the whole tree stays out.
+/analysis_results/
+/CodeforAnalisys/downloads/
+
+# ---- graphify knowledge graph (generated) ----
+# Rebuilt locally with `graphify update .`; contains an AST cache, a query timestamp
+# that changes on every query, and absolute paths specific to each machine.
+/graphify-out/
+
+# ---- Personal notes / assistant memory ----
+/memory/
+.claude/settings.local.json
+*.graphify-bak
+
+# Older/draft copies of the psc-case-integrity skill. The canonical version that
+# Claude Code actually loads lives in .claude/skills/psc-case-integrity/.
+/.claude/psc-case-integrity/
+/.claude/skills-draft-psc-case-integrity/

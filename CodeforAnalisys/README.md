@@ -540,6 +540,131 @@ potencia final insignificante frente al resto de \(k\) es fuga espectral
 (leakage), no un modo físico — `spectral_analysis.py` descarta esos bins al
 reportar el \(k\) dominante.
 
+#### 7.5. Qué puede resolver realmente un diagrama $\omega$–$k$
+
+El muestreo fija cuatro números antes de cualquier física, y todo lo demás
+está acotado por ellos:
+
+$$
+\Delta k=\frac{2\pi}{L},\qquad
+k_{\rm Ny}=\frac{\pi}{\Delta x},\qquad
+\Delta\omega=\frac{2\pi}{T},\qquad
+\omega_{\rm Ny}=\frac{\pi}{\Delta t_{\rm out}},
+$$
+
+con $L$ el tamaño de la caja, $T$ la ventana temporal de la FFT y
+$\Delta t_{\rm out}$ la cadencia de escritura (no el paso de tiempo del PIC).
+
+De ahí salen tres criterios:
+
+1. **Muestreo en $k$.** El número de modos discretos dentro de la banda física
+   de la inestabilidad es $\simeq(k_{\max}-k_{\min})/\Delta k$. Ajustar
+   $\omega(k)$ necesita $\gtrsim 8$; una caja de $20\,d_i$ da $\Delta k\,d_i=0.31$
+   y por tanto **3 modos** por debajo de $k d_i=1$.
+
+2. **Anchura intrínseca.** Un modo que crece a $\gamma$ tiene una anchura
+   espectral $\sim 2\gamma$ en $\omega$, de modo que la rama solo es legible si
+   $\omega_r/\gamma\gtrsim10$. Para un modo aperiódico ($\omega_r=0$: mirror,
+   firehose oblicua) la desigualdad nunca se cumple: **no hay rama que medir**,
+   y el diagnóstico correcto es el mapa $\gamma(k_\parallel,k_\perp)$ más el
+   espectro en $k$, no el diagrama $\omega$–$k$.
+
+3. **Estacionariedad.** La FFT temporal supone una señal estacionaria. Con
+   $\gamma T\gtrsim3$ e-foldings dentro de la ventana, lo que se transforma es
+   la envolvente de crecimiento y no $\omega(k)$. Se resuelve acotando la
+   ventana a una sola fase física, o dividiendo la envolvente
+   ($\texttt{--degrowth per-k}$, que ajusta $\gamma(\mathbf k)$ modo a modo y
+   divide $e^{\gamma t}$ antes de la transformada temporal).
+
+`dispersion_analysis.py` evalúa los tres en cada corrida y escribe
+`dispersion_resolution_<plano>_<componente>.json` junto a las figuras, con el
+veredicto PASS/WARN y el $L$ o el $T$ que harían falta.
+
+#### 7.6. Presets por inestabilidad
+
+`--mode {mirror, firehose-oblique, firehose-parallel, emic, whistler, generic}`
+fija los valores por defecto que cada modo necesita — banda angular
+$\theta_{kB}$, corte físico en $k\,d_i$, escala del eje $\omega$, reducción de
+$k_\perp$ y tratamiento temporal. Cualquier bandera explícita gana sobre el
+preset. Los presets electrónicos (whistler) se reescalan a unidades iónicas con
+la razón de masas: $\omega_r/\Omega_{ci}=(\omega_r/\Omega_{ce})(m_i/m_e)$ y
+$k d_i=k d_e\sqrt{m_i/m_e}$.
+
+Dos consecuencias prácticas de esto:
+
+- Mirror y firehose oblicua se buscan en la banda $\theta_{kB}\in[45°,85°]$ con
+  `--kperp-reduction max`. Sumar sobre $k_\perp$ vuelca el pico oblicuo sobre el
+  eje $k_\parallel$, donde el modo no vive.
+- Los whistlers tienen $\omega_r\sim0.1\text{–}0.5\,\Omega_{ce}$, es decir
+  $20\text{–}100\,\Omega_{ci}$ con $m_i/m_e=200$. Una cadencia pensada para
+  escalas iónicas ($\Delta t_{\rm out}\sim0.07\,\Omega_{ci}^{-1}$, es decir
+  $\omega_{\rm Ny}\approx48\,\Omega_{ci}$) los **aliasea**: hacen falta
+  $\Delta t_{\rm out}\lesssim0.013\,\Omega_{ci}^{-1}$.
+
+#### 7.7. Ventanas: por qué en espacio no, y en tiempo sí
+
+Una ventana existe para corregir la discontinuidad que aparece al analizar un
+registro **no periódico** con una transformada que supone periodicidad. Los
+casos de anisotropía (`psc_anisotropy_case.hxx`) usan `BND_FLD_PERIODIC` y
+`BND_PRT_PERIODIC` en los tres ejes, y el volcado tiene exactamente $N$ celdas
+por un dominio $L$ (sin duplicar el punto de frontera). Es decir: **cada
+snapshot ya es un periodo exacto y la base de Fourier discreta es exacta**. No
+hay fuga que corregir.
+
+Aplicar una ventana ahí no quita fuga: la introduce. Multiplicar en $x$ es
+convolucionar en $k$, y el núcleo de Hann es $(-\tfrac14,\tfrac12,-\tfrac14)$
+en amplitud. Un modo exacto de la caja queda repartido así:
+
+| | bin $n-1$ | bin $n$ | bin $n+1$ |
+|---|---|---|---|
+| sin ventana | 0 % | **100 %** | 0 % |
+| Hann | 16.7 % | **66.7 %** | 16.7 % |
+
+Un tercio del modo se va a los números de onda vecinos. En una caja de
+$20\,d_i$, donde solo hay 3 modos por debajo de $k d_i=1$, eso equivale a
+emborronar un tercio del rango útil. Por eso `--spatial-window none` es el
+valor por defecto.
+
+En **tiempo** la situación es la opuesta: el registro empieza y termina en una
+fase arbitraria, no se cierra sobre sí mismo, y sin ventana los lóbulos
+laterales de la función sinc quedan a $-18$ dB repartidos por todo el eje
+$\omega$ — perfectamente visibles sobre una escala de color de 6 décadas y
+fáciles de confundir con ramas. Ahí la ventana sí hace falta. La elección es
+un compromiso medido sobre un registro de 772 muestras:
+
+| ventana temporal | peor lóbulo lateral | ancho del lóbulo principal |
+|---|---|---|
+| rectangular | $-18$ dB | $2\,\Delta\omega$ |
+| Tukey $\alpha=0.25$ | $-33$ dB | $\approx2.4\,\Delta\omega$ |
+| Hann | $-48$ dB | $4\,\Delta\omega$ |
+
+Hann duplica la anchura efectiva, y con $\Delta\omega=0.123\,\Omega_{ci}$ frente
+a $\omega_r\sim0.2$ eso es justo lo que no sobra. El valor por defecto es
+`--temporal-window tukey --window-alpha 0.25`, que conserva casi toda la
+resolución y baja los lóbulos 15 dB.
+
+Nota aparte: el detrending espacial (`fields -= mean(axis=(2,3))`) sí es
+correcto siempre — quita el modo $k=0$, es decir el campo de fondo uniforme, no
+un artefacto de frontera.
+
+#### 7.8. Convenciones del CSV de ridges
+
+Con `--ridge-axis k` (por defecto) cada fila es un número de onda resuelto y su
+$\omega$ medida, más la anchura a media altura y la resolución de la ventana:
+
+| columna | significado |
+|---|---|
+| `k_parallel_d_i` | modo discreto de la caja, $n\,\Delta k\,d_i$ |
+| `omega_over_omega_ci` | pico en $\omega$, interpolado sub-bin |
+| `omega_fwhm_over_omega_ci` | anchura a media altura del pico |
+| `omega_resolution_over_omega_ci` | $\Delta\omega$ de la ventana |
+| `resolved` | 1 solo si $\omega>{\rm FWHM}$, es decir si hay rama |
+
+El sentido de `resolved = 0` es literal: el pico es más ancho que su propia
+frecuencia central, de modo que la fila no sostiene una medida de $\omega(k)$.
+Para un modo aperiódico todas las filas salen con `resolved = 0` y
+$\omega=0$, que es la respuesta correcta.
+
 ### 8. Distribuciones de velocidad y ajuste Maxwelliano/Kappa
 
 #### 8.1. Razón física
@@ -850,6 +975,45 @@ $$
     ensamblado y selección de datasets HDF5.
 12. `psc_units.py`: define masas, campo guía, frecuencias, escalas espaciales,
     temperaturas iniciales y conversión de pasos a \(\Omega_{ci}t\).
+13. `linear_theory.py`: resuelve la relación de dispersión cinética lineal de
+    modos paralelos (bi-Maxwelliana y bi-kappa) y produce el CSV que consume
+    `polarization_dispersion.py --theory-csv`. Sin él, `gamma_theory` y
+    `relative_difference_pct` salen NaN y no hay validación PIC↔teoría.
+14. `vdf_spatial.py`: VDF resuelta espacialmente dentro de la ventana prt,
+    usando las posiciones que sí están en los archivos prt.
+15. `prt_region_field_cut.py`: ubica la ventana prt sobre los mapas de
+    fluctuación de campo y traza un corte 1D que la atraviesa.
+
+## Teoría lineal y VDF espacial
+
+Antes de comparar PIC con teoría hay que generar la curva teórica:
+
+```bash
+make theory-self-test                          # valida el solver
+make theory CASE=firehose_bikappa3_bigbox40
+make polarization DATA_DIR=/ruta CASE=firehose_bikappa3_bigbox40 \
+     THEORY_CSV=../analysis_results/firehose_bikappa3_bigbox40/04_spectra/linear_theory.csv
+```
+
+`make theory-self-test` comprueba el solver contra tres límites con respuesta
+conocida (identidad de \(Z'\), convergencia \(Z_\kappa \to Z\) como
+\(O(1/\kappa)\), y el umbral analítico del firehose paralelo
+\(\beta_\parallel - \beta_\perp = 2\)). El solver cubre **sólo propagación
+paralela**: el modo mirror es oblicuo y aperiódico y no sale de esta relación.
+
+Para la VDF resuelta en el espacio y la ubicación de la ventana prt:
+
+```bash
+make prt-region DATA_DIR=/ruta CASE=mirror_bikappa3_moderate
+make vdf-spatial DATA_DIR=/ruta CASE=mirror_bikappa3_moderate
+```
+
+`vdf_spatial.py` separa las partículas en `hole` / `ambient` / `peak` según el
+\(|B|\) de su celda y compara \(A\) entre poblaciones **contra el ruido de
+muestreo** (\(\sigma_A/A \simeq \sqrt{3/N}\)): reporta la diferencia en
+unidades de \(\sigma\), de modo que una separación aparente en un mapa de color
+no se confunda con una medida. La anisotropía se toma respecto al campo local
+\(\hat{b}\), no respecto a \(z\) global.
 
 ## Documentación técnica
 

@@ -5,9 +5,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+
+import plot_style as ps
+
+ps.apply()
 import numpy as np
 
 from data_reader import PICDataReader
@@ -26,17 +31,110 @@ plt.rcParams.update({
 
 
 def _smooth_2d(values: np.ndarray, passes: int = 2) -> np.ndarray:
-    """Small dependency-free Gaussian-like smoother for display density."""
+    """Small dependency-free Gaussian-like smoother for display density.
+
+    Edges are replicated rather than zero-padded. ``np.convolve(mode="same")``
+    implicitly assumes zeros outside the array, which costs a boundary row
+    roughly half its kernel weight -- and the omega = 0 row *is* a boundary.
+    Suppressing it is exactly the wrong bias for an aperiodic mode, whose
+    entire signal sits there.
+    """
     kernel = np.array([1.0, 4.0, 6.0, 4.0, 1.0], dtype=float)
     kernel /= kernel.sum()
+    pad = len(kernel) // 2
+
+    def smooth_axis(row: np.ndarray) -> np.ndarray:
+        if row.size <= pad:
+            return row
+        return np.convolve(np.pad(row, pad, mode="edge"), kernel, mode="valid")
+
     result = np.asarray(values, dtype=float)
     for _ in range(max(passes, 0)):
-        result = np.apply_along_axis(
-            lambda row: np.convolve(row, kernel, mode="same"), 0, result
+        result = np.apply_along_axis(smooth_axis, 0, result)
+        result = np.apply_along_axis(smooth_axis, 1, result)
+    return result
+
+
+def _make_window(kind: str, n: int, alpha: float = 0.25) -> np.ndarray:
+    """Analysis window of length ``n``.
+
+    Windows exist to suppress the leakage caused by analysing a *non-periodic*
+    record with a transform that assumes periodicity. When the record already
+    is periodic the window has nothing to fix and only does harm, because it
+    is a multiplication in the signal domain and therefore a convolution in
+    the Fourier domain: it smears every mode into its neighbours.
+
+    For a Hann window that smearing is exactly known. An exact box mode ends
+    up with 2/3 of its power in the true bin and 1/6 in each adjacent bin --
+    a third of the mode thrown one wavenumber away.
+
+    ``"tukey"`` tapers only a fraction ``alpha`` of each end and leaves the
+    middle untouched, which removes the edge discontinuity at a much smaller
+    cost in main-lobe width than a full Hann (measured on a 772-sample record:
+    worst sidelobe -33 dB against -48 dB for Hann, for ~20% broadening instead
+    of 100%).
+    """
+    if n <= 0:
+        return np.ones(0)
+    if kind == "none":
+        return np.ones(n)
+    if kind == "hann":
+        return np.hanning(n)
+    if kind == "tukey":
+        alpha = float(np.clip(alpha, 0.0, 1.0))
+        if alpha <= 0 or n < 3:
+            return np.ones(n)
+        window = np.ones(n)
+        taper = int(np.floor(alpha * (n - 1) / 2.0)) + 1
+        ramp_index = np.arange(taper)
+        ramp = 0.5 * (
+            1.0 + np.cos(np.pi * (2.0 * ramp_index / (alpha * (n - 1)) - 1.0))
         )
-        result = np.apply_along_axis(
-            lambda row: np.convolve(row, kernel, mode="same"), 1, result
-        )
+        window[:taper] = ramp
+        window[n - taper:] = ramp[::-1]
+        return window
+    raise ValueError(f"Unknown window: {kind!r}")
+
+
+def _parabolic_offset(values: np.ndarray, index: int) -> float:
+    """Sub-bin position of a peak, in bins, from a parabola through log-power.
+
+    With T ~ 50-150 Omega_ci^-1 the frequency bin is a sizeable fraction of the
+    frequency being measured, so rounding the peak to the nearest bin is a real
+    systematic. Interpolating recovers most of it; the estimate is still bounded
+    by the linewidth, which is why the width is reported alongside it.
+    """
+    if index <= 0 or index >= len(values) - 1:
+        return 0.0
+    trio = np.asarray(values[index - 1: index + 2], dtype=float)
+    if np.any(trio <= 0):
+        return 0.0
+    y0, y1, y2 = np.log(trio)
+    curvature = y0 - 2.0 * y1 + y2
+    if curvature >= 0 or not np.isfinite(curvature):
+        return 0.0
+    return float(np.clip(0.5 * (y0 - y2) / curvature, -0.5, 0.5))
+
+
+def _smooth_along(values: np.ndarray, axis: int, passes: int = 2) -> np.ndarray:
+    """Same smoother restricted to one axis.
+
+    Used when the other axis carries the quantity being measured: smoothing a
+    5-point kernel along omega blurs the peak by +-2 bins, which is the whole
+    frequency resolution of a short window.
+    """
+    kernel = np.array([1.0, 4.0, 6.0, 4.0, 1.0], dtype=float)
+    kernel /= kernel.sum()
+    pad = len(kernel) // 2
+
+    def smooth_axis(row: np.ndarray) -> np.ndarray:
+        if row.size <= pad:
+            return row
+        return np.convolve(np.pad(row, pad, mode="edge"), kernel, mode="valid")
+
+    result = np.asarray(values, dtype=float)
+    for _ in range(max(passes, 0)):
+        result = np.apply_along_axis(smooth_axis, axis, result)
     return result
 
 
@@ -62,13 +160,269 @@ def _autocrop_signal_extent(centers: np.ndarray, marginal: np.ndarray, exclude_f
     return centers[keep] if np.any(keep) else None
 
 
+# ---------------------------------------------------------------------------
+# Mode presets.
+#
+# omega_r_ci is the expected real frequency in Omega_ci (0.0 for aperiodic,
+# purely growing modes); k_di is the expected range of k*d_i at maximum growth;
+# theta_deg is the expected propagation angle relative to B0.
+#
+# The point of the table is not to pre-judge the answer but to let the run-time
+# resolution report state, in physical units, whether the box and the output
+# cadence can represent the mode at all before any spectrum is plotted.
+# ---------------------------------------------------------------------------
+MODE_PRESETS: dict[str, dict] = {
+    "generic": {
+        "omega_r_ci": None, "k_di": (0.1, 2.0), "theta_deg": (0.0, 90.0),
+        "aperiodic": False, "species": "ion",
+    },
+    "mirror": {
+        "omega_r_ci": 0.0, "k_di": (0.2, 1.0), "theta_deg": (50.0, 80.0),
+        "aperiodic": True, "species": "ion",
+    },
+    "firehose-oblique": {
+        "omega_r_ci": 0.0, "k_di": (0.2, 0.8), "theta_deg": (50.0, 80.0),
+        "aperiodic": True, "species": "ion",
+    },
+    "firehose-parallel": {
+        "omega_r_ci": 0.2, "k_di": (0.2, 0.6), "theta_deg": (0.0, 30.0),
+        "aperiodic": False, "species": "ion",
+    },
+    "emic": {
+        "omega_r_ci": 0.3, "k_di": (0.3, 1.0), "theta_deg": (0.0, 25.0),
+        "aperiodic": False, "species": "ion",
+    },
+    "whistler": {
+        # omega_r ~ 0.1-0.5 Omega_ce and k d_e ~ 0.3-0.6; both are rescaled to
+        # ion units at run time using the actual mass ratio.
+        "omega_r_ce": 0.3, "k_de": (0.3, 0.6), "theta_deg": (0.0, 25.0),
+        "aperiodic": False, "species": "electron",
+    },
+}
+
+
+def resolve_mode_expectations(mode: str, mass_ratio: float | None) -> dict:
+    """Return the preset for ``mode`` with electron-scale entries mapped to ion units."""
+    if mode not in MODE_PRESETS:
+        raise ValueError(f"Unknown mode preset: {mode!r}")
+    preset = dict(MODE_PRESETS[mode])
+    if preset.get("species") == "electron":
+        if mass_ratio is None or mass_ratio <= 0:
+            raise ValueError(
+                f"Mode preset {mode!r} is electron-scale and needs a mass ratio "
+                "(pass --mass-ratio or make psc_units.MASS_RATIO importable)"
+            )
+        root = float(np.sqrt(mass_ratio))
+        preset["omega_r_ci"] = preset.pop("omega_r_ce") * mass_ratio
+        k_de_lo, k_de_hi = preset.pop("k_de")
+        # k d_i = (k d_e) * sqrt(mi/me)
+        preset["k_di"] = (k_de_lo * root, k_de_hi * root)
+    return preset
+
+
+def spectral_resolution_report(
+    times: np.ndarray,
+    spacing: tuple[float, float],
+    grid_shape: tuple[int, int],
+    *,
+    mode: str = "generic",
+    mass_ratio: float | None = None,
+    gamma_ci: float | None = None,
+) -> dict:
+    """Quantify what the (box, cadence) pair can actually resolve, in physical units.
+
+    Everything downstream of the FFT is bounded by four numbers that follow
+    from the sampling alone, before any physics:
+
+        dk   = 2*pi/L        smallest resolvable wavenumber separation
+        k_Ny = pi/dx         largest representable wavenumber
+        dw   = 2*pi/T        frequency resolution of the time window
+        w_Ny = pi/dt_out     largest representable frequency
+
+    A dispersion *branch* only exists as a measurable object when the mode is
+    (a) sampled by enough discrete k in the physically interesting band and
+    (b) narrow enough in omega to be distinguishable. For an unstable mode the
+    intrinsic linewidth is ~2*gamma, so the branch is resolvable only when
+    omega_r/gamma is large; a purely growing mode (omega_r = 0) has no branch
+    at all and the omega-k diagram is the wrong diagnostic for it.
+    """
+    times = np.asarray(times, dtype=float)
+    dt = float(np.median(np.diff(times)))
+    duration = float(times[-1] - times[0])
+    expectations = resolve_mode_expectations(mode, mass_ratio)
+
+    per_axis = []
+    for length_per_cell, n_cells in zip(spacing, grid_shape):
+        box = float(length_per_cell) * int(n_cells)
+        dk = 2.0 * np.pi / box
+        per_axis.append({
+            "box_di": box,
+            "cells": int(n_cells),
+            "dx_di": float(length_per_cell),
+            "dk_di_inv": dk,
+            "k_nyquist_di_inv": np.pi / float(length_per_cell),
+            "modes_below_kdi_1": int(np.floor(1.0 / dk)),
+        })
+
+    dk_min = min(axis["dk_di_inv"] for axis in per_axis)
+    k_lo, k_hi = expectations["k_di"]
+    modes_in_band = int(np.floor(k_hi / dk_min) - np.ceil(k_lo / dk_min) + 1)
+
+    report = {
+        "mode": mode,
+        "expectations": expectations,
+        "n_snapshots": int(times.size),
+        "window_oci": duration,
+        "dt_out_oci": dt,
+        "domega_ci": 2.0 * np.pi / duration,
+        "omega_nyquist_ci": np.pi / dt,
+        "independent_positive_frequencies": (int(times.size) - 1) // 2,
+        "axes": per_axis,
+        "modes_in_expected_k_band": max(modes_in_band, 0),
+        "gamma_ci": gamma_ci,
+        "checks": [],
+    }
+
+    def check(name, ok, detail):
+        report["checks"].append({"name": name, "status": "PASS" if ok else "WARN",
+                                 "detail": detail})
+
+    check(
+        "k_sampling",
+        modes_in_band >= 8,
+        f"{max(modes_in_band, 0)} discrete k modes inside the expected band "
+        f"k d_i in [{k_lo:g}, {k_hi:g}] (dk d_i = {dk_min:.4f}). "
+        f"Fitting omega(k) needs >= 8; a box of L >= {2 * np.pi * 8 / max(k_hi - k_lo, 1e-9):.0f} d_i "
+        "would deliver that.",
+    )
+    check(
+        "k_nyquist",
+        min(axis["k_nyquist_di_inv"] for axis in per_axis) > 2.0 * k_hi,
+        f"k_Nyquist d_i = {min(a['k_nyquist_di_inv'] for a in per_axis):.1f} vs "
+        f"expected k_max d_i = {k_hi:g}.",
+    )
+
+    omega_r = expectations["omega_r_ci"]
+    if expectations["aperiodic"] or (omega_r is not None and omega_r == 0.0):
+        check(
+            "omega_branch_exists",
+            False,
+            f"Mode {mode!r} is aperiodic (omega_r = 0): it has no dispersion branch to "
+            "resolve. The omega-k diagram cannot show it as a ridge -- use the "
+            "gamma(k_par,k_perp) growth map and the k spectrum instead. Use "
+            "--omega-scale linear so the omega = 0 row is at least visible.",
+        )
+    elif omega_r is not None:
+        n_bins = omega_r / report["domega_ci"]
+        check(
+            "omega_resolution",
+            n_bins >= 5,
+            f"expected omega_r = {omega_r:g} Omega_ci spans {n_bins:.1f} frequency bins "
+            f"(d_omega = {report['domega_ci']:.4f} Omega_ci over T = {duration:.1f} "
+            f"Omega_ci^-1). Need >= 5; that requires T >= {10 * np.pi / omega_r:.0f} Omega_ci^-1.",
+        )
+        check(
+            "omega_nyquist",
+            report["omega_nyquist_ci"] > 4.0 * omega_r,
+            f"omega_Nyquist = {report['omega_nyquist_ci']:.2f} Omega_ci vs expected "
+            f"omega_r = {omega_r:g} Omega_ci. Below 4x, the branch aliases; "
+            f"dt_out <= {2 * np.pi / (8 * omega_r):.4f} Omega_ci^-1 gives 8 samples per period.",
+        )
+        if gamma_ci is not None and gamma_ci > 0:
+            ratio = omega_r / gamma_ci
+            check(
+                "branch_sharpness",
+                ratio >= 10.0,
+                f"omega_r/gamma = {ratio:.1f}. A mode growing at gamma has an intrinsic "
+                "linewidth ~2*gamma, so below ~10 the ridge is broader than its own "
+                "frequency and omega(k) cannot be read off reliably.",
+            )
+
+    if gamma_ci is not None and gamma_ci > 0:
+        growth_factor = gamma_ci * duration
+        check(
+            "stationarity",
+            growth_factor <= 3.0,
+            f"gamma*T = {growth_factor:.1f} e-foldings inside the FFT window. Above ~3 the "
+            "signal is strongly non-stationary and the temporal FFT measures the growth "
+            "envelope rather than omega(k). Use --degrowth per-k, or shorten the window.",
+        )
+
+    return report
+
+
+def _spatial_fft_sliced(
+    component: np.ndarray,
+    spatial_window: np.ndarray,
+    slice0: slice,
+    slice1: slice,
+    block: int = 64,
+) -> np.ndarray:
+    """Windowed 2D spatial FFT, sliced to the retained k range, in time blocks.
+
+    The full (nt, n0, n1) complex transform is never materialised: for a long
+    run at 576^2 or 1152^2 that array alone is tens of GB, and only the small
+    central k block survives the slice anyway.
+    """
+    nt = component.shape[0]
+    out = np.empty(
+        (nt, slice0.stop - slice0.start, slice1.stop - slice1.start),
+        dtype=np.complex128,
+    )
+    for start in range(0, nt, max(block, 1)):
+        stop = min(start + max(block, 1), nt)
+        chunk = np.asarray(component[start:stop], dtype=float) * spatial_window
+        transformed = np.fft.fftshift(np.fft.fft2(chunk, axes=(1, 2)), axes=(1, 2))
+        out[start:stop] = transformed[:, slice0, slice1]
+    return out
+
+
+def _fit_growth_per_mode(
+    mode_power: np.ndarray,
+    times: np.ndarray,
+    *,
+    power_floor_fraction: float = 1e-10,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Least-squares gamma(k) from d/dt log|b(k,t)|, plus the fit R^2.
+
+    ``mode_power`` is |b(k,t)|^2 summed over components, shape (nt, nk0, nk1).
+    Returns ``(gamma, r_squared)`` each shaped (nk0, nk1). Modes whose power
+    never rises above ``power_floor_fraction`` of the global peak get gamma = 0,
+    so de-growth never amplifies pure PIC noise.
+    """
+    times = np.asarray(times, dtype=float)
+    tiny = np.finfo(float).tiny
+    peak = float(np.max(mode_power)) if mode_power.size else 0.0
+    log_amp = 0.5 * np.log(np.maximum(mode_power, tiny))
+
+    t_centered = times - times.mean()
+    denom = float(np.sum(t_centered**2))
+    if denom <= 0:
+        zeros = np.zeros(mode_power.shape[1:], dtype=float)
+        return zeros, zeros
+
+    y_centered = log_amp - log_amp.mean(axis=0, keepdims=True)
+    gamma = np.tensordot(t_centered, y_centered, axes=(0, 0)) / denom
+
+    residual = y_centered - gamma[None, :, :] * t_centered[:, None, None]
+    ss_res = np.sum(residual**2, axis=0)
+    ss_tot = np.sum(y_centered**2, axis=0)
+    r_squared = np.clip(1.0 - ss_res / np.maximum(ss_tot, tiny), 0.0, 1.0)
+
+    if peak > 0:
+        alive = np.max(mode_power, axis=0) > power_floor_fraction * peak
+        gamma = np.where(alive, gamma, 0.0)
+        r_squared = np.where(alive, r_squared, 0.0)
+    return gamma, r_squared
+
+
 def compute_phase_velocity_density(
     field_series: np.ndarray,
     time_oci: np.ndarray,
     spacing: tuple[float, float],
     axes: tuple[str, str],
     parallel_axis: str = "z",
-    velocity_min: float = 0.5,
+    velocity_min: float = 0.0,
     velocity_max: float = 12.0,
     velocity_bins: int = 240,
     frequency_bins: int = 180,
@@ -78,12 +432,54 @@ def compute_phase_velocity_density(
     theta_max_deg: float | None = None,
     density_normalization: str = "global",
     power_floor_db: float = -40.0,
+    time_detrend: str = "none",
+    degrowth: str = "none",
+    kmax_di: float | None = None,
+    spatial_window: str = "none",
+    temporal_window: str = "tukey",
+    window_alpha: float = 0.25,
 ) -> dict:
     """Transform B(t, axis0, axis1) into weighted (omega, v_phase) density.
 
     ``field_series`` has shape ``(n_components, nt, n0, n1)``. Time is
     normalized as ``Omega_ci t`` and spacing is measured in ``d_i``. Therefore
     ``(omega/Omega_ci) / (k_parallel d_i)`` is directly ``v_phase/v_A``.
+
+    ``time_detrend``
+        ``"none"`` (default) keeps the zero-frequency content. Subtracting the
+        per-cell time mean -- the previous hard-wired behaviour -- deletes the
+        omega = 0 row exactly, which is precisely the signal of an aperiodic
+        mode (mirror, oblique firehose). ``"mean"`` restores the old behaviour
+        and ``"linear"`` removes a per-cell linear trend; both are only
+        appropriate for genuinely propagating modes.
+
+    ``degrowth``
+        Divide out the exponential envelope before the temporal FFT, so the
+        transform sees a stationary signal and returns the real frequency
+        instead of the growth-broadened envelope. ``"global"`` uses one gamma
+        from the total fluctuation power, ``"per-k"`` fits gamma(k) for every
+        retained mode independently. ``"none"`` disables it.
+
+    ``kmax_di``
+        Physical cap on the retained wavenumber, in units of 1/d_i. Preferred
+        over ``max_spatial_mode``: it keeps the analysis inside the band where
+        the fluctuations are physical rather than grid-scale particle noise,
+        and it shrinks the transform by orders of magnitude.
+
+    ``spatial_window``
+        Default ``"none"``. The PSC anisotropy runs use periodic field and
+        particle boundaries in all three directions, so a snapshot is already
+        an exact period and the DFT basis is exact. Windowing it does not
+        remove leakage -- there is none -- it *creates* leakage, scattering a
+        third of every mode's power into the adjacent wavenumbers. With only
+        a handful of resolved modes below k d_i = 1 that is a large fraction
+        of the useful range.
+
+    ``temporal_window``
+        Default ``"tukey"``. Time is *not* periodic: the record starts and
+        stops at arbitrary phase, so a window is genuinely needed here. Hann
+        buries the sidelobes but doubles the main-lobe width, which these runs
+        cannot afford; a Tukey taper keeps most of the resolution.
     """
     fields = np.asarray(field_series, dtype=float)
     times = np.asarray(time_oci, dtype=float)
@@ -103,16 +499,56 @@ def compute_phase_velocity_density(
         raise ValueError("Snapshot times must be uniformly spaced")
     dt = float(np.median(delta_t))
 
+    # Remove the k = 0 content of every snapshot (the uniform background field);
+    # this is always correct and is what isolates the fluctuations.
     fields = fields - np.mean(fields, axis=(2, 3), keepdims=True)
-    fields = fields - np.mean(fields, axis=1, keepdims=True)
+
+    # Temporal detrending is NOT always correct. Subtracting the per-cell time
+    # mean removes the omega = 0 Fourier row exactly, which for mirror and
+    # oblique firehose deletes the mode itself and leaves only the sidelobes of
+    # the analysis window -- a k-independent horizontal band that looks like a
+    # measurement but carries no dispersion information.
+    if time_detrend == "mean":
+        fields = fields - np.mean(fields, axis=1, keepdims=True)
+    elif time_detrend == "linear":
+        t_centered = times - times.mean()
+        denom = float(np.sum(t_centered**2))
+        if denom > 0:
+            centered = fields - np.mean(fields, axis=1, keepdims=True)
+            slope = np.tensordot(t_centered, centered, axes=(0, 1)) / denom
+            fields = centered - slope[:, None, :, :] * t_centered[None, :, None, None]
+    elif time_detrend != "none":
+        raise ValueError(f"Unknown time_detrend: {time_detrend!r}")
+
     nt, n0, n1 = fields.shape[1:]
-    spatial_window = np.hanning(n0)[:, None] * np.hanning(n1)[None, :]
-    temporal_window = np.hanning(nt)[:, None, None]
+    if min(n0, n1) < 4:
+        # A one-cell axis carries no wavenumber information at all, and with a
+        # Hann window it would additionally multiply the whole field by zero
+        # (np.hanning(1) is [0.0]) so the failure would only surface much later
+        # as an empty spectrum. Say so here instead.
+        raise ValueError(
+            f"Plane has a degenerate axis (shape {n0}x{n1}); the analysis plane "
+            "or the parallel axis is probably wrong for this run"
+        )
+    spatial_window_name, temporal_window_name = spatial_window, temporal_window
+    spatial_window = (
+        _make_window(spatial_window_name, n0, window_alpha)[:, None]
+        * _make_window(spatial_window_name, n1, window_alpha)[None, :]
+    )
+    temporal_window = _make_window(temporal_window_name, nt, window_alpha)[:, None, None]
 
     full_k0 = np.fft.fftshift(np.fft.fftfreq(n0, d=spacing[0])) * 2.0 * np.pi
     full_k1 = np.fft.fftshift(np.fft.fftfreq(n1, d=spacing[1])) * 2.0 * np.pi
     half0 = min(max_spatial_mode, (n0 - 1) // 2)
     half1 = min(max_spatial_mode, (n1 - 1) // 2)
+    if kmax_di is not None and kmax_di > 0:
+        # A physical cap beats a fixed mode-count cap: max_spatial_mode = 128
+        # reaches k d_i ~ 40 in a 20 d_i box, two decades above anything the
+        # ion-scale physics occupies, so most of the plotted range is PIC noise.
+        dk0 = 2.0 * np.pi / (spacing[0] * n0)
+        dk1 = 2.0 * np.pi / (spacing[1] * n1)
+        half0 = min(half0, max(int(np.ceil(kmax_di / dk0)), 2))
+        half1 = min(half1, max(int(np.ceil(kmax_di / dk1)), 2))
     center0 = n0 // 2
     center1 = n1 // 2
     slice0 = slice(center0 - half0, center0 + half0 + 1)
@@ -120,18 +556,49 @@ def compute_phase_velocity_density(
     k0 = full_k0[slice0]
     k1 = full_k1[slice1]
 
+    if degrowth not in ("none", "global", "per-k"):
+        raise ValueError(f"Unknown degrowth: {degrowth!r}")
+
+    spectra = [
+        _spatial_fft_sliced(component, spatial_window, slice0, slice1)
+        for component in fields
+    ]
+
+    gamma_map = None
+    gamma_r2 = None
+    gamma_global = None
+    if degrowth != "none":
+        mode_power = np.zeros(spectra[0].shape, dtype=float)
+        for spectrum in spectra:
+            mode_power += np.abs(spectrum) ** 2
+        gamma_map, gamma_r2 = _fit_growth_per_mode(mode_power, times)
+        gamma_global = float(
+            _fit_growth_per_mode(
+                np.sum(mode_power, axis=(1, 2))[:, None, None], times
+            )[0][0, 0]
+        )
+        envelope_gamma = (
+            gamma_map if degrowth == "per-k"
+            else np.full(gamma_map.shape, gamma_global, dtype=float)
+        )
+        # Clip the exponent, not gamma: a mode whose power is pure noise can fit
+        # an arbitrarily steep slope, and exp() of that would overflow to inf.
+        exponent = np.clip(
+            envelope_gamma[None, :, :] * (times - times.mean())[:, None, None],
+            -30.0, 30.0,
+        )
+        envelope = np.exp(exponent)
+        spectra = [spectrum / envelope for spectrum in spectra]
+
     nfft = max(int(temporal_fft_size), nt)
     power = np.zeros((nfft, len(k0), len(k1)), dtype=float)
-    for component in fields:
-        spatial_fft = np.fft.fftshift(
-            np.fft.fft2(component * spatial_window, axes=(1, 2)),
-            axes=(1, 2),
-        )[:, slice0, slice1]
+    for spectrum in spectra:
         transformed = np.fft.fftshift(
-            np.fft.fft(spatial_fft * temporal_window, n=nfft, axis=0),
+            np.fft.fft(spectrum * temporal_window, n=nfft, axis=0),
             axes=0,
         )
         power += np.abs(transformed) ** 2
+    del spectra
 
     omega = np.fft.fftshift(np.fft.fftfreq(nfft, d=dt)) * 2.0 * np.pi
     omega_grid, k0_grid, k1_grid = np.meshgrid(
@@ -262,6 +729,16 @@ def compute_phase_velocity_density(
         "theta_grid": theta_grid,
         "theta_max_deg": theta_max_deg,
         "density_normalization": density_normalization,
+        "time_detrend": time_detrend,
+        "degrowth": degrowth,
+        "spatial_window": spatial_window_name,
+        "temporal_window": temporal_window_name,
+        "window_alpha": window_alpha,
+        "gamma_map": gamma_map,
+        "gamma_r_squared": gamma_r2,
+        "gamma_global": gamma_global,
+        "times": times,
+        "grid_shape": (n0, n1),
     }
 
 
@@ -274,14 +751,19 @@ def _reduce_kperp(
     kperp_reduction: str = "sum",
     theta_max_deg: float | None = None,
     theta_grid: np.ndarray | None = None,
+    theta_min_deg: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Collapse the perpendicular k axis of a (nfft, nk0, nk1) power cube.
 
-    Returns ``(p2d, k_par)`` with ``p2d`` shaped ``(nfft, nk_par)``. If
-    ``theta_max_deg`` is given, cells with propagation angle (from
-    ``theta_grid``, shape ``(nk0, nk1)``) larger than the threshold are
-    zeroed out before reducing, so the perpendicular reduction reflects only
-    the quasi-parallel subset instead of being diluted by oblique modes.
+    Returns ``(p2d, k_par)`` with ``p2d`` shaped ``(nfft, nk_par)``. Cells whose
+    propagation angle (from ``theta_grid``, shape ``(nk0, nk1)``) falls outside
+    ``[theta_min_deg, theta_max_deg]`` are zeroed before reducing, so the
+    reduction reflects only the angular band of interest.
+
+    An angular *band* rather than a ceiling matters for oblique instabilities:
+    mirror and oblique firehose peak near theta_kB ~ 60-75 deg, and summing
+    every k_perp onto the k_parallel axis smears that oblique peak into the
+    quasi-parallel range where the mode does not live.
     """
     if axes[0] == parallel_axis:
         k_par = k0
@@ -290,10 +772,15 @@ def _reduce_kperp(
         k_par = k1
         axis_perp = 1
 
-    if theta_max_deg is not None:
+    if theta_max_deg is not None or theta_min_deg is not None:
         if theta_grid is None:
-            raise ValueError("theta_grid is required when theta_max_deg is set")
-        power = np.where(theta_grid[None, :, :] <= theta_max_deg, power, 0.0)
+            raise ValueError("theta_grid is required when a theta filter is set")
+        keep = np.ones_like(theta_grid, dtype=bool)
+        if theta_max_deg is not None:
+            keep &= theta_grid <= theta_max_deg
+        if theta_min_deg is not None:
+            keep &= theta_grid >= theta_min_deg
+        power = np.where(keep[None, :, :], power, 0.0)
 
     if kperp_reduction == "sum":
         p2d = np.sum(power, axis=axis_perp)
@@ -384,8 +871,35 @@ def _extract_ridges_omega_k(
     theta_max_deg: float | None,
     min_power_db: float,
     max_jump_fraction: float,
+    apply_jacobian: bool = False,
+    use_velocity_mask: bool = False,
+    theta_min_deg: float | None = None,
+    ridge_axis: str = "k",
+    include_zero_omega: bool = False,
 ) -> list[dict]:
-    """Continuity-constrained branch tracking on the native (omega, k_parallel) grid."""
+    """Continuity-constrained branch tracking on the native (omega, k_parallel) grid.
+
+    ``apply_jacobian`` reweights by |omega|/k^2 before tracking. That factor
+    belongs to the v_phase histogram, where it compensates the nonuniform
+    sampling of the omega/k mapping. On the native (omega, k) grid there is no
+    such mapping, so the factor is not a correction but a 1/k^2 bias: it pulls
+    the tracked ridge onto the smallest resolved k at every frequency and
+    produces a vertical stripe at k = 2*pi/L regardless of the physics. It is
+    therefore off by default.
+
+    ``use_velocity_mask`` restricts tracking to the v_phase window used by the
+    density plot. That window has a lower bound, so it silently removes any
+    mode with omega -> 0 at finite k -- exactly the aperiodic modes. Prefer a
+    physical ``kmax_di`` cap to suppress grid-scale noise instead.
+
+    ``ridge_axis`` selects which variable is treated as independent.
+    ``"k"`` (default) reports one omega per resolved wavenumber, which is what
+    a dispersion relation is: k is quantised by the box and is the controlled
+    variable, omega is measured. ``"omega"`` is the legacy row-walk that scans
+    frequencies and reports the strongest k at each; with only a handful of
+    resolved k it returns hundreds of points stacked on the same wavenumber,
+    which reads as a branch on paper but is a vertical stripe on the plot.
+    """
     omega = result["omega"]
     k0 = result["k0"]
     k1 = result["k1"]
@@ -395,18 +909,20 @@ def _extract_ridges_omega_k(
     velocity_min = result["velocity_min"]
     velocity_max = result["velocity_max"]
 
-    # Restrict to the same physically-valid region the v_phase histogram uses
-    # (omega>0, nonzero k, velocity_min/velocity_max, optional angle filter) —
-    # otherwise the branch tracker can lock onto grid-scale PIC particle noise
-    # at large k (tiny, near-constant v_phase across all omega), which is
-    # exactly the kind of artifact this diagnostic is meant to screen out.
-    power = np.where(result["valid"], result["power"], 0.0)
+    power = (
+        np.where(result["valid"], result["power"], 0.0)
+        if use_velocity_mask
+        else result["power"]
+    )
 
     p2d, k_par = _reduce_kperp(
         power, k0, k1, axes, parallel_axis, kperp_reduction,
         theta_max_deg=theta_max_deg, theta_grid=result["theta_grid"],
+        theta_min_deg=theta_min_deg,
     )
-    pos_w = omega > 0
+    # Aperiodic modes live at omega = 0 exactly; dropping that row guarantees
+    # they can never be reported.
+    pos_w = omega >= 0 if include_zero_omega else omega > 0
     w = omega[pos_w]
     p2d = p2d[pos_w, :]
     if absolute_velocity:
@@ -421,28 +937,32 @@ def _extract_ridges_omega_k(
     if w.size == 0 or kk.size == 0:
         return []
 
-    # Weight by the same |domega/dk| = |omega|/k_parallel^2 Jacobian used to
-    # build the v_phase density. Raw (omega,k) power is typically dominated by
-    # small-k, low-v_phase broadband content; without this weighting the
-    # tracker would lock onto that broadband floor instead of the branches
-    # that actually stand out once expressed in phase-velocity terms.
-    jacobian = np.abs(w)[:, None] / np.maximum(kk[None, :], 1e-12) ** 2
-    p2d = p2d * jacobian
+    if apply_jacobian:
+        jacobian = np.abs(w)[:, None] / np.maximum(kk[None, :], 1e-12) ** 2
+        p2d = p2d * jacobian
 
     # A single-realization FFT has poor per-pixel SNR (few independent
     # frequencies/k-modes); smooth before ridge-walking so the tracker locks
     # onto a coherent branch rather than pixel-to-pixel noise fluctuations.
-    p2d = _smooth_2d(p2d, passes=2)
+    # When omega is the measured quantity, smooth only across k: a 5-point
+    # kernel along omega blurs the peak by +-2 bins, which for a short window
+    # is the entire frequency resolution.
+    if ridge_axis == "k":
+        p2d = _smooth_along(p2d, axis=1, passes=2)
+    else:
+        p2d = _smooth_2d(p2d, passes=2)
 
     # Smoothing mixes power across neighboring omega rows, which can leak a
     # little power past the velocity_min/velocity_max boundary into cells
     # that were exactly zero before smoothing. Re-clip so accepted ridge
     # points always land inside the requested, physically-meaningful range.
-    velocity_grid = w[:, None] / kk[None, :]
-    in_velocity_range = (
-        (np.abs(velocity_grid) >= velocity_min) & (np.abs(velocity_grid) <= velocity_max)
-    )
-    p2d = np.where(in_velocity_range, p2d, 0.0)
+    if use_velocity_mask:
+        velocity_grid = w[:, None] / kk[None, :]
+        in_velocity_range = (
+            (np.abs(velocity_grid) >= velocity_min)
+            & (np.abs(velocity_grid) <= velocity_max)
+        )
+        p2d = np.where(in_velocity_range, p2d, 0.0)
 
     global_peak = float(np.max(p2d)) if p2d.size else 0.0
     power_floor = (10.0 ** (min_power_db / 10.0)) * global_peak
@@ -450,6 +970,53 @@ def _extract_ridges_omega_k(
     exclusion = max(2, len(kk) // 40)
 
     rows: list[dict] = []
+
+    if ridge_axis == "k":
+        # One measured omega per resolved k. The half-power width in omega is
+        # reported alongside it: for an unstable mode that width is bounded
+        # below by both the growth-rate broadening (~2*gamma) and the window
+        # resolution (2*pi/T), so a peak whose width exceeds its own centre
+        # frequency is not a branch and the CSV should say so.
+        domega = float(w[1] - w[0]) if w.size > 1 else float("nan")
+        omega_exclusion = max(2, len(w) // 40)
+        for column, this_k in enumerate(kk):
+            work_column = p2d[:, column].copy()
+            for rank in range(1, ridge_count + 1):
+                index = int(np.argmax(work_column))
+                peak_power = float(work_column[index])
+                if peak_power <= power_floor or not np.isfinite(peak_power):
+                    break
+                this_omega = float(w[index]) + _parabolic_offset(work_column, index) * domega
+                half = 0.5 * peak_power
+                lo_index = index
+                while lo_index > 0 and work_column[lo_index] > half:
+                    lo_index -= 1
+                hi_index = index
+                while hi_index < len(work_column) - 1 and work_column[hi_index] > half:
+                    hi_index += 1
+                width = float(w[hi_index] - w[lo_index])
+                velocity = this_omega / this_k
+                if absolute_velocity:
+                    velocity = abs(velocity)
+                rows.append(
+                    {
+                        "k_parallel_d_i": float(this_k),
+                        "omega_over_omega_ci": this_omega,
+                        "omega_fwhm_over_omega_ci": width,
+                        "omega_resolution_over_omega_ci": domega,
+                        "phase_velocity_over_va": float(velocity),
+                        "resolved": int(
+                            np.isfinite(width) and width > 0 and this_omega > width
+                        ),
+                        "ridge_rank": rank,
+                        "spectral_power": peak_power,
+                    }
+                )
+                lo = max(0, index - omega_exclusion)
+                hi = min(len(work_column), index + omega_exclusion + 1)
+                work_column[lo:hi] = 0.0
+        return rows
+
     for rank in range(1, ridge_count + 1):
         work_rows = p2d.copy()
         prev_k = None
@@ -494,13 +1061,20 @@ def extract_ridges(
     theta_max_deg: float | None = None,
     min_power_db: float = -30.0,
     max_jump: float = 0.12,
+    theta_min_deg: float | None = None,
+    ridge_axis: str = "k",
+    apply_jacobian: bool = False,
+    use_velocity_mask: bool = False,
+    include_zero_omega: bool = False,
 ) -> list[dict]:
-    """Find separated dispersion-branch peaks at every resolved positive frequency.
+    """Find dispersion-branch peaks on the native (omega, k_parallel) grid.
 
     ``ridge_source="omega-k"`` (default) tracks branches on the native,
-    globally-normalized (omega, k_parallel) grid with a minimum-power floor
-    and a maximum per-step jump in k_parallel (as a fraction of the resolved
-    k_parallel range) to keep the branch from jumping into unrelated noise.
+    globally-normalized (omega, k_parallel) grid with a minimum-power floor.
+    With ``ridge_axis="k"`` it reports one omega per resolved wavenumber plus
+    the half-power width, which is the form a dispersion measurement should
+    take; with ``ridge_axis="omega"`` it reproduces the legacy continuity-
+    constrained walk across frequencies.
     ``ridge_source="v-phase"`` reproduces the legacy independent per-omega
     argmax on the v_phase histogram, now with the same power floor applied.
     """
@@ -508,6 +1082,11 @@ def extract_ridges(
         return _extract_ridges_omega_k(
             result, ridge_count, kperp_reduction, theta_max_deg,
             min_power_db, max_jump,
+            apply_jacobian=apply_jacobian,
+            use_velocity_mask=use_velocity_mask,
+            theta_min_deg=theta_min_deg,
+            ridge_axis=ridge_axis,
+            include_zero_omega=include_zero_omega,
         )
     if ridge_source == "v-phase":
         return _extract_ridges_v_phase(result, ridge_count, min_power_db)
@@ -611,7 +1190,7 @@ def plot_density(
     )
     colorbar.set_label(colorbar_label)
     fig.tight_layout()
-    fig.savefig(output, dpi=220)
+    ps.save(fig, output)
     plt.close(fig)
 
 
@@ -626,9 +1205,15 @@ def plot_omega_k_dispersion(
     kpar_max_di: float | None = None,
     autocrop: bool = True,
     autocrop_floor: float = 1e-2,
+    theta_min_deg: float | None = None,
+    omega_scale: str = "log",
 ):
     """Dense omega-k dispersion diagram: log(omega/omega_p) vs log(k c/omega_p),
     or a linear k axis when ``result`` carries signed velocities.
+
+    ``omega_scale="linear"`` keeps the omega = 0 row on the plot. Logarithmic
+    axes cannot represent it at all, so for an aperiodic mode the log version
+    shows only whatever leaks to finite frequency and never the mode itself.
 
     Uses the full ``power`` cube (nfft, nk0, nk1) already computed in
     ``compute_phase_velocity_density``. Because time is Omega_ci t and spacing is
@@ -650,11 +1235,12 @@ def plot_omega_k_dispersion(
     p2d, k_par = _reduce_kperp(
         power, k0, k1, axes, parallel_axis, kperp_reduction,
         theta_max_deg=theta_max_deg, theta_grid=result["theta_grid"],
+        theta_min_deg=theta_min_deg,
     )
 
-    # omega is always > 0 by construction in compute_phase_velocity_density;
-    # only the sign of k_parallel distinguishes forward/backward propagation.
-    pos_w = omega > 0
+    # A log frequency axis cannot show omega = 0, so that row is only kept when
+    # the axis is linear; otherwise log10(0) would propagate -inf into the mesh.
+    pos_w = omega >= 0 if omega_scale == "linear" else omega > 0
     w = omega[pos_w]                             # omega/Omega_ci
     p2d = p2d[pos_w, :]
     if signed:
@@ -689,7 +1275,7 @@ def plot_omega_k_dispersion(
     has_w_signal = w_wp_signal is not None
 
     fig, axis = plt.subplots(figsize=(9.6, 7.4))
-    if signed:
+    if signed or omega_scale == "linear":
         x_coord, y_coord = kc_wp, w_wp
         image = axis.pcolormesh(
             x_coord, y_coord, log_p,
@@ -702,11 +1288,14 @@ def plot_omega_k_dispersion(
         )
         axis.set_xlabel(r"$k\,c/\omega_{pi}=k\,d_i$")
         axis.set_ylabel(r"$\omega/\omega_{pi}$")
+        # When the velocities are unsigned, k has already been folded onto the
+        # positive half, so a symmetric x range would be half empty.
+        k_low = -1.0 if signed else 0.0
         if kpar_max_di is not None:
-            axis.set_xlim(-kpar_max_di, kpar_max_di)
+            axis.set_xlim(k_low * kpar_max_di, kpar_max_di)
         elif autocrop and has_k_signal:
             extent = float(np.max(np.abs(kc_signal))) * 1.3
-            axis.set_xlim(-extent, extent)
+            axis.set_xlim(k_low * extent, extent)
         if omega_max_ci is not None:
             axis.set_ylim(0, omega_max_ci * va_over_c)
         elif autocrop and has_w_signal:
@@ -741,7 +1330,7 @@ def plot_omega_k_dispersion(
     colorbar = fig.colorbar(image, ax=axis)
     colorbar.set_label(r"$\log_{10}[P(\omega,k_\parallel)/P_{\max}]$")
     fig.tight_layout()
-    fig.savefig(output, dpi=220)
+    ps.save(fig, output)
     plt.close(fig)
 
 
@@ -824,6 +1413,43 @@ def load_series(
     )
 
 
+# Per-mode analysis defaults. These only fill in options the user did not set
+# explicitly, so an explicit flag always wins.
+MODE_ANALYSIS_DEFAULTS: dict[str, dict] = {
+    "mirror": {
+        # Aperiodic and oblique: keep omega = 0, look in the 45-85 deg band,
+        # and take the maximum over k_perp rather than summing, so the oblique
+        # peak is not diluted by the quasi-parallel range where it does not live.
+        "omega_scale": "linear", "kmax_di": 2.0, "theta_min_deg": 45.0,
+        "theta_max_deg": 85.0, "kperp_reduction": "max", "time_detrend": "none",
+        "degrowth": "per-k", "velocity_min": 0.0,
+    },
+    "firehose-oblique": {
+        "omega_scale": "linear", "kmax_di": 2.0, "theta_min_deg": 45.0,
+        "theta_max_deg": 85.0, "kperp_reduction": "max", "time_detrend": "none",
+        "degrowth": "per-k", "velocity_min": 0.0,
+    },
+    "firehose-parallel": {
+        "omega_scale": "linear", "kmax_di": 1.5, "theta_max_deg": 30.0,
+        "kperp_reduction": "sum", "time_detrend": "none", "degrowth": "per-k",
+        "velocity_min": 0.0,
+    },
+    "emic": {
+        "omega_scale": "linear", "kmax_di": 2.0, "theta_max_deg": 25.0,
+        "kperp_reduction": "sum", "time_detrend": "none", "degrowth": "per-k",
+        "velocity_min": 0.0,
+    },
+    "whistler": {
+        # Electron scale: k d_i ~ sqrt(mi/me) * k d_e, so the useful band sits
+        # an order of magnitude higher in k than for the ion modes.
+        "omega_scale": "log", "kmax_di": 20.0, "theta_max_deg": 25.0,
+        "kperp_reduction": "sum", "time_detrend": "none", "degrowth": "per-k",
+        "velocity_min": 0.0,
+    },
+    "generic": {},
+}
+
+
 def main() -> int:
     try:
         from psc_units import DX_DI, VA_OVER_C, step_to_omegaci
@@ -831,6 +1457,10 @@ def main() -> int:
         DX_DI = 1.0
         VA_OVER_C = None
         step_to_omegaci = lambda step: float(step)
+    try:
+        from psc_units import MASS_RATIO
+    except (ImportError, ValueError):
+        MASS_RATIO = None
 
     parser = argparse.ArgumentParser(
         description="Frequency--phase-velocity density map from PSC field snapshots."
@@ -842,9 +1472,60 @@ def main() -> int:
     parser.add_argument("--dx", type=float, default=DX_DI)
     parser.add_argument("--dy", type=float, default=DX_DI)
     parser.add_argument("--dz", type=float, default=DX_DI)
-    parser.add_argument("--velocity-min", type=float, default=0.5)
+    parser.add_argument("--mode", choices=sorted(MODE_PRESETS), default="generic",
+                        help="Instability preset. Sets physically appropriate defaults for "
+                             "k range, angular band, frequency axis and time handling, and "
+                             "drives the resolution report. Explicit flags always win.")
+    parser.add_argument("--mass-ratio", type=float, default=MASS_RATIO,
+                        help="m_i/m_e, needed to express electron-scale presets (whistler) "
+                             "in ion units. Defaults to psc_units.MASS_RATIO when available.")
+    parser.add_argument("--velocity-min", type=float, default=None,
+                        help="Lower |v_phase|/v_A bound for the density plot. Default 0. "
+                             "A nonzero value removes every mode with omega -> 0 at finite k, "
+                             "i.e. all aperiodic modes.")
     parser.add_argument("--velocity-max", type=float, default=12.0)
     parser.add_argument("--max-spatial-mode", type=int, default=128)
+    parser.add_argument("--kmax-di", type=float, default=None,
+                        help="Physical cap on retained k*d_i. Preferred over --max-spatial-mode: "
+                             "a fixed mode count reaches k d_i ~ 40 in a 20 d_i box, far above "
+                             "any ion-scale physics, so the extra range is PIC noise.")
+    parser.add_argument("--spatial-window", choices=["none", "hann", "tukey"], default="none",
+                        help="Window applied to each snapshot before the spatial FFT. Default "
+                             "'none': these runs are periodic in space, so a snapshot is already "
+                             "an exact period and windowing it scatters a third of every mode's "
+                             "power into the two adjacent wavenumbers.")
+    parser.add_argument("--temporal-window", choices=["tukey", "hann", "none"], default="tukey",
+                        help="Window applied along time before the temporal FFT. Time is not "
+                             "periodic so a window is needed here; 'tukey' tapers only the ends "
+                             "and keeps most of the frequency resolution that 'hann' would spend.")
+    parser.add_argument("--window-alpha", type=float, default=0.25,
+                        help="Tapered fraction of a Tukey window (0 = rectangular, 1 = Hann).")
+    parser.add_argument("--time-detrend", choices=["none", "mean", "linear"], default=None,
+                        help="Per-cell temporal detrending before the FFT. Default 'none'. "
+                             "'mean' deletes the omega = 0 row exactly and must not be used "
+                             "for mirror or oblique firehose.")
+    parser.add_argument("--degrowth", choices=["none", "global", "per-k"], default=None,
+                        help="Divide out the exp(gamma t) envelope before the temporal FFT so "
+                             "the transform sees a stationary signal. 'per-k' fits gamma "
+                             "independently for every retained mode.")
+    parser.add_argument("--omega-scale", choices=["log", "linear"], default=None,
+                        help="Frequency axis of the omega-k diagram. 'linear' keeps omega = 0 "
+                             "visible, which a log axis cannot represent.")
+    parser.add_argument("--theta-min-deg", type=float, default=None,
+                        help="Lower bound on propagation angle theta_kB (degrees). Combined with "
+                             "--theta-max-deg this selects an angular band, which is what oblique "
+                             "modes need.")
+    parser.add_argument("--ridge-axis", choices=["k", "omega"], default="k",
+                        help="'k' (default) reports one omega per resolved wavenumber plus its "
+                             "half-power width. 'omega' is the legacy walk across frequencies, "
+                             "which stacks many points on the same k when few k are resolved.")
+    parser.add_argument("--ridge-jacobian", action="store_true",
+                        help="Reweight the ridge tracker by |omega|/k^2. Off by default: on the "
+                             "native (omega,k) grid this is a 1/k^2 bias that pins every ridge "
+                             "to the smallest resolved wavenumber.")
+    parser.add_argument("--ridge-velocity-mask", action="store_true",
+                        help="Restrict ridge tracking to the v_phase window. Off by default "
+                             "because its lower bound removes aperiodic modes.")
     parser.add_argument("--temporal-fft-size", type=int, default=128)
     parser.add_argument("--signed-velocity", action="store_true")
     parser.add_argument("--ridges", type=int, default=2)
@@ -894,6 +1575,19 @@ def main() -> int:
     parser.add_argument("--outdir", default="spectral_plots")
     args = parser.parse_args()
 
+    # Fill unset options from the mode preset; anything the user passed wins.
+    for option, value in MODE_ANALYSIS_DEFAULTS.get(args.mode, {}).items():
+        if getattr(args, option, None) is None:
+            setattr(args, option, value)
+    if args.velocity_min is None:
+        args.velocity_min = 0.0
+    if args.time_detrend is None:
+        args.time_detrend = "none"
+    if args.degrowth is None:
+        args.degrowth = "none"
+    if args.omega_scale is None:
+        args.omega_scale = "log"
+
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     series, times, metadata = load_series(
@@ -922,6 +1616,12 @@ def main() -> int:
         theta_max_deg=args.theta_max_deg,
         density_normalization=args.density_normalization,
         power_floor_db=args.power_floor_db,
+        time_detrend=args.time_detrend,
+        degrowth=args.degrowth,
+        kmax_di=args.kmax_di,
+        spatial_window=args.spatial_window,
+        temporal_window=args.temporal_window,
+        window_alpha=args.window_alpha,
     )
     ridges = extract_ridges(
         result,
@@ -931,6 +1631,11 @@ def main() -> int:
         theta_max_deg=args.theta_max_deg,
         min_power_db=args.ridge_min_power_db,
         max_jump=args.ridge_max_jump,
+        theta_min_deg=args.theta_min_deg,
+        ridge_axis=args.ridge_axis,
+        apply_jacobian=args.ridge_jacobian,
+        use_velocity_mask=args.ridge_velocity_mask,
+        include_zero_omega=args.omega_scale == "linear",
     )
     suffix = "absolute" if result["absolute_velocity"] else "signed"
     image_path = outdir / f"dispersion_density_{metadata['plane']}_{args.component}_{suffix}.png"
@@ -948,9 +1653,43 @@ def main() -> int:
                                 omega_max_ci=args.omega_max_ci,
                                 kpar_max_di=args.kpar_max_di,
                                 autocrop=not args.no_autocrop,
-                                autocrop_floor=args.autocrop_floor)
+                                autocrop_floor=args.autocrop_floor,
+                                theta_min_deg=args.theta_min_deg,
+                                omega_scale=args.omega_scale)
         print(f"Saved omega-k dispersion diagram: {wk_path}")
     write_csv(csv_path, ridges)
+
+    # The resolution report is written unconditionally: what a run can resolve
+    # is a property of the box and the output cadence, and it should be on
+    # record next to every figure produced from them.
+    gamma_estimate = result.get("gamma_global")
+    if gamma_estimate is None and result.get("gamma_map") is not None:
+        gamma_estimate = float(np.max(result["gamma_map"]))
+    report = spectral_resolution_report(
+        times,
+        metadata["spacing"],
+        result["grid_shape"],
+        mode=args.mode,
+        mass_ratio=args.mass_ratio,
+        gamma_ci=gamma_estimate,
+    )
+    report["settings"] = {
+        "spatial_window": args.spatial_window,
+        "temporal_window": args.temporal_window,
+        "window_alpha": args.window_alpha,
+        "time_detrend": args.time_detrend,
+        "degrowth": args.degrowth,
+        "kmax_di": args.kmax_di,
+        "kperp_reduction": args.kperp_reduction,
+        "theta_min_deg": args.theta_min_deg,
+        "theta_max_deg": args.theta_max_deg,
+        "ridge_axis": args.ridge_axis,
+        "ridge_jacobian": bool(args.ridge_jacobian),
+        "omega_scale": args.omega_scale,
+    }
+    report_path = outdir / f"dispersion_resolution_{metadata['plane']}_{args.component}.json"
+    report_path.write_text(json.dumps(report, indent=2, default=float))
+
     print(f"Processed {series.shape[1]} snapshots on plane {metadata['plane']}, "
           f"t in [{times.min():.3f}, {times.max():.3f}] Omega_ci^-1.")
     print(
@@ -958,8 +1697,21 @@ def main() -> int:
         f"{result['independent_positive_frequencies']}; "
         f"displayed FFT bins after zero-padding: {len(result['omega_samples'])}."
     )
-    print(f"Saved density map: {image_path}")
+    print(f"\nSpectral resolution ({args.mode}):")
+    print(f"  d_k  d_i     = {min(a['dk_di_inv'] for a in report['axes']):.4f}   "
+          f"(k modes below k d_i = 1: "
+          f"{min(a['modes_below_kdi_1'] for a in report['axes'])})")
+    print(f"  d_omega/Om_ci = {report['domega_ci']:.4f}   "
+          f"(window T = {report['window_oci']:.1f} Om_ci^-1)")
+    print(f"  omega_Nyquist = {report['omega_nyquist_ci']:.2f} Om_ci")
+    if gamma_estimate is not None:
+        print(f"  gamma/Om_ci   = {gamma_estimate:.4f} (fitted)")
+    for entry in report["checks"]:
+        print(f"  [{entry['status']}] {entry['name']}: {entry['detail']}")
+
+    print(f"\nSaved density map: {image_path}")
     print(f"Saved modal ridges: {csv_path}")
+    print(f"Saved resolution report: {report_path}")
     return 0
 
 

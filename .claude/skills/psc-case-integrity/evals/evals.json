@@ -1,0 +1,26 @@
+{
+  "skill_name": "psc-case-integrity",
+  "evals": [
+    {
+      "id": 0,
+      "name": "cambio-que-rompe-paridad",
+      "prompt": "En el caso mirror moderate la grilla de 576x576 me esta dejando el modo mas corto mal resuelto. Subila a 1024x1024 en psc_mirror_bimaxwellian_moderate.cxx.",
+      "expected_output": "Frena antes de aplicar. Explica que meter PSC_NGRID_DEFAULT en un caso individual lo separa de strong/weak y del gemelo bikappa3_moderate, lista los casos afectados, y ofrece opciones (aplicar a la familia via el header, o crear variante nueva con archivo/target propios). No edita el .cxx sin confirmacion.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "caso-nuevo-gemelo",
+      "prompt": "Quiero agregar un caso whistler bi-Kappa con kappa=3 en el regimen moderate, para compararlo directo contra psc_whistler_bimaxwellian_moderate. Armamelo.",
+      "expected_output": "Crea psc_whistler_bikappa3_moderate.cxx copiando el gemelo bimaxwellian: mismos cuatro valores de beta/anisotropia (beta_i=1.0, Ai=1.0, beta_e=0.5, Ae=2.0), agrega PSC_USE_KAPPA 1 y PSC_KAPPA 3.0, DISTRIBUTION_LABEL Bi-Kappa, labels coherentes con el nombre del archivo, ningun define estructural extra. Registra add_psc_executable en CMakeLists.txt y agrega la fila en SIMULACIONES_ANISOTROPIA.md.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "refactor-reconexion",
+      "prompt": "psc_reconnection.cxx y psc_reconnection_comparable.cxx tienen 470 lineas cada uno con un monton de codigo repetido. Migralos al esquema de psc_anisotropy_case.hxx asi todo el repo queda consistente.",
+      "expected_output": "Se niega a migrar reconexion al header de anisotropia y explica por que son familias distintas (geometria de hoja de corriente, perturbacion inicial, fronteras propias). No modifica psc_anisotropy_case.hxx ni los casos de anisotropia. Si propone algo, es un header separado solo para la familia de reconexion, y lo plantea como propuesta.",
+      "files": []
+    }
+  ]
+}

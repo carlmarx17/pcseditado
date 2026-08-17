@@ -37,16 +37,35 @@ PHYSICS_OUT = $(OUTPUT_DIR)/09_physical_diagnostics
 COMPARE_CASES ?=
 COMPARE_OUT ?= $(RESULTS_ROOT)/comparison_physical
 THEORY_CSV ?=
-# Dispersion-diagram controls. For firehose (quasi-parallel) cases set
-# DISPERSION_THETA_MAX (e.g. 30) so the omega-k diagram is not washed out by
-# oblique k_perp power, and set DISPERSION_T_START to the end of the linear
-# phase so the FFT sees a quasi-stationary signal.
+# Dispersion-diagram controls.
+#
+# DISPERSION_MODE is the main knob: it selects the instability preset
+# (mirror, firehose-oblique, firehose-parallel, emic, whistler, generic) and
+# with it the k range, angular band, frequency axis and time handling that the
+# mode actually needs, plus the resolution report that says whether the box and
+# the output cadence can represent it at all. Anything set explicitly below
+# still wins over the preset.
+#
+# The aperiodic modes (mirror, oblique firehose) have omega_r = 0 and therefore
+# no dispersion branch: for those the omega-k diagram is a consistency check,
+# not the measurement -- read gamma(k_par,k_perp) from the growth map instead.
+#
+# DISPERSION_T_START/T_END bound the FFT window. Keep it inside a single
+# physical phase: a window spanning both linear growth and saturation is not
+# stationary and the transform then measures the envelope, not omega(k).
 # Snapshot cadence: SNAPSHOT_EVERY controls the saved PNG maps (thesis
 # figures), GIF_EVERY the animation frames (rendered in memory, not saved).
 SNAPSHOT_EVERY ?= 100000
 GIF_EVERY ?= 10000
 FIELDS_GIF ?= 1
+DISPERSION_MODE ?= generic
 DISPERSION_THETA_MAX ?=
+DISPERSION_THETA_MIN ?=
+DISPERSION_KMAX_DI ?=
+DISPERSION_DEGROWTH ?=
+DISPERSION_OMEGA_SCALE ?=
+DISPERSION_SPATIAL_WINDOW ?=
+DISPERSION_TEMPORAL_WINDOW ?=
 DISPERSION_T_START ?=
 DISPERSION_T_END ?=
 GROWTH_COMPONENT ?= parallel
@@ -61,10 +80,17 @@ GROWTH_MIN_RVALUE ?= 0.7
 
 export MPLCONFIGDIR ?= /tmp/psc-matplotlib
 
+# Figure theme, shared by every plotting script (see plot_style.py).
+#   paper -> white background, 300 dpi, a PDF next to every PNG. Thesis and
+#            journal figures: A&A/ApJ/JGR want white or transparent.
+#   dark  -> the previous GitHub-dark look, for screen and slides.
+export PSC_FIG_THEME ?= paper
+
 .PHONY: all analysis common manifest F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM \
 	W_S_bM W_M_bM W_W_bM brazil mirror diamagnetic fields spectral dispersion growth-map \
 	anisotropy-dispersion \
 	polarization validate particles heatflux physics compare-physics clean help \
+	theory theory-self-test prt-region vdf-spatial \
 	check-fields check-moments check-particles check-case check-resolution show-inputs
 
 all: analysis
@@ -177,7 +203,14 @@ dispersion: check-case check-fields check-resolution
 	@echo "Generating frequency--phase-velocity mode-density plot"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) dispersion_analysis.py \
 		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)" \
+		--mode "$(DISPERSION_MODE)" \
 		$(if $(DISPERSION_THETA_MAX),--theta-max-deg "$(DISPERSION_THETA_MAX)",) \
+		$(if $(DISPERSION_THETA_MIN),--theta-min-deg "$(DISPERSION_THETA_MIN)",) \
+		$(if $(DISPERSION_KMAX_DI),--kmax-di "$(DISPERSION_KMAX_DI)",) \
+		$(if $(DISPERSION_DEGROWTH),--degrowth "$(DISPERSION_DEGROWTH)",) \
+		$(if $(DISPERSION_OMEGA_SCALE),--omega-scale "$(DISPERSION_OMEGA_SCALE)",) \
+		$(if $(DISPERSION_SPATIAL_WINDOW),--spatial-window "$(DISPERSION_SPATIAL_WINDOW)",) \
+		$(if $(DISPERSION_TEMPORAL_WINDOW),--temporal-window "$(DISPERSION_TEMPORAL_WINDOW)",) \
 		$(if $(DISPERSION_T_START),--t-start "$(DISPERSION_T_START)",) \
 		$(if $(DISPERSION_T_END),--t-end "$(DISPERSION_T_END)",)
 
@@ -232,6 +265,27 @@ physics: check-case check-resolution
 		--fields "$(FIELD_PATTERN)" --moments "$(MOMENT_PATTERN)" \
 		--outdir "$(PHYSICS_OUT)"
 
+theory: check-case
+	@echo "Solving the parallel linear dispersion relation for $(CASE)"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) linear_theory.py --case "$(CASE)" \
+		--out "$(SPECTRAL_OUT)/linear_theory.csv" $(THEORY_FLAGS)
+	@echo "Now: make polarization DATA_DIR=... CASE=$(CASE) THEORY_CSV=$(SPECTRAL_OUT)/linear_theory.csv"
+
+theory-self-test:
+	$(PYTHON) linear_theory.py --self-test
+
+prt-region: check-case check-fields
+	@echo "Locating the prt window in the field-fluctuation maps"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) prt_region_field_cut.py \
+		--data-dir "$(DATA_DIR)" --outdir "$(PARTICLES_OUT)" \
+		$(if $(STEPS),--steps $(STEPS),) --average-over-window
+
+vdf-spatial: check-case check-fields check-particles
+	@echo "Computing the spatially resolved VDF inside the prt window"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) vdf_spatial.py \
+		--data-dir "$(DATA_DIR)" --outdir "$(PARTICLES_OUT)" \
+		$(if $(STEPS),--steps $(STEPS),) $(VDF_FLAGS)
+
 compare-physics:
 	@test -n "$(COMPARE_CASES)" || { \
 		echo "ERROR: set COMPARE_CASES='maxwellian=../analysis_results/mirror_maxwellian/09_physical_diagnostics kappa=../analysis_results/mirror_kappa/09_physical_diagnostics'"; \
@@ -258,5 +312,9 @@ help:
 	@echo "Main targets: analysis brazil particles fields spectral dispersion growth-map polarization diamagnetic heatflux validate physics compare-physics"
 	@echo "              anisotropy-dispersion"
 	@echo "  make polarization DATA_DIR=... CASE=... THEORY_CSV=theory.csv  # omega-k dispersion (psi_pm), mode growth, mirror oblique spectrum"
+	@echo "  make theory CASE=...                          # solve linear dispersion -> linear_theory.csv (fills gamma_theory)"
+	@echo "  make theory-self-test                         # validate the solver against known limits"
+	@echo "  make prt-region DATA_DIR=... CASE=...          # where the prt window sits in the field fluctuations"
+	@echo "  make vdf-spatial DATA_DIR=... CASE=...         # VDF resolved in space; hole vs peak populations"
 	@echo "Utility target: show-inputs"
 	@echo "Results default to ../analysis_results/<RUN_NAME>/"
