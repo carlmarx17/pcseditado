@@ -1,101 +1,101 @@
-# Análisis de salidas PSC
+# PSC output analysis
 
-Esta carpeta contiene la pipeline mantenida para analizar las corridas de
-anisotropía `M_*_bM`, `F_*_bM`, `W_*_bM` y los casos Kappa/Maxwellian.
+This folder contains the maintained pipeline used to analyse the anisotropy runs
+`M_*_bM`, `F_*_bM`, `W_*_bM` and the Kappa/Maxwellian cases.
 
-## Entrada esperada
+## Expected input
 
-Cada directorio de datos debe contener una sola corrida PSC:
+Each data directory must contain a single PSC run:
 
 ```text
 pfd.<step>_p<rank>.h5
 pfd_moments.<step>_p<rank>.h5
-prt_<caso>.<step>.h5
+prt_<case>.<step>.h5
 ```
 
-Los checkpoints ADIOS2 (`checkpoint_<step>.bp/`) son para restart de la
-simulación. La pipeline de análisis trabaja con las salidas HDF5 de campos,
-momentos y partículas.
+ADIOS2 checkpoints (`checkpoint_<step>.bp/`) are for restarting the simulation.
+The analysis pipeline works on the HDF5 field, moment and particle outputs.
 
-## Uso rápido
+## Quick start
 
-Desde `CodeforAnalisys`:
+From `CodeforAnalisys`:
 
 ```bash
-make show-inputs DATA_DIR=/ruta/a/run CASE=M_S_bM
-make analysis DATA_DIR=/ruta/a/run CASE=M_S_bM
+make show-inputs DATA_DIR=/path/to/run CASE=M_S_bM
 ```
-
-También se puede ejecutar por caso:
 
 ```bash
-make F_M_bM DATA_DIR=/ruta/a/F_M_bM
+make analysis DATA_DIR=/path/to/run CASE=M_S_bM
 ```
 
-Para ejecutar únicamente el análisis espectral:
+It can also be run per case:
 
 ```bash
-make spectral DATA_DIR=/ruta/a/run CASE=F_S_bM_local
+make F_M_bM DATA_DIR=/path/to/F_M_bM
 ```
 
-El script detecta automáticamente el plano físico no degenerado (`xy`, `xz`
-o `yz`) y toma el espaciado en unidades de \(d_i\) del perfil seleccionado
-mediante `PSC_PROFILE`. En vez de un espectro 1D/2D estático por snapshot,
-`spectral_analysis.py` acumula \(E(k,\Omega_{ci}t)\) sobre todos los
-snapshots y ajusta un \(\gamma(k)\) log-lineal por cada capa de \(k\)
-(`growth_rate_by_k_<plano>.csv`, `growth_rate_vs_k_<plano>.png`,
-`energy_kt_{perp,parallel}_<plano>.png`), además de la helicidad magnética
-reducida \(\sigma_m(k)\) y la compresibilidad \(\delta B_\parallel^2/(\delta
-B_\parallel^2+\delta B_\perp^2)\) — la técnica de discriminación mirror /
-EMIC / firehose del Bloque 1.3-1.4. El mismo target genera además
-`dispersion_density_<plano>_perp_absolute.png`, un mapa de densidad modal
-\(\omega/\Omega_{ci}\) frente a \(|v_{\rm ph}|/v_A\), y superpone con puntos
-negros las crestas de mayor potencia.
-
-El mismo target produce además `growth_rate_map_<plano>_<component>.png` y
-`.csv`, un mapa directo \(\gamma(k_\parallel,k_\perp)\) sin binning radial.
-Este diagnóstico conserva la geometría del modo: picos sobre el eje
-\(k_\parallel\) indican modos paralelos, mientras que picos fuera del eje
-identifican modos oblicuos como mirror u oblique firehose.
-
-La FFT temporal se rellena con ceros para dibujar las crestas con continuidad;
-esto interpola el espectro, pero no aumenta el número de frecuencias físicamente
-independientes determinado por la cantidad y cadencia de snapshots.
-
-Para generar solamente ese diagrama:
+To run the spectral analysis only:
 
 ```bash
-make dispersion DATA_DIR=/ruta/a/run CASE=F_S_bM_local
+make spectral DATA_DIR=/path/to/run CASE=F_S_bM_local
 ```
 
-Para generar solamente el mapa \(\gamma(k_\parallel,k_\perp)\):
+The script automatically detects the non-degenerate physical plane (`xy`, `xz`
+or `yz`) and takes the cell spacing in units of \(d_i\) from the profile selected
+via `PSC_PROFILE`. Instead of a static 1D/2D spectrum per snapshot,
+`spectral_analysis.py` accumulates \(E(k,\Omega_{ci}t)\) over all snapshots and
+fits a log-linear \(\gamma(k)\) for each \(k\) shell
+(`growth_rate_by_k_<plane>.csv`, `growth_rate_vs_k_<plane>.png`,
+`energy_kt_{perp,parallel}_<plane>.png`), plus the reduced magnetic helicity
+\(\sigma_m(k)\) and the compressibility \(\delta B_\parallel^2/(\delta
+B_\parallel^2+\delta B_\perp^2)\) — the mirror / EMIC / firehose discrimination
+technique of Block 1.3-1.4. The same target also generates
+`dispersion_density_<plane>_perp_absolute.png`, a modal density map of
+\(\omega/\Omega_{ci}\) against \(|v_{\rm ph}|/v_A\), overlaying the
+highest-power ridges as black points.
+
+The same target additionally produces `growth_rate_map_<plane>_<component>.png`
+and `.csv`, a direct \(\gamma(k_\parallel,k_\perp)\) map without radial binning.
+This diagnostic preserves the mode geometry: peaks on the \(k_\parallel\) axis
+indicate parallel modes, while off-axis peaks identify oblique modes such as
+mirror or oblique firehose.
+
+The temporal FFT is zero-padded to draw the ridges continuously; this
+interpolates the spectrum, but does not increase the number of physically
+independent frequencies, which is set by the number and cadence of snapshots.
+
+To generate only that diagram:
 
 ```bash
-make growth-map DATA_DIR=/ruta/a/run CASE=M_M_bM
+make dispersion DATA_DIR=/path/to/run CASE=F_S_bM_local
 ```
 
-Para hacer el mismo tipo de diagnostico sobre la anisotropia de temperatura
-\(A=T_\perp/T_\parallel\), leyendo momentos y campos:
+To generate only the \(\gamma(k_\parallel,k_\perp)\) map:
 
 ```bash
-make anisotropy-dispersion DATA_DIR=/ruta/a/run CASE=M_M_bM
+make growth-map DATA_DIR=/path/to/run CASE=M_M_bM
 ```
 
-Ese target guarda en `04_spectra/` un mapa de densidad
-\(\omega/\Omega_{ci}\) frente a \(|v_{\rm ph}|/v_A\), un CSV con las crestas
-dominantes, un resumen temporal de \(A\), y un panel lineal en espacio-k del
-ultimo snapshot analizado.
-
-Las pruebas de regresión se ejecutan con:
+To run the same kind of diagnostic on the temperature anisotropy
+\(A=T_\perp/T_\parallel\), reading moments and fields:
 
 ```bash
-../.venv/bin/python -m unittest -v \
-  test_spectral_analysis.py test_dispersion_analysis.py
+make anisotropy-dispersion DATA_DIR=/path/to/run CASE=M_M_bM
 ```
 
-## Casos soportados
+That target writes into `04_spectra/` a density map of \(\omega/\Omega_{ci}\)
+against \(|v_{\rm ph}|/v_A\), a CSV with the dominant ridges, a time summary of
+\(A\), and a linear k-space panel for the last analysed snapshot.
 
-| `CASE` | Inestabilidad | Especie | Parámetros iniciales |
+Regression tests are run with:
+
+```bash
+../.venv/bin/python -m unittest -v test_spectral_analysis.py test_dispersion_analysis.py
+```
+
+## Supported cases
+
+| `CASE` | Instability | Species | Initial parameters |
 |---|---|---|---|
 | `M_S_bM` | Mirror | ion | `beta_i_parallel=5`, `A_i=3.0` |
 | `M_M_bM` | Mirror | ion | `beta_i_parallel=5`, `A_i=2.0` |
@@ -103,80 +103,81 @@ Las pruebas de regresión se ejecutan con:
 | `F_S_bM` | Firehose | ion | `beta_i_parallel=10`, `A_i=0.1` |
 | `F_M_bM` | Firehose | ion | `beta_i_parallel=6`, `A_i=0.3` |
 | `F_W_bM` | Firehose | ion | `beta_i_parallel=3`, `A_i=0.6` |
-| `W_S_bM` | Whistler | electrón | `beta_e_parallel=0.5`, `A_e=3.0` |
-| `W_M_bM` | Whistler | electrón | `beta_e_parallel=0.5`, `A_e=2.0` |
-| `W_W_bM` | Whistler | electrón | `beta_e_parallel=0.5`, `A_e=1.5` |
+| `W_S_bM` | Whistler | electron | `beta_e_parallel=0.5`, `A_e=3.0` |
+| `W_M_bM` | Whistler | electron | `beta_e_parallel=0.5`, `A_e=2.0` |
+| `W_W_bM` | Whistler | electron | `beta_e_parallel=0.5`, `A_e=1.5` |
 
-`psc_units.py` define los perfiles físicos y nombres de salida. No usar un
-perfil de producción para analizar otro caso: `F_M_bM` no es equivalente a
+`psc_units.py` defines the physical profiles and output names. Do not use one
+production profile to analyse a different case: `F_M_bM` is not equivalent to
 `firehose_maxwellian`.
 
-## Salidas
+## Outputs
 
-La salida queda bajo:
+Output is written under:
 
 ```text
 analysis_results/<CASE>/
 ```
 
-Subcarpetas principales:
+Main subfolders:
 
 ```text
-01_anisotropy/     evolución de A, beta y trayectoria Brazil
-02_fields/         mapas de campos y fluctuaciones
-03_particles/      VDF y momentos de partículas
-04_spectra/        gamma(k) resuelto por modo, mapa E(k,t), helicidad y compresibilidad
-05_diamagnetic/    corrientes diamagnéticas
-06_heat_flux/      flujo de calor y regiones espaciales
-07_mirror_structures/ depresiones locales de |B| para mirror
-08_validation/     validación puntual contra partículas
-09_physical_diagnostics/ diagnóstico integrado con las salidas estándar
+01_anisotropy/     evolution of A, beta and Brazil-plot trajectory
+02_fields/         field and fluctuation maps
+03_particles/      VDFs and particle moments
+04_spectra/        mode-resolved gamma(k), E(k,t) map, helicity and compressibility
+05_diamagnetic/    diamagnetic currents
+06_heat_flux/      heat flux and spatial regions
+07_mirror_structures/ local |B| depressions for mirror
+08_validation/     pointwise validation against particles
+09_physical_diagnostics/ integrated diagnostics with the standard outputs
 ```
 
-El target integrado:
+Note that `analysis_results/` is **not** tracked in git — everything under it is
+regenerated by these targets from the raw run data.
+
+The integrated target:
 
 ```bash
-make physics DATA_DIR=/ruta/a/run CASE=M_M_bM
+make physics DATA_DIR=/path/to/run CASE=M_M_bM
 ```
 
-genera en `09_physical_diagnostics/` las tablas y figuras de la lista física:
-`validation_table.csv`, `validation_summary.txt`, `anisotropy_table.csv`,
-`fit_metrics.csv`, `field_fluctuation_table.csv`, `growth_rate_summary.csv`,
-`anisotropy_spatial_stats.csv`, `spatial_correlations.csv`, `energy_table.csv`,
-mapas `T_parallel/T_perp/A_i`, `deltaB`, `mirror_holes`, `J_dia`, VDF 2D,
-ajuste Maxwellian/Kappa, tasa de crecimiento, correlaciones y energía.
+writes into `09_physical_diagnostics/` the tables and figures of the physics
+checklist: `validation_table.csv`, `validation_summary.txt`,
+`anisotropy_table.csv`, `fit_metrics.csv`, `field_fluctuation_table.csv`,
+`growth_rate_summary.csv`, `anisotropy_spatial_stats.csv`,
+`spatial_correlations.csv`, `energy_table.csv`, plus `T_parallel/T_perp/A_i`,
+`deltaB`, `mirror_holes` and `J_dia` maps, 2D VDFs, Maxwellian/Kappa fits,
+growth rate, correlations and energy.
 
-Para comparar casos ya analizados, por ejemplo Maxwelliano vs Kappa:
+To compare already-analysed cases, for example Maxwellian vs Kappa:
 
 ```bash
-make compare-physics \
-  COMPARE_CASES="maxwellian=../analysis_results/mirror_maxwellian/09_physical_diagnostics kappa=../analysis_results/mirror_kappa/09_physical_diagnostics"
+make compare-physics COMPARE_CASES="maxwellian=../analysis_results/mirror_maxwellian/09_physical_diagnostics kappa=../analysis_results/mirror_kappa/09_physical_diagnostics"
 ```
 
-Esto produce `comparison_kappa_vs_maxwellian.csv`,
-`comparison_anisotropy.png`, `comparison_deltaB.png`,
-`comparison_growth_rate.png`, `comparison_energy.png` y
-`comparison_heat_flux.png`.
+This produces `comparison_kappa_vs_maxwellian.csv`, `comparison_anisotropy.png`,
+`comparison_deltaB.png`, `comparison_growth_rate.png`, `comparison_energy.png`
+and `comparison_heat_flux.png`.
 
-## Fundamento físico, fórmulas y variables
+## Physical background, formulas and variables
 
-Esta sección explica qué pregunta física responde cada análisis. Las fórmulas
-están escritas en las unidades normalizadas de PSC, donde
-\(\mu_0=1\), \(c=1\), \(n_0=1\), \(m_e=1\) y \(m_i/m_e=200\).
+This section explains which physical question each analysis answers. The formulas
+are written in PSC normalized units, where \(\mu_0=1\), \(c=1\), \(n_0=1\),
+\(m_e=1\) and \(m_i/m_e=200\).
 
-### 1. Construcción de la presión térmica
+### 1. Building the thermal pressure
 
-#### 1.1. Razón física
+#### 1.1. Physical rationale
 
-Los archivos de momentos contienen segundos momentos completos, que mezclan
-movimiento térmico y movimiento colectivo del plasma. Para medir temperatura,
-anisotropía o beta se debe eliminar primero la contribución de la velocidad
-macroscópica. De lo contrario, un flujo del plasma podría interpretarse
-incorrectamente como calentamiento.
+The moment files contain full second moments, which mix thermal motion and
+collective plasma motion. To measure temperature, anisotropy or beta, the
+contribution of the macroscopic velocity must be removed first. Otherwise a
+plasma flow could be incorrectly interpreted as heating.
 
-#### 1.2. Fórmulas
+#### 1.2. Formulas
 
-Para cada especie \(s\):
+For each species \(s\):
 
 $$
 n_s = |\rho_s|,
@@ -193,25 +194,24 @@ $$
 
 #### 1.3. Variables
 
-1. \(s\): especie, ion \(i\) o electrón \(e\).
-2. \(n_s\): densidad numérica de la especie.
-3. \(\rho_s\): densidad almacenada por PSC; para electrones se usa su
-   magnitud.
-4. \(m_s\): masa de la especie.
-5. \(p_{i,s}\): primer momento de momento lineal en la dirección \(i\).
-6. \(u_{i,s}\): velocidad macroscópica o de deriva.
-7. \(M_{ij,s}\): segundo momento bruto guardado como `txx`, `txy`, etc.
-8. \(P_{ij,s}\): tensor de presión térmica central.
+1. \(s\): species, ion \(i\) or electron \(e\).
+2. \(n_s\): number density of the species.
+3. \(\rho_s\): density as stored by PSC; for electrons its magnitude is used.
+4. \(m_s\): species mass.
+5. \(p_{i,s}\): first momentum moment along direction \(i\).
+6. \(u_{i,s}\): macroscopic or drift velocity.
+7. \(M_{ij,s}\): raw second moment stored as `txx`, `txy`, etc.
+8. \(P_{ij,s}\): central thermal pressure tensor.
 
-### 2. Presión y temperatura respecto al campo magnético
+### 2. Pressure and temperature relative to the magnetic field
 
-#### 2.1. Razón física
+#### 2.1. Physical rationale
 
-Las inestabilidades Mirror, Firehose y Whistler dependen de la diferencia entre
-la presión paralela y perpendicular al campo magnético. La dirección física
-relevante es el campo local, no necesariamente un eje fijo de la malla.
+The Mirror, Firehose and Whistler instabilities depend on the difference between
+the pressure parallel and perpendicular to the magnetic field. The physically
+relevant direction is the local field, not necessarily a fixed grid axis.
 
-#### 2.2. Fórmulas
+#### 2.2. Formulas
 
 $$
 \mathbf{B}=(B_x,B_y,B_z),
@@ -237,7 +237,7 @@ T_{\parallel,s}=\frac{P_{\parallel,s}}{n_s},
 T_{\perp,s}=\frac{P_{\perp,s}}{n_s}.
 $$
 
-La expansión usada en el código es:
+The expansion used in the code is:
 
 $$
 \begin{aligned}
@@ -246,32 +246,30 @@ P_\parallel={}&P_{xx}b_x^2+P_{yy}b_y^2+P_{zz}b_z^2\\
 \end{aligned}
 $$
 
-`anisotropy_analysis.py` y `heat_flux_analysis.py` usan esta proyección local.
-Algunos mapas auxiliares de `physical_diagnostics.py` aproximan
-\(P_\parallel=P_{zz}\) y
-\(P_\perp=(P_{xx}+P_{yy})/2\), suponiendo que el campo guía permanece
-principalmente en \(z\).
+`anisotropy_analysis.py` and `heat_flux_analysis.py` use this local projection.
+Some auxiliary maps in `physical_diagnostics.py` approximate
+\(P_\parallel=P_{zz}\) and \(P_\perp=(P_{xx}+P_{yy})/2\), assuming the guide
+field stays mostly along \(z\).
 
 #### 2.3. Variables
 
-1. \(B_x,B_y,B_z\): componentes del campo magnético.
-2. \(B\): magnitud local del campo.
-3. \(\hat{\mathbf b}\): vector unitario paralelo al campo.
-4. \(\mathsf P_s\): tensor de presión térmica de la especie.
-5. \(P_{\parallel,s}\): presión en la dirección del campo.
-6. \(P_{\perp,s}\): promedio de las dos presiones perpendiculares.
-7. \(T_{\parallel,s}\), \(T_{\perp,s}\): temperaturas paralela y
-   perpendicular.
+1. \(B_x,B_y,B_z\): magnetic field components.
+2. \(B\): local field magnitude.
+3. \(\hat{\mathbf b}\): unit vector parallel to the field.
+4. \(\mathsf P_s\): thermal pressure tensor of the species.
+5. \(P_{\parallel,s}\): pressure along the field direction.
+6. \(P_{\perp,s}\): average of the two perpendicular pressures.
+7. \(T_{\parallel,s}\), \(T_{\perp,s}\): parallel and perpendicular temperatures.
 
-### 3. Anisotropía y beta paralela
+### 3. Anisotropy and parallel beta
 
-#### 3.1. Razón física
+#### 3.1. Physical rationale
 
-La anisotropía mide qué dirección contiene más energía térmica. La beta compara
-la presión térmica con la presión magnética y determina cuánto puede el campo
-magnético resistir la deformación producida por el plasma.
+The anisotropy measures which direction holds more thermal energy. Beta compares
+the thermal pressure with the magnetic pressure and determines how well the
+magnetic field can resist the deformation produced by the plasma.
 
-#### 3.2. Fórmulas
+#### 3.2. Formulas
 
 $$
 A_s=\frac{T_{\perp,s}}{T_{\parallel,s}}
@@ -288,35 +286,35 @@ P_B=\frac{B^2}{2\mu_0},
 =\frac{2\mu_0P_{\parallel,s}}{B^2}.
 $$
 
-Como PSC usa \(\mu_0=1\):
+Since PSC uses \(\mu_0=1\):
 
 $$
 \beta_{\parallel,s}=\frac{2P_{\parallel,s}}{B^2}.
 $$
 
-Para Firehose se muestran las dos convenciones: \(A_i\) aumenta hacia uno
-durante la relajación, mientras \(R_i=1/A_i\) disminuye hacia uno.
+For Firehose both conventions are shown: \(A_i\) increases towards one during
+relaxation, while \(R_i=1/A_i\) decreases towards one.
 
 #### 3.3. Variables
 
-1. \(A_s\): anisotropía perpendicular/paralela.
-2. \(R_s\): anisotropía inversa.
-3. \(P_B\): presión magnética.
-4. \(\mu_0\): permeabilidad magnética, igual a uno en unidades de código.
-5. \(\beta_{\parallel,s}\): beta paralela de la especie.
+1. \(A_s\): perpendicular/parallel anisotropy.
+2. \(R_s\): inverse anisotropy.
+3. \(P_B\): magnetic pressure.
+4. \(\mu_0\): magnetic permeability, equal to one in code units.
+5. \(\beta_{\parallel,s}\): parallel beta of the species.
 
-### 4. Umbrales de inestabilidad y Brazil plot
+### 4. Instability thresholds and the Brazil plot
 
-#### 4.1. Razón física
+#### 4.1. Physical rationale
 
-El Brazil plot coloca cada estado del plasma en el plano
-\((\beta_\parallel,A)\). Su objetivo es comprobar si la condición inicial está
-en la región inestable y si la evolución se acerca al umbral de estabilidad
-marginal debido a la dispersión de partículas por las ondas generadas.
+The Brazil plot places each plasma state in the \((\beta_\parallel,A)\) plane.
+Its purpose is to check whether the initial condition lies in the unstable region
+and whether the evolution approaches the marginal stability threshold as a result
+of particle scattering by the generated waves.
 
-#### 4.2. Fórmulas utilizadas
+#### 4.2. Formulas used
 
-1. Mirror iónico:
+1. Ion mirror:
 
    \[
    A_i>1+\frac{1}{\beta_{\parallel i}},
@@ -324,7 +322,7 @@ marginal debido a la dispersión de partículas por las ondas generadas.
    \beta_{\parallel i}(A_i-1)>1.
    \]
 
-2. Firehose fluido:
+2. Fluid firehose:
 
    \[
    A_i<1-\frac{2}{\beta_{\parallel i}},
@@ -332,45 +330,45 @@ marginal debido a la dispersión de partículas por las ondas generadas.
    \beta_{\parallel i}(1-A_i)>2.
    \]
 
-3. Firehose oblicuo, aproximación cinética mostrada en la figura:
+3. Oblique firehose, kinetic approximation shown in the figure:
 
    \[
    A_i=1-\frac{1.4}{(\beta_{\parallel i}-0.11)^{0.55}}.
    \]
 
-4. Ion-cyclotron, curva de referencia:
+4. Ion-cyclotron, reference curve:
 
    \[
    A_i=1+\frac{0.43}{\beta_{\parallel i}^{0.42}}.
    \]
 
-5. Whistler electrónico:
+5. Electron whistler:
 
    \[
    A_e>1+\frac{0.21}{\beta_{\parallel e}^{0.6}}.
    \]
 
-#### 4.3. Interpretación
+#### 4.3. Interpretation
 
-1. Por encima del umbral Mirror se esperan fluctuaciones compresivas de
-   \(B\) y estructuras tipo espejo.
-2. Por debajo del umbral Firehose se esperan fluctuaciones principalmente
-   transversales y reducción del exceso de presión paralela.
-3. Por encima del umbral Whistler se espera crecimiento de ondas en escalas
-   electrónicas y disminución de \(A_e\).
-4. La trayectoria global usa el cociente entre presiones promediadas en
-   volumen, no el promedio simple de cocientes celda a celda.
+1. Above the Mirror threshold, compressive fluctuations of \(B\) and
+   mirror-type structures are expected.
+2. Below the Firehose threshold, mainly transverse fluctuations and a reduction
+   of the parallel pressure excess are expected.
+3. Above the Whistler threshold, wave growth at electron scales and a decrease
+   of \(A_e\) are expected.
+4. The global trajectory uses the ratio of volume-averaged pressures, not the
+   plain average of cell-by-cell ratios.
 
-### 5. Fluctuaciones magnéticas y estructuras Mirror
+### 5. Magnetic fluctuations and Mirror structures
 
-#### 5.1. Razón física
+#### 5.1. Physical rationale
 
-Las inestabilidades convierten energía libre de la anisotropía en
-fluctuaciones electromagnéticas. Separar las componentes paralela y
-perpendicular permite distinguir una respuesta compresiva, típica de Mirror,
-de una respuesta transversal, importante en Firehose y Whistler.
+The instabilities convert free energy from the anisotropy into electromagnetic
+fluctuations. Separating the parallel and perpendicular components distinguishes
+a compressive response, typical of Mirror, from a transverse response, important
+in Firehose and Whistler.
 
-#### 5.2. Fórmulas
+#### 5.2. Formulas
 
 $$
 \delta B=B-B_0,
@@ -390,7 +388,7 @@ $$
 + (B_y-\langle B_y\rangle)^2\rangle}}{B_0}.
 $$
 
-Para cuantificar hoyos magnéticos:
+To quantify magnetic holes:
 
 $$
 D_{\rm mirror}=1-\frac{\min(B)}{B_0},
@@ -398,30 +396,29 @@ $$
 
 $$
 f_{\rm area}
-=\frac{N[B<B_0-\sigma_B]}{N_{\rm celdas}},
+=\frac{N[B<B_0-\sigma_B]}{N_{\rm cells}},
 \qquad
 \sigma_B=\operatorname{std}(B).
 $$
 
 #### 5.3. Variables
 
-1. \(B_0\): campo guía inicial.
-2. \(\delta B\): perturbación de la magnitud del campo.
-3. \(\langle\cdot\rangle\): promedio espacial.
-4. \(\sigma_B\): desviación estándar espacial de \(B\).
-5. \(D_{\rm mirror}\): profundidad relativa del hoyo magnético.
-6. \(f_{\rm area}\): fracción del dominio ocupada por campos bajos.
+1. \(B_0\): initial guide field.
+2. \(\delta B\): perturbation of the field magnitude.
+3. \(\langle\cdot\rangle\): spatial average.
+4. \(\sigma_B\): spatial standard deviation of \(B\).
+5. \(D_{\rm mirror}\): relative depth of the magnetic hole.
+6. \(f_{\rm area}\): fraction of the domain occupied by low fields.
 
-### 6. Tasa de crecimiento lineal
+### 6. Linear growth rate
 
-#### 6.1. Razón física
+#### 6.1. Physical rationale
 
-Durante la fase lineal de una inestabilidad, la amplitud de la perturbación
-crece exponencialmente. La pendiente de su logaritmo permite medir la tasa de
-crecimiento y comparar corridas fuertes, medias, débiles, Maxwellianas y
-Kappa.
+During the linear phase of an instability, the perturbation amplitude grows
+exponentially. The slope of its logarithm gives the growth rate and allows
+comparing strong, moderate, weak, Maxwellian and Kappa runs.
 
-#### 6.2. Fórmulas
+#### 6.2. Formulas
 
 $$
 \delta B_{\rm rms}(t)=\delta B_0 e^{\gamma t},
@@ -433,7 +430,7 @@ $$
 \gamma=\frac{d}{dt}\ln\delta B_{\rm rms}.
 $$
 
-El tiempo se presenta como:
+Time is presented as:
 
 $$
 \tau=\Omega_{ci}t,
@@ -443,24 +440,24 @@ $$
 
 #### 6.3. Variables
 
-1. \(\delta B_0\): amplitud inicial de la perturbación.
-2. \(\gamma\): tasa de crecimiento lineal.
-3. \(t\): tiempo en unidades internas de PSC.
-4. \(\tau=\Omega_{ci}t\): tiempo normalizado al girociclo iónico.
-5. \(q_i,m_i\): carga y masa del ion.
+1. \(\delta B_0\): initial perturbation amplitude.
+2. \(\gamma\): linear growth rate.
+3. \(t\): time in PSC internal units.
+4. \(\tau=\Omega_{ci}t\): time normalized to the ion gyroperiod.
+5. \(q_i,m_i\): ion charge and mass.
 
-### 7. Análisis espectral
+### 7. Spectral analysis
 
-#### 7.1. Razón física
+#### 7.1. Physical rationale
 
-El espectro identifica las longitudes de onda que contienen más energía y
-permite comprobar si el modo dominante tiene la escala y orientación esperadas
-para la inestabilidad. También separa propagación paralela y perpendicular al
-campo guía.
+The spectrum identifies the wavelengths that carry the most energy and allows
+checking whether the dominant mode has the scale and orientation expected for the
+instability. It also separates propagation parallel and perpendicular to the
+guide field.
 
-#### 7.2. Fórmulas
+#### 7.2. Formulas
 
-Para una fluctuación bidimensional \(f(\mathbf x)\):
+For a two-dimensional fluctuation \(f(\mathbf x)\):
 
 $$
 \widetilde f(\mathbf k)=\mathcal F\{W(\mathbf x)f(\mathbf x)\},
@@ -475,15 +472,15 @@ k_j=\frac{2\pi n_j}{N_j\Delta x_j},
 k=\sqrt{k_1^2+k_2^2}.
 $$
 
-El espectro radial suma la potencia de los modos que pertenecen al mismo
-intervalo de \(k\):
+The radial spectrum sums the power of the modes belonging to the same \(k\)
+interval:
 
 $$
-E(k)=\sum_{\mathbf k\ {\rm en\ el\ anillo}\ k}
+E(k)=\sum_{\mathbf k\ {\rm in\ ring}\ k}
 \operatorname{PSD}(\mathbf k).
 $$
 
-El ajuste de ley de potencia usa:
+The power-law fit uses:
 
 $$
 E(k)=Ck^\alpha,
@@ -491,7 +488,7 @@ E(k)=Ck^\alpha,
 \log_{10}E=\log_{10}C+\alpha\log_{10}k.
 $$
 
-Para el espectro magnético transversal integrado:
+For the integrated transverse magnetic spectrum:
 
 $$
 \operatorname{PSD}_{\perp}
@@ -500,21 +497,20 @@ $$
 
 #### 7.3. Variables
 
-1. \(W\): ventana de Hann bidimensional usada para reducir fuga espectral.
-2. \(\mathbf k\): vector de onda.
-3. \(N_j\): número de celdas en la dirección \(j\).
-4. \(\Delta x_j\): separación física entre celdas.
-5. \(E(k)\): potencia espectral radial.
-6. \(\alpha\): pendiente espectral.
-7. \(k_\parallel,k_\perp\): componentes respecto al campo guía, tomado en
+1. \(W\): two-dimensional Hann window used to reduce spectral leakage.
+2. \(\mathbf k\): wave vector.
+3. \(N_j\): number of cells along direction \(j\).
+4. \(\Delta x_j\): physical cell spacing.
+5. \(E(k)\): radial spectral power.
+6. \(\alpha\): spectral slope.
+7. \(k_\parallel,k_\perp\): components relative to the guide field, taken along
    \(z\).
 
-#### 7.4. Tasa de crecimiento resuelta por modo, helicidad y compresibilidad
+#### 7.4. Mode-resolved growth rate, helicity and compressibility
 
-En vez de un \(E(k)\) estático por snapshot, se acumula \(E(k,t)\) sobre toda
-la corrida y se ajusta un \(\gamma(k)\) log-lineal en la fase de crecimiento
-de cada anillo de \(k\), igual que en la fig. \(\delta B(t,k)\) de Hellinger
-et al. (2018):
+Instead of a static \(E(k)\) per snapshot, \(E(k,t)\) is accumulated over the
+whole run and a log-linear \(\gamma(k)\) is fitted in the growth phase of each
+\(k\) ring, as in the \(\delta B(t,k)\) figure of Hellinger et al. (2018):
 
 $$
 E(k,t)\propto e^{2\gamma(k)t},
@@ -522,28 +518,28 @@ E(k,t)\propto e^{2\gamma(k)t},
 \gamma(k)=\tfrac12\,\frac{d}{dt}\ln E(k,t).
 $$
 
-La helicidad magnética reducida y la compresibilidad usan las dos componentes
-perpendiculares al campo guía (\(\perp_1,\perp_2\)) y la paralela:
+The reduced magnetic helicity and the compressibility use the two components
+perpendicular to the guide field (\(\perp_1,\perp_2\)) and the parallel one:
 
 $$
 \sigma_m(k)=\frac{\operatorname{Im}\big(\widetilde B_{\perp_1}^*(k)\,
 \widetilde B_{\perp_2}(k)\big)}{|\widetilde B_{\perp_1}(k)|^2+|\widetilde
 B_{\perp_2}(k)|^2},
 \qquad
-\text{compresibilidad}(t)=\frac{E_\parallel(t)}{E_\parallel(t)+E_\perp(t)}.
+\text{compressibility}(t)=\frac{E_\parallel(t)}{E_\parallel(t)+E_\perp(t)}.
 $$
 
-\(\gamma_\perp(k)>0\) con \(\gamma_\parallel(k)\approx0\) apunta a EMIC o
-firehose paralela (transversal); \(\gamma_\parallel(k)>0\) con
-compresibilidad alta apunta a mirror. Un ajuste con \(r\)-valor alto pero
-potencia final insignificante frente al resto de \(k\) es fuga espectral
-(leakage), no un modo físico — `spectral_analysis.py` descarta esos bins al
-reportar el \(k\) dominante.
+\(\gamma_\perp(k)>0\) with \(\gamma_\parallel(k)\approx0\) points to EMIC or
+parallel (transverse) firehose; \(\gamma_\parallel(k)>0\) with high
+compressibility points to mirror. A fit with a high \(r\)-value but negligible
+final power compared to the rest of \(k\) is spectral leakage, not a physical
+mode — `spectral_analysis.py` discards those bins when reporting the dominant
+\(k\).
 
-#### 7.5. Qué puede resolver realmente un diagrama $\omega$–$k$
+#### 7.5. What an $\omega$–$k$ diagram can actually resolve
 
-El muestreo fija cuatro números antes de cualquier física, y todo lo demás
-está acotado por ellos:
+Sampling fixes four numbers before any physics, and everything else is bounded by
+them:
 
 $$
 \Delta k=\frac{2\pi}{L},\qquad
@@ -552,129 +548,125 @@ k_{\rm Ny}=\frac{\pi}{\Delta x},\qquad
 \omega_{\rm Ny}=\frac{\pi}{\Delta t_{\rm out}},
 $$
 
-con $L$ el tamaño de la caja, $T$ la ventana temporal de la FFT y
-$\Delta t_{\rm out}$ la cadencia de escritura (no el paso de tiempo del PIC).
+with $L$ the box size, $T$ the temporal FFT window and $\Delta t_{\rm out}$ the
+output cadence (not the PIC time step).
 
-De ahí salen tres criterios:
+Three criteria follow:
 
-1. **Muestreo en $k$.** El número de modos discretos dentro de la banda física
-   de la inestabilidad es $\simeq(k_{\max}-k_{\min})/\Delta k$. Ajustar
-   $\omega(k)$ necesita $\gtrsim 8$; una caja de $20\,d_i$ da $\Delta k\,d_i=0.31$
-   y por tanto **3 modos** por debajo de $k d_i=1$.
+1. **Sampling in $k$.** The number of discrete modes within the physical band of
+   the instability is $\simeq(k_{\max}-k_{\min})/\Delta k$. Fitting $\omega(k)$
+   needs $\gtrsim 8$; a $20\,d_i$ box gives $\Delta k\,d_i=0.31$ and therefore
+   **3 modes** below $k d_i=1$.
 
-2. **Anchura intrínseca.** Un modo que crece a $\gamma$ tiene una anchura
-   espectral $\sim 2\gamma$ en $\omega$, de modo que la rama solo es legible si
-   $\omega_r/\gamma\gtrsim10$. Para un modo aperiódico ($\omega_r=0$: mirror,
-   firehose oblicua) la desigualdad nunca se cumple: **no hay rama que medir**,
-   y el diagnóstico correcto es el mapa $\gamma(k_\parallel,k_\perp)$ más el
-   espectro en $k$, no el diagrama $\omega$–$k$.
+2. **Intrinsic width.** A mode growing at $\gamma$ has a spectral width
+   $\sim 2\gamma$ in $\omega$, so the branch is only readable if
+   $\omega_r/\gamma\gtrsim10$. For an aperiodic mode ($\omega_r=0$: mirror,
+   oblique firehose) the inequality never holds: **there is no branch to
+   measure**, and the correct diagnostic is the $\gamma(k_\parallel,k_\perp)$
+   map plus the $k$ spectrum, not the $\omega$–$k$ diagram.
 
-3. **Estacionariedad.** La FFT temporal supone una señal estacionaria. Con
-   $\gamma T\gtrsim3$ e-foldings dentro de la ventana, lo que se transforma es
-   la envolvente de crecimiento y no $\omega(k)$. Se resuelve acotando la
-   ventana a una sola fase física, o dividiendo la envolvente
-   ($\texttt{--degrowth per-k}$, que ajusta $\gamma(\mathbf k)$ modo a modo y
-   divide $e^{\gamma t}$ antes de la transformada temporal).
+3. **Stationarity.** The temporal FFT assumes a stationary signal. With
+   $\gamma T\gtrsim3$ e-foldings inside the window, what gets transformed is the
+   growth envelope and not $\omega(k)$. This is fixed by restricting the window
+   to a single physical phase, or by dividing out the envelope
+   ($\texttt{--degrowth per-k}$, which fits $\gamma(\mathbf k)$ mode by mode and
+   divides by $e^{\gamma t}$ before the temporal transform).
 
-`dispersion_analysis.py` evalúa los tres en cada corrida y escribe
-`dispersion_resolution_<plano>_<componente>.json` junto a las figuras, con el
-veredicto PASS/WARN y el $L$ o el $T$ que harían falta.
+`dispersion_analysis.py` evaluates all three on every run and writes
+`dispersion_resolution_<plane>_<component>.json` next to the figures, with the
+PASS/WARN verdict and the $L$ or $T$ that would be required.
 
-#### 7.6. Presets por inestabilidad
+#### 7.6. Per-instability presets
 
 `--mode {mirror, firehose-oblique, firehose-parallel, emic, whistler, generic}`
-fija los valores por defecto que cada modo necesita — banda angular
-$\theta_{kB}$, corte físico en $k\,d_i$, escala del eje $\omega$, reducción de
-$k_\perp$ y tratamiento temporal. Cualquier bandera explícita gana sobre el
-preset. Los presets electrónicos (whistler) se reescalan a unidades iónicas con
-la razón de masas: $\omega_r/\Omega_{ci}=(\omega_r/\Omega_{ce})(m_i/m_e)$ y
-$k d_i=k d_e\sqrt{m_i/m_e}$.
+sets the defaults each mode needs — angular band $\theta_{kB}$, physical cutoff
+in $k\,d_i$, $\omega$ axis scale, $k_\perp$ reduction and temporal treatment. Any
+explicit flag overrides the preset. Electron presets (whistler) are rescaled to
+ion units with the mass ratio: $\omega_r/\Omega_{ci}=(\omega_r/\Omega_{ce})(m_i/m_e)$
+and $k d_i=k d_e\sqrt{m_i/m_e}$.
 
-Dos consecuencias prácticas de esto:
+Two practical consequences:
 
-- Mirror y firehose oblicua se buscan en la banda $\theta_{kB}\in[45°,85°]$ con
-  `--kperp-reduction max`. Sumar sobre $k_\perp$ vuelca el pico oblicuo sobre el
-  eje $k_\parallel$, donde el modo no vive.
-- Los whistlers tienen $\omega_r\sim0.1\text{–}0.5\,\Omega_{ce}$, es decir
-  $20\text{–}100\,\Omega_{ci}$ con $m_i/m_e=200$. Una cadencia pensada para
-  escalas iónicas ($\Delta t_{\rm out}\sim0.07\,\Omega_{ci}^{-1}$, es decir
-  $\omega_{\rm Ny}\approx48\,\Omega_{ci}$) los **aliasea**: hacen falta
-  $\Delta t_{\rm out}\lesssim0.013\,\Omega_{ci}^{-1}$.
+- Mirror and oblique firehose are searched in the band
+  $\theta_{kB}\in[45°,85°]$ with `--kperp-reduction max`. Summing over $k_\perp$
+  dumps the oblique peak onto the $k_\parallel$ axis, where the mode does not
+  live.
+- Whistlers have $\omega_r\sim0.1\text{–}0.5\,\Omega_{ce}$, i.e.
+  $20\text{–}100\,\Omega_{ci}$ with $m_i/m_e=200$. A cadence designed for ion
+  scales ($\Delta t_{\rm out}\sim0.07\,\Omega_{ci}^{-1}$, i.e.
+  $\omega_{\rm Ny}\approx48\,\Omega_{ci}$) **aliases** them:
+  $\Delta t_{\rm out}\lesssim0.013\,\Omega_{ci}^{-1}$ is required.
 
-#### 7.7. Ventanas: por qué en espacio no, y en tiempo sí
+#### 7.7. Windows: why not in space, but yes in time
 
-Una ventana existe para corregir la discontinuidad que aparece al analizar un
-registro **no periódico** con una transformada que supone periodicidad. Los
-casos de anisotropía (`psc_anisotropy_case.hxx`) usan `BND_FLD_PERIODIC` y
-`BND_PRT_PERIODIC` en los tres ejes, y el volcado tiene exactamente $N$ celdas
-por un dominio $L$ (sin duplicar el punto de frontera). Es decir: **cada
-snapshot ya es un periodo exacto y la base de Fourier discreta es exacta**. No
-hay fuga que corregir.
+A window exists to correct the discontinuity that appears when analysing a
+**non-periodic** record with a transform that assumes periodicity. The anisotropy
+cases (`psc_anisotropy_case.hxx`) use `BND_FLD_PERIODIC` and `BND_PRT_PERIODIC`
+on all three axes, and the dump has exactly $N$ cells for a domain $L$ (without
+duplicating the boundary point). That is: **each snapshot is already an exact
+period and the discrete Fourier basis is exact**. There is no leakage to correct.
 
-Aplicar una ventana ahí no quita fuga: la introduce. Multiplicar en $x$ es
-convolucionar en $k$, y el núcleo de Hann es $(-\tfrac14,\tfrac12,-\tfrac14)$
-en amplitud. Un modo exacto de la caja queda repartido así:
+Applying a window there does not remove leakage: it introduces it. Multiplying in
+$x$ is convolving in $k$, and the Hann kernel is $(-\tfrac14,\tfrac12,-\tfrac14)$
+in amplitude. An exact box mode gets spread like this:
 
 | | bin $n-1$ | bin $n$ | bin $n+1$ |
 |---|---|---|---|
-| sin ventana | 0 % | **100 %** | 0 % |
+| no window | 0 % | **100 %** | 0 % |
 | Hann | 16.7 % | **66.7 %** | 16.7 % |
 
-Un tercio del modo se va a los números de onda vecinos. En una caja de
-$20\,d_i$, donde solo hay 3 modos por debajo de $k d_i=1$, eso equivale a
-emborronar un tercio del rango útil. Por eso `--spatial-window none` es el
-valor por defecto.
+A third of the mode leaks into the neighbouring wavenumbers. In a $20\,d_i$ box,
+where there are only 3 modes below $k d_i=1$, that amounts to smearing a third of
+the useful range. Hence `--spatial-window none` is the default.
 
-En **tiempo** la situación es la opuesta: el registro empieza y termina en una
-fase arbitraria, no se cierra sobre sí mismo, y sin ventana los lóbulos
-laterales de la función sinc quedan a $-18$ dB repartidos por todo el eje
-$\omega$ — perfectamente visibles sobre una escala de color de 6 décadas y
-fáciles de confundir con ramas. Ahí la ventana sí hace falta. La elección es
-un compromiso medido sobre un registro de 772 muestras:
+In **time** the situation is the opposite: the record starts and ends at an
+arbitrary phase, does not close on itself, and without a window the sinc side
+lobes sit at $-18$ dB spread across the whole $\omega$ axis — perfectly visible
+on a 6-decade colour scale and easy to mistake for branches. There the window is
+needed. The choice is a trade-off measured on a 772-sample record:
 
-| ventana temporal | peor lóbulo lateral | ancho del lóbulo principal |
+| temporal window | worst side lobe | main lobe width |
 |---|---|---|
 | rectangular | $-18$ dB | $2\,\Delta\omega$ |
 | Tukey $\alpha=0.25$ | $-33$ dB | $\approx2.4\,\Delta\omega$ |
 | Hann | $-48$ dB | $4\,\Delta\omega$ |
 
-Hann duplica la anchura efectiva, y con $\Delta\omega=0.123\,\Omega_{ci}$ frente
-a $\omega_r\sim0.2$ eso es justo lo que no sobra. El valor por defecto es
-`--temporal-window tukey --window-alpha 0.25`, que conserva casi toda la
-resolución y baja los lóbulos 15 dB.
+Hann doubles the effective width, and with $\Delta\omega=0.123\,\Omega_{ci}$
+against $\omega_r\sim0.2$ that is exactly what cannot be spared. The default is
+`--temporal-window tukey --window-alpha 0.25`, which keeps almost all the
+resolution and lowers the lobes by 15 dB.
 
-Nota aparte: el detrending espacial (`fields -= mean(axis=(2,3))`) sí es
-correcto siempre — quita el modo $k=0$, es decir el campo de fondo uniforme, no
-un artefacto de frontera.
+Side note: spatial detrending (`fields -= mean(axis=(2,3))`) is always correct —
+it removes the $k=0$ mode, i.e. the uniform background field, not a boundary
+artefact.
 
-#### 7.8. Convenciones del CSV de ridges
+#### 7.8. Conventions of the ridge CSV
 
-Con `--ridge-axis k` (por defecto) cada fila es un número de onda resuelto y su
-$\omega$ medida, más la anchura a media altura y la resolución de la ventana:
+With `--ridge-axis k` (the default) each row is a resolved wavenumber and its
+measured $\omega$, plus the full width at half maximum and the window resolution:
 
-| columna | significado |
+| column | meaning |
 |---|---|
-| `k_parallel_d_i` | modo discreto de la caja, $n\,\Delta k\,d_i$ |
-| `omega_over_omega_ci` | pico en $\omega$, interpolado sub-bin |
-| `omega_fwhm_over_omega_ci` | anchura a media altura del pico |
-| `omega_resolution_over_omega_ci` | $\Delta\omega$ de la ventana |
-| `resolved` | 1 solo si $\omega>{\rm FWHM}$, es decir si hay rama |
+| `k_parallel_d_i` | discrete box mode, $n\,\Delta k\,d_i$ |
+| `omega_over_omega_ci` | peak in $\omega$, sub-bin interpolated |
+| `omega_fwhm_over_omega_ci` | full width at half maximum of the peak |
+| `omega_resolution_over_omega_ci` | $\Delta\omega$ of the window |
+| `resolved` | 1 only if $\omega>{\rm FWHM}$, i.e. if there is a branch |
 
-El sentido de `resolved = 0` es literal: el pico es más ancho que su propia
-frecuencia central, de modo que la fila no sostiene una medida de $\omega(k)$.
-Para un modo aperiódico todas las filas salen con `resolved = 0` y
-$\omega=0$, que es la respuesta correcta.
+The meaning of `resolved = 0` is literal: the peak is wider than its own central
+frequency, so the row does not support a measurement of $\omega(k)$. For an
+aperiodic mode every row comes out with `resolved = 0` and $\omega=0$, which is
+the correct answer.
 
-### 8. Distribuciones de velocidad y ajuste Maxwelliano/Kappa
+### 8. Velocity distributions and Maxwellian/Kappa fit
 
-#### 8.1. Razón física
+#### 8.1. Physical rationale
 
-Las VDF muestran cómo se redistribuyen las partículas. Una distribución Kappa
-posee colas supratérmicas más pobladas que una Maxwelliana; comparar ambos
-ajustes permite saber si las partículas energéticas modifican el crecimiento,
-la relajación o el transporte.
+VDFs show how the particles are redistributed. A Kappa distribution has more
+populated suprathermal tails than a Maxwellian; comparing both fits tells whether
+the energetic particles modify growth, relaxation or transport.
 
-#### 8.2. Fórmulas
+#### 8.2. Formulas
 
 $$
 v_\parallel=v_z,
@@ -689,13 +681,13 @@ T_\perp=\frac{m}{2}
 \left[\operatorname{Var}(v_x)+\operatorname{Var}(v_y)\right].
 $$
 
-Forma Maxwelliana unidimensional ajustada:
+Fitted one-dimensional Maxwellian form:
 
 $$
 f_M(v)=C\exp\left(-\frac{v^2}{2\sigma^2}\right).
 $$
 
-Forma Kappa utilizada por el ajuste:
+Kappa form used by the fit:
 
 $$
 f_\kappa(v)=C\left[
@@ -704,7 +696,7 @@ f_\kappa(v)=C\left[
 \qquad \kappa>1.5.
 $$
 
-La fracción supratérmica se estima como:
+The suprathermal fraction is estimated as:
 
 $$
 f_{\rm supra}
@@ -714,30 +706,30 @@ $$
 
 #### 8.3. Variables
 
-1. \(v_x,v_y,v_z\): componentes de velocidad de las partículas; en el
-   régimen no relativista se aproximan por los momentos normalizados de PSC.
-2. \(w_p\): peso estadístico de la partícula.
-3. \(\sigma\): ancho ajustado de la distribución.
-4. \(\kappa\): índice que controla la intensidad de la cola supratérmica.
-5. \(C\): amplitud de normalización del ajuste.
-6. \(v_{\rm th}\): escala térmica tridimensional calculada con las varianzas.
+1. \(v_x,v_y,v_z\): particle velocity components; in the non-relativistic regime
+   they are approximated by the PSC normalized moments.
+2. \(w_p\): statistical weight of the particle.
+3. \(\sigma\): fitted width of the distribution.
+4. \(\kappa\): index controlling the strength of the suprathermal tail.
+5. \(C\): normalization amplitude of the fit.
+6. \(v_{\rm th}\): three-dimensional thermal scale computed from the variances.
 
-### 9. Corriente diamagnética
+### 9. Diamagnetic current
 
-#### 9.1. Razón física
+#### 9.1. Physical rationale
 
-Un gradiente de presión perpendicular produce derivas opuestas de iones y
-electrones y, por tanto, corriente. En estructuras Mirror, esta corriente ayuda
-a sostener espacialmente las depresiones y aumentos del campo magnético.
+A perpendicular pressure gradient produces opposite ion and electron drifts and
+therefore a current. In Mirror structures this current helps to spatially sustain
+the depressions and enhancements of the magnetic field.
 
-#### 9.2. Fórmulas
+#### 9.2. Formulas
 
 $$
 \mathbf J_{{\rm dia},s}
 =\frac{\nabla P_{\perp,s}\times\mathbf B}{B^2}.
 $$
 
-En el plano \(YZ\), la componente dominante fuera del plano es:
+In the \(YZ\) plane, the dominant out-of-plane component is:
 
 $$
 J_{{\rm dia},x,s}
@@ -751,29 +743,28 @@ $$
 J_{\rm dia,total}=J_{{\rm dia},i}+J_{{\rm dia},e}.
 $$
 
-Antes de calcular gradientes se aplica un filtro gaussiano para reducir ruido
-estadístico PIC. Por ello, la corriente obtenida es un diagnóstico de
-estructura coherente, no una medida de fluctuaciones celda a celda.
+A Gaussian filter is applied before computing gradients, to reduce PIC
+statistical noise. For that reason the resulting current is a diagnostic of
+coherent structure, not a measurement of cell-by-cell fluctuations.
 
 #### 9.3. Variables
 
-1. \(P_{\perp,s}\): presión perpendicular de cada especie.
-2. \(\nabla P_{\perp,s}\): gradiente espacial de presión.
-3. \(\mathbf J_{{\rm dia},s}\): corriente diamagnética.
-4. \(y,z\): coordenadas del plano de simulación.
+1. \(P_{\perp,s}\): perpendicular pressure of each species.
+2. \(\nabla P_{\perp,s}\): spatial pressure gradient.
+3. \(\mathbf J_{{\rm dia},s}\): diamagnetic current.
+4. \(y,z\): coordinates of the simulation plane.
 
-### 10. Flujo de calor
+### 10. Heat flux
 
-#### 10.1. Razón física
+#### 10.1. Physical rationale
 
-El flujo de calor mide transporte de energía térmica. Permite determinar si la
-relajación de la anisotropía solamente redistribuye energía entre direcciones o
-también la transporta espacialmente.
+The heat flux measures thermal energy transport. It determines whether the
+relaxation of the anisotropy only redistributes energy between directions or also
+transports it spatially.
 
-#### 10.2. Fórmulas
+#### 10.2. Formulas
 
-El diagnóstico basado directamente en partículas usa el tercer momento
-central:
+The diagnostic based directly on particles uses the third central moment:
 
 $$
 \mathbf c_p=\mathbf v_p-\langle\mathbf v\rangle,
@@ -789,13 +780,12 @@ q_{\perp}^{(p)}
 =\frac{m}{2}\langle c_p^2c_{\perp,p}\rangle_w.
 $$
 
-En el código,
-\(c_{\perp,p}=\sqrt{c_{x,p}^2+c_{y,p}^2}\). Por tanto,
-\(q_{\perp}^{(p)}\) mide una magnitud perpendicular positiva y no una
-componente vectorial firmada. La definición vectorial completa sería
+In the code, \(c_{\perp,p}=\sqrt{c_{x,p}^2+c_{y,p}^2}\). Therefore
+\(q_{\perp}^{(p)}\) measures a positive perpendicular magnitude and not a signed
+vector component. The full vector definition would be
 \(\mathbf q=(m/2)\langle c^2\mathbf c\rangle\).
 
-Los mapas construidos con momentos de fluido son proxies de transporte:
+The maps built from fluid moments are transport proxies:
 
 $$
 v_\parallel=\mathbf u\cdot\hat{\mathbf b},
@@ -809,31 +799,30 @@ q_\parallel^{({\rm proxy})}=P_\parallel v_\parallel,
 q_\perp^{({\rm proxy})}=P_\perp|\mathbf v_\perp|.
 $$
 
-Los mapas de momentos no contienen el tercer momento completo y por eso no
-deben interpretarse como el flujo de calor cinético exacto. El cálculo de
-partículas es el diagnóstico físicamente más directo.
+The moment maps do not contain the full third moment and therefore must not be
+interpreted as the exact kinetic heat flux. The particle calculation is the
+physically more direct diagnostic.
 
 #### 10.3. Variables
 
-1. \(\mathbf c_p\): velocidad peculiar respecto al flujo medio.
-2. \(c_{\parallel,p}\), \(c_{\perp,p}\): componentes peculiar paralela y
-   perpendicular.
-3. \(\langle\cdot\rangle_w\): promedio ponderado por pesos de partículas.
-4. \(\mathbf u\): velocidad macroscópica.
-5. \(q_\parallel,q_\perp\): transporte de energía térmica paralelo y
-   perpendicular.
+1. \(\mathbf c_p\): peculiar velocity relative to the mean flow.
+2. \(c_{\parallel,p}\), \(c_{\perp,p}\): parallel and perpendicular peculiar
+   components.
+3. \(\langle\cdot\rangle_w\): particle-weight-weighted average.
+4. \(\mathbf u\): macroscopic velocity.
+5. \(q_\parallel,q_\perp\): parallel and perpendicular thermal energy transport.
 
-### 11. Correlaciones espaciales
+### 11. Spatial correlations
 
-#### 11.1. Razón física
+#### 11.1. Physical rationale
 
-Las correlaciones comprueban si anisotropía, campo, densidad y corriente
-pertenecen a la misma estructura física. Por ejemplo, una anticorrelación entre
-densidad y magnitud de campo es una firma esperada de estructuras Mirror.
+The correlations check whether anisotropy, field, density and current belong to
+the same physical structure. For example, an anticorrelation between density and
+field magnitude is an expected signature of Mirror structures.
 
-#### 11.2. Fórmula
+#### 11.2. Formula
 
-Para dos mapas \(X\) e \(Y\), el código usa el coeficiente de Pearson:
+For two maps \(X\) and \(Y\), the code uses the Pearson coefficient:
 
 $$
 r_{XY}
@@ -842,7 +831,7 @@ r_{XY}
  \sqrt{\sum_j(Y_j-\bar Y)^2}}.
 $$
 
-Se calculan, entre otras:
+Among others, the following are computed:
 
 $$
 r(A,\delta B),\quad
@@ -851,22 +840,20 @@ r(A,J_{\rm dia}),\quad
 r(A,\rho_i).
 $$
 
-#### 11.3. Interpretación
+#### 11.3. Interpretation
 
-1. \(r=1\): correlación lineal positiva perfecta.
-2. \(r=-1\): anticorrelación lineal perfecta.
-3. \(r\approx0\): ausencia de relación lineal; no descarta una relación no
-   lineal.
+1. \(r=1\): perfect positive linear correlation.
+2. \(r=-1\): perfect linear anticorrelation.
+3. \(r\approx0\): no linear relation; does not rule out a non-linear one.
 
-### 12. Balance de energía
+### 12. Energy balance
 
-#### 12.1. Razón física
+#### 12.1. Physical rationale
 
-El seguimiento energético comprueba que el crecimiento de los campos procede
-de la energía de las partículas y permite detectar errores numéricos o
-inconsistencias entre snapshots.
+Energy tracking checks that the growth of the fields comes from the particle
+energy, and helps detect numerical errors or inconsistencies between snapshots.
 
-#### 12.2. Fórmulas
+#### 12.2. Formulas
 
 $$
 E_{\rm bulk}
@@ -892,32 +879,32 @@ E_{\rm total}
 {E_{\rm total}(0)}.
 $$
 
-Este es un balance diagnóstico de las cantidades disponibles, no la energía
-electromagnética total completa: no incluye explícitamente toda la energía del
-campo eléctrico ni todas las especies en cada término.
+This is a diagnostic balance of the available quantities, not the complete
+electromagnetic energy: it does not explicitly include all of the electric field
+energy nor all species in every term.
 
 #### 12.3. Variables
 
-1. \(E_{\rm bulk}\): energía cinética del flujo medio.
-2. \(E_{\rm thermal}\): energía cinética térmica.
-3. \(E_{\delta B}\): energía de la fluctuación magnética.
-4. \(E_{\rm total}\): suma diagnóstica.
-5. \(\epsilon_E\): variación relativa respecto al primer snapshot.
+1. \(E_{\rm bulk}\): kinetic energy of the mean flow.
+2. \(E_{\rm thermal}\): thermal kinetic energy.
+3. \(E_{\delta B}\): magnetic fluctuation energy.
+4. \(E_{\rm total}\): diagnostic sum.
+5. \(\epsilon_E\): relative variation with respect to the first snapshot.
 
-### 13. Validación de momentos
+### 13. Moment validation
 
-#### 13.1. Razón física
+#### 13.1. Physical rationale
 
-Antes de interpretar una inestabilidad se verifica que la distribución
-realmente fue inicializada con la densidad, deriva, temperatura y anisotropía
-solicitadas. Esta prueba separa un problema de inicialización de un efecto
-físico posterior.
+Before interpreting an instability, it is verified that the distribution was
+actually initialized with the requested density, drift, temperature and
+anisotropy. This test separates an initialization problem from a later physical
+effect.
 
-#### 13.2. Fórmulas
+#### 13.2. Formulas
 
 $$
-n_{\rm medido}
-=\frac{N_p\,C_{\rm ori}}{N_{\rm celdas}},
+n_{\rm measured}
+=\frac{N_p\,C_{\rm ori}}{N_{\rm cells}},
 $$
 
 $$
@@ -932,93 +919,101 @@ v_{{\rm th},j}=\sqrt{\frac{T_j}{m}},
 $$
 
 $$
-\operatorname{error\ relativo}
-=100\frac{|X_{\rm medido}-X_{\rm esperado}|}{|X_{\rm esperado}|}.
+\operatorname{relative\ error}
+=100\frac{|X_{\rm measured}-X_{\rm expected}|}{|X_{\rm expected}|}.
 $$
 
 #### 13.3. Variables
 
-1. \(N_p\): número de macropartículas de la especie.
-2. \(C_{\rm ori}\): factor de peso `cori` usado por PSC.
-3. \(N_{\rm celdas}\): número total de celdas.
-4. \(w_p\): peso de cada macropartícula.
-5. \(X\): cualquier magnitud validada.
+1. \(N_p\): number of macroparticles of the species.
+2. \(C_{\rm ori}\): `cori` weight factor used by PSC.
+3. \(N_{\rm cells}\): total number of cells.
+4. \(w_p\): weight of each macroparticle.
+5. \(X\): any validated quantity.
 
-### 14. Correspondencia entre scripts y diagnósticos
+### 14. Mapping between scripts and diagnostics
 
-1. `anisotropy_analysis.py`: secciones 1 a 4; calcula presión térmica,
-   proyección sobre el campo local, \(A_s\), \(\beta_{\parallel,s}\), umbrales
-   y Brazil plots.
-2. `fluctuationofmagneticfiel.py`: sección 5; genera mapas de fluctuaciones
-   magnéticas normalizadas.
-3. `mirror_physics.py`: secciones 5 y 9; visualiza estructuras magnéticas
-   Mirror y corriente asociada.
-4. `spectral_analysis.py`: sección 7; calcula FFT, PSD, espectro radial y
-   pendiente (reutilizado por `physical_diagnostics.py`), y el `gamma(k)`
-   resuelto por modo, la helicidad \(\sigma_m(k)\) y la compresibilidad
-   descritos en 7.4.
-5. `plot_prt.py`: sección 8; construye VDF 2D, evolución de distribuciones y
-   comparación Maxwelliana/Kappa. Las visualizaciones 3D cualitativas quedan en
-   `legacy/` y no forman parte del flujo mantenido.
-6. `diamagnetic_current.py`: sección 9; calcula
-   \(J_{{\rm dia},i}\), \(J_{{\rm dia},e}\) y la corriente total.
-7. `heat_flux_analysis.py`: sección 10; calcula los proxies espaciales
-   \(P_\parallel v_\parallel\) y \(P_\perp v_\perp\).
-8. `physical_diagnostics.py`: integra las secciones 3 a 12, crea tablas,
-   mapas, correlaciones, ajustes, tasa de crecimiento y balance energético.
-9. `validate_moments.py`: sección 13; verifica densidad, deriva, temperatura
-   y anisotropía iniciales usando archivos de partículas.
-10. `compare_physical_cases.py`: compara las mismas magnitudes entre corridas;
-    solo es físicamente válido si se mantienen la misma definición de
-    anisotropía, especie impulsora y normalización temporal.
-11. `data_reader.py`: no aplica una fórmula física; centraliza la lectura,
-    ensamblado y selección de datasets HDF5.
-12. `psc_units.py`: define masas, campo guía, frecuencias, escalas espaciales,
-    temperaturas iniciales y conversión de pasos a \(\Omega_{ci}t\).
-13. `linear_theory.py`: resuelve la relación de dispersión cinética lineal de
-    modos paralelos (bi-Maxwelliana y bi-kappa) y produce el CSV que consume
-    `polarization_dispersion.py --theory-csv`. Sin él, `gamma_theory` y
-    `relative_difference_pct` salen NaN y no hay validación PIC↔teoría.
-14. `vdf_spatial.py`: VDF resuelta espacialmente dentro de la ventana prt,
-    usando las posiciones que sí están en los archivos prt.
-15. `prt_region_field_cut.py`: ubica la ventana prt sobre los mapas de
-    fluctuación de campo y traza un corte 1D que la atraviesa.
+1. `anisotropy_analysis.py`: sections 1 to 4; computes thermal pressure,
+   projection onto the local field, \(A_s\), \(\beta_{\parallel,s}\), thresholds
+   and Brazil plots.
+2. `fluctuationofmagneticfiel.py`: section 5; generates normalized magnetic
+   fluctuation maps.
+3. `mirror_physics.py`: sections 5 and 9; visualizes Mirror magnetic structures
+   and the associated current.
+4. `spectral_analysis.py`: section 7; computes FFT, PSD, radial spectrum and
+   slope (reused by `physical_diagnostics.py`), plus the mode-resolved
+   `gamma(k)`, the helicity \(\sigma_m(k)\) and the compressibility described in
+   7.4.
+5. `plot_prt.py`: section 8; builds 2D VDFs, distribution evolution and the
+   Maxwellian/Kappa comparison. The qualitative 3D visualizations live in
+   `legacy/` and are not part of the maintained workflow.
+6. `diamagnetic_current.py`: section 9; computes \(J_{{\rm dia},i}\),
+   \(J_{{\rm dia},e}\) and the total current.
+7. `heat_flux_analysis.py`: section 10; computes the spatial proxies
+   \(P_\parallel v_\parallel\) and \(P_\perp v_\perp\).
+8. `physical_diagnostics.py`: integrates sections 3 to 12, creating tables,
+   maps, correlations, fits, growth rate and energy balance.
+9. `validate_moments.py`: section 13; verifies initial density, drift,
+   temperature and anisotropy using particle files.
+10. `compare_physical_cases.py`: compares the same quantities across runs; it is
+    only physically valid if the same anisotropy definition, driving species and
+    time normalization are kept.
+11. `data_reader.py`: applies no physical formula; centralizes the reading,
+    assembly and selection of HDF5 datasets.
+12. `psc_units.py`: defines masses, guide field, frequencies, spatial scales,
+    initial temperatures and the conversion from steps to \(\Omega_{ci}t\).
+13. `linear_theory.py`: solves the linear kinetic dispersion relation for
+    parallel modes (bi-Maxwellian and bi-kappa) and produces the CSV consumed by
+    `polarization_dispersion.py --theory-csv`. Without it, `gamma_theory` and
+    `relative_difference_pct` come out NaN and there is no PIC↔theory validation.
+14. `vdf_spatial.py`: spatially resolved VDF inside the prt window, using the
+    positions that are present in the prt files.
+15. `prt_region_field_cut.py`: locates the prt window on the field fluctuation
+    maps and draws a 1D cut across it.
 
-## Teoría lineal y VDF espacial
+## Linear theory and spatial VDF
 
-Antes de comparar PIC con teoría hay que generar la curva teórica:
+Before comparing PIC with theory, the theoretical curve must be generated:
 
 ```bash
-make theory-self-test                          # valida el solver
+make theory-self-test
+```
+
+```bash
 make theory CASE=firehose_bikappa3_bigbox40
-make polarization DATA_DIR=/ruta CASE=firehose_bikappa3_bigbox40 \
-     THEORY_CSV=../analysis_results/firehose_bikappa3_bigbox40/04_spectra/linear_theory.csv
 ```
-
-`make theory-self-test` comprueba el solver contra tres límites con respuesta
-conocida (identidad de \(Z'\), convergencia \(Z_\kappa \to Z\) como
-\(O(1/\kappa)\), y el umbral analítico del firehose paralelo
-\(\beta_\parallel - \beta_\perp = 2\)). El solver cubre **sólo propagación
-paralela**: el modo mirror es oblicuo y aperiódico y no sale de esta relación.
-
-Para la VDF resuelta en el espacio y la ubicación de la ventana prt:
 
 ```bash
-make prt-region DATA_DIR=/ruta CASE=mirror_bikappa3_moderate
-make vdf-spatial DATA_DIR=/ruta CASE=mirror_bikappa3_moderate
+make polarization DATA_DIR=/path CASE=firehose_bikappa3_bigbox40 THEORY_CSV=../analysis_results/firehose_bikappa3_bigbox40/04_spectra/linear_theory.csv
 ```
 
-`vdf_spatial.py` separa las partículas en `hole` / `ambient` / `peak` según el
-\(|B|\) de su celda y compara \(A\) entre poblaciones **contra el ruido de
-muestreo** (\(\sigma_A/A \simeq \sqrt{3/N}\)): reporta la diferencia en
-unidades de \(\sigma\), de modo que una separación aparente en un mapa de color
-no se confunda con una medida. La anisotropía se toma respecto al campo local
-\(\hat{b}\), no respecto a \(z\) global.
+`make theory-self-test` checks the solver against three limits with known answers
+(the \(Z'\) identity, the convergence \(Z_\kappa \to Z\) as \(O(1/\kappa)\), and
+the analytical parallel-firehose threshold \(\beta_\parallel - \beta_\perp = 2\)).
+The solver covers **parallel propagation only**: the mirror mode is oblique and
+aperiodic and does not come out of this relation.
 
-## Documentación técnica
+For the spatially resolved VDF and the location of the prt window:
 
-Para estructura interna de archivos, datasets HDF5 y responsabilidades de cada
-script, ver:
+```bash
+make prt-region DATA_DIR=/path CASE=mirror_bikappa3_moderate
+```
+
+```bash
+make vdf-spatial DATA_DIR=/path CASE=mirror_bikappa3_moderate
+```
+
+`vdf_spatial.py` splits the particles into `hole` / `ambient` / `peak` according
+to the \(|B|\) of their cell and compares \(A\) between populations **against the
+sampling noise** (\(\sigma_A/A \simeq \sqrt{3/N}\)): it reports the difference in
+units of \(\sigma\), so that an apparent separation in a colour map is not
+mistaken for a measurement. The anisotropy is taken relative to the local field
+\(\hat{b}\), not to the global \(z\).
+
+## Technical documentation
+
+For the internal file structure, HDF5 datasets and the responsibilities of each
+script, see:
 
 ```text
 CodeforAnalisys/ANALISIS_ESTRUCTURA.md

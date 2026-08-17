@@ -1,43 +1,42 @@
-# Estado de la pipeline de análisis
+# Analysis pipeline status
 
-Este archivo registra decisiones de mantenimiento actuales. La guía de uso está
-en `CodeforAnalisys/README.md`.
+This file records current maintenance decisions. The usage guide is in
+`CodeforAnalisys/README.md`.
 
-## Decisiones actuales
+## Current decisions
 
-- `psc_units.py` es la fuente compartida para perfiles físicos, normalización,
-  patrones de archivo y nombres de partículas.
-- `anisotropy_analysis.py` calcula anisotropía y beta usando presión térmica
-  central proyectada respecto al campo local.
-- `heat_flux_analysis.py` puede correr sin SciPy si `sigma=0`; con suavizado
-  (`sigma > 0`) requiere `scipy.ndimage`.
-- `spectral_analysis.py` conserva `--outdir` para seleccionar la carpeta de
-  salida de espectros.
-- Los perfiles `*_lite` no forman parte del flujo de producción.
-- Los scripts cualitativos o de otra física se mantienen en `legacy/` y no se
-  exponen como targets de `Makefile`.
-- `physical_diagnostics.py` no genera figuras que solo indican disponibilidad
-  de snapshots ni curvas de heat flux etiquetadas como proxy de partículas; las
-  VDF individuales y las tablas CSV son la salida verificable.
-- La figura de error de energía solo se genera cuando el paso contiene energía
-  cinética de partículas y energía magnética finitas; no se mezclan pasos
-  incompletos.
+- `psc_units.py` is the shared source for physical profiles, normalization, file
+  patterns and particle names.
+- `anisotropy_analysis.py` computes anisotropy and beta using the central thermal
+  pressure projected onto the local field.
+- `heat_flux_analysis.py` can run without SciPy if `sigma=0`; with smoothing
+  (`sigma > 0`) it requires `scipy.ndimage`.
+- `spectral_analysis.py` keeps `--outdir` for selecting the spectra output
+  folder.
+- The `*_lite` profiles are not part of the production workflow.
+- Qualitative scripts, or scripts belonging to other physics, are kept in
+  `legacy/` and are not exposed as `Makefile` targets.
+- `physical_diagnostics.py` does not generate figures that only indicate snapshot
+  availability, nor heat-flux curves labelled as particle proxies; the individual
+  VDFs and the CSV tables are the verifiable output.
+- The energy-error figure is only generated when the step contains finite
+  particle kinetic energy and magnetic energy; incomplete steps are not mixed in.
 
-## Alcance mantenido
+## Maintained scope
 
-Incluido:
+Included:
 
-- análisis de anisotropía, campos, partículas, espectros, corrientes
-  diamagnéticas y flujo de calor;
-- generación de manifiesto por corrida;
-- compatibilidad con los casos `M_*_bM`, `F_*_bM`, `W_*_bM` y perfiles
-  Kappa/Maxwellian mantenidos.
+- analysis of anisotropy, fields, particles, spectra, diamagnetic currents and
+  heat flux;
+- per-run manifest generation;
+- support for the `M_*_bM`, `F_*_bM`, `W_*_bM` cases and the maintained
+  Kappa/Maxwellian profiles.
 
-Excluido:
+Excluded:
 
-- figuras generadas;
+- generated figures;
 - `__pycache__`;
-- notebooks o presentaciones;
-- scripts experimentales no conectados al `Makefile`.
-- figuras cualitativas archivadas en `legacy/`;
-- proxies no defendibles como figuras principales de tesis.
+- notebooks and presentations;
+- experimental scripts not wired into the `Makefile`;
+- qualitative figures archived in `legacy/`;
+- proxies that cannot be defended as main thesis figures.

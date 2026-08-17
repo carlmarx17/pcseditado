@@ -1,16 +1,16 @@
-# Estructura del Ecosistema de Análisis PSC
+# Structure of the PSC analysis ecosystem
 
-> Documentación técnica de la pipeline de post-procesamiento para las corridas
-> normales bi-Maxwellianas `F_*_bM`, `M_*_bM`, `W_*_bM` y los casos
-> Maxwellian/Kappa heredados.
+> Technical documentation of the post-processing pipeline for the standard
+> bi-Maxwellian runs `F_*_bM`, `M_*_bM`, `W_*_bM` and the legacy
+> Maxwellian/Kappa cases.
 
-Para comandos de uso diario, ver `CodeforAnalisys/README.md`. Este documento
-describe el contrato de archivos, datasets y responsabilidades internas.
+For day-to-day commands see `CodeforAnalisys/README.md`. This document describes
+the file contract, the datasets and the internal responsibilities.
 
-## 0. Contrato de una corrida
+## 0. Contract of a run
 
-Cada directorio de datos debe contener una sola simulación. Para
-`CASE=F_M_bM`, se admite una serie HDF5:
+Each data directory must contain a single simulation. For `CASE=F_M_bM`, an HDF5
+series is accepted:
 
 ```text
 pfd.<step>_p000000.h5
@@ -18,7 +18,7 @@ pfd_moments.<step>_p000000.h5
 prt_F_M_bM.<step>.h5
 ```
 
-o la serie ADIOS2 equivalente:
+or the equivalent ADIOS2 series:
 
 ```text
 pfd.<step>.bp/
@@ -26,66 +26,65 @@ pfd_moments.<step>.bp/
 prt_F_M_bM.<step>.bp/
 ```
 
-El comando de producción es:
+The production command is:
 
 ```bash
-cd CodeforAnalisys
-make analysis DATA_DIR=../ruta/F_M_bM CASE=F_M_bM
+cd CodeforAnalisys && make analysis DATA_DIR=../path/F_M_bM CASE=F_M_bM
 ```
 
-`CASE` selecciona parámetros físicos, especie impulsora, normalización temporal,
-nombre de partículas y carpeta de salida. El manifiesto
-`analysis_results/F_M_bM/F_M_bM_analysis_manifest.json` registra estas
-decisiones y los pasos detectados.
+`CASE` selects the physical parameters, driving species, time normalization,
+particle name and output folder. The manifest
+`analysis_results/F_M_bM/F_M_bM_analysis_manifest.json` records these decisions
+and the detected steps.
 
-Para Firehose se reportan ambas convenciones:
+For Firehose both conventions are reported:
 
 ```text
-A_i = T_i_perp / T_i_parallel       # aumenta hacia 1
-R_i = T_i_parallel / T_i_perp=1/A_i # disminuye hacia 1
+A_i = T_i_perp / T_i_parallel       # increases towards 1
+R_i = T_i_parallel / T_i_perp=1/A_i # decreases towards 1
 ```
 
-Decir solamente que "la anisotropía debe bajar" es ambiguo sin indicar cuál
-de estas dos razones se está usando.
+Saying only that "the anisotropy should go down" is ambiguous without stating
+which of these two ratios is meant.
 
 ---
 
-## 1. Formatos de Archivos de Salida
+## 1. Output file formats
 
-La pipeline acepta snapshots HDF5 (`.h5`) y ADIOS2 BP (`.bp`):
+The pipeline accepts HDF5 (`.h5`) and ADIOS2 BP (`.bp`) snapshots:
 
-| Patrón de archivo        | Contenido                                      | Leído por                            |
+| File pattern | Contents | Read by |
 |--------------------------|------------------------------------------------|--------------------------------------|
-| `prt_<CASE>.<step>.h5` o `.bp/` | Datos de partículas (q, m, px, py, pz, w) | `physical_diagnostics.py`, scripts de partículas |
-| `pfd.<step>_pN.h5` o `pfd.<step>.bp/` | Campos EM en grilla | `physical_diagnostics.py`, scripts de campos |
-| `pfd_moments.<step>_pN.h5` o `.bp/` | Momentos de partículas | `physical_diagnostics.py`, scripts de momentos |
+| `prt_<CASE>.<step>.h5` or `.bp/` | Particle data (q, m, px, py, pz, w) | `physical_diagnostics.py`, particle scripts |
+| `pfd.<step>_pN.h5` or `pfd.<step>.bp/` | EM fields on the grid | `physical_diagnostics.py`, field scripts |
+| `pfd_moments.<step>_pN.h5` or `.bp/` | Particle moments | `physical_diagnostics.py`, moment scripts |
 
-> **Importante:** `checkpoint_<step>.bp/` es un checkpoint de restart y no
-> sustituye automáticamente a `pfd`, `pfd_moments` o `prt_*`. El análisis de
-> campos, momentos y partículas requiere esas series, en HDF5 o BP. Una
-> simulación puede escribir checkpoints ADIOS2 y mantener sus diagnósticos
-> regulares en HDF5 si el ejecutable usa `WriterDefault`.
+> **Important:** `checkpoint_<step>.bp/` is a restart checkpoint and does not
+> automatically replace `pfd`, `pfd_moments` or `prt_*`. Field, moment and
+> particle analysis requires those series, in HDF5 or BP. A simulation may write
+> ADIOS2 checkpoints and keep its regular diagnostics in HDF5 if the executable
+> uses `WriterDefault`.
 
 ---
 
-## 2. Estructura Interna de los Archivos HDF5
+## 2. Internal structure of the HDF5 files
 
-### 2.1 Archivos de Partículas — `prt.*.h5`
+### 2.1 Particle files — `prt.*.h5`
 
 ```
 prt.000001200.h5
 └── particles/
     └── p0/
-        └── 1d/          ← dataset con structured array
-            ├── q[N]     ← carga: +Zi (iones) / -1 (electrones)
-            ├── m[N]     ← masa: 200.0 (iones) / 1.0 (electrones)
-            ├── w[N]     ← peso estadístico (= 1.0 con fractional_n=true)
-            ├── px[N]    ← momento x  [m * v_x en unidades PSC]
-            ├── py[N]    ← momento y
-            └── pz[N]    ← momento z  (dirección paralela = z ∥ B₀)
+        └── 1d/          ← dataset holding a structured array
+            ├── q[N]     ← charge: +Zi (ions) / -1 (electrons)
+            ├── m[N]     ← mass: 200.0 (ions) / 1.0 (electrons)
+            ├── w[N]     ← statistical weight (= 1.0 with fractional_n=true)
+            ├── px[N]    ← x momentum  [m * v_x in PSC units]
+            ├── py[N]    ← y momentum
+            └── pz[N]    ← z momentum  (parallel direction = z ∥ B₀)
 ```
 
-**Cómo se lee en Python:**
+**How it is read in Python:**
 
 ```python
 import h5py
@@ -94,65 +93,65 @@ import numpy as np
 with h5py.File("prt.000001200.h5", "r") as f:
     dset = f["particles"]["p0"]["1d"]
 
-    q  = dset["q"][:]   # +1 iones, -1 electrones
-    m  = dset["m"][:]   # 200.0 ó 1.0
-    px = dset["px"][:]  # momento perpendicular x
-    py = dset["py"][:]  # momento perpendicular y
-    pz = dset["pz"][:]  # momento paralelo
+    q  = dset["q"][:]   # +1 ions, -1 electrons
+    m  = dset["m"][:]   # 200.0 or 1.0
+    px = dset["px"][:]  # perpendicular x momentum
+    py = dset["py"][:]  # perpendicular y momentum
+    pz = dset["pz"][:]  # parallel momentum
 
-# Separar especies
+# Separate species
 ions  = np.where(q > 0)
 elecs = np.where(q < 0)
 
-# PSC guarda u = gamma*v; en estas corridas no relativistas u ~= v.
+# PSC stores u = gamma*v; in these non-relativistic runs u ~= v.
 T_par_ions = 200.0 * np.var(pz[ions])
 ```
 
-### 2.2 Archivos de Campos — `pfd.*.h5`
+### 2.2 Field files — `pfd.*.h5`
 
 ```
 pfd.001200_p0.h5
-└── jeh-<UID>/              ← grupo con prefijo dinámico (UID de la corrida)
-    ├── hx_fc/p0/3d[Nx,Ny,Nz]   ← Bx en caras (face-centered)
+└── jeh-<UID>/              ← group with a dynamic prefix (run UID)
+    ├── hx_fc/p0/3d[Nx,Ny,Nz]   ← Bx, face-centered
     ├── hy_fc/p0/3d[Nx,Ny,Nz]   ← By
-    ├── hz_fc/p0/3d[Nx,Ny,Nz]   ← Bz  (∥ al campo de fondo B₀)
-    ├── ex_ec/p0/3d              ← Ex (edge-centered)
+    ├── hz_fc/p0/3d[Nx,Ny,Nz]   ← Bz  (∥ to the background field B₀)
+    ├── ex_ec/p0/3d              ← Ex, edge-centered
     ├── ey_ec/p0/3d              ← Ey
     └── ez_ec/p0/3d              ← Ez
 ```
 
-**Cómo se lee (con el helper `PICDataReader`):**
+**How it is read (with the `PICDataReader` helper):**
 
 ```python
 from data_reader import PICDataReader
 
 fields = PICDataReader.read_multiple_fields_3d(
     "pfd.001200_p0.h5",
-    "jeh-",                         # prefijo del grupo (ignora el UID)
+    "jeh-",                         # group prefix (ignores the UID)
     ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"],
 )
 
-Bx = fields["hx_fc/p0/3d"]   # array 3D (Nx, Ny, Nz)
+Bx = fields["hx_fc/p0/3d"]   # 3D array (Nx, Ny, Nz)
 By = fields["hy_fc/p0/3d"]
 Bz = fields["hz_fc/p0/3d"]
 B2 = Bx**2 + By**2 + Bz**2
 ```
 
-### 2.3 Archivos de Momentos — `pfd_moments.*.h5`
+### 2.3 Moment files — `pfd_moments.*.h5`
 
 ```
 pfd_moments.001200_p0.h5
 └── all_1st-<UID>/
-    ├── rho_i/p0/3d    ← densidad iónica  n_i(y,z)
-    ├── txx_i/p0/3d    ← componente Pxx = n m <vx vx>
-    ├── tyy_i/p0/3d    ← componente Pyy
-    ├── tzz_i/p0/3d    ← componente Pzz  (presión paralela)
-    ├── jx_i/p0/3d     ← corriente iónica x
-    ├── rho_e/p0/3d    ← densidad electrónica
+    ├── rho_i/p0/3d    ← ion density  n_i(y,z)
+    ├── txx_i/p0/3d    ← component Pxx = n m <vx vx>
+    ├── tyy_i/p0/3d    ← component Pyy
+    ├── tzz_i/p0/3d    ← component Pzz  (parallel pressure)
+    ├── jx_i/p0/3d     ← ion current x
+    ├── rho_e/p0/3d    ← electron density
     └── ...
 ```
 
-**Temperatura desde momentos (sin partículas):**
+**Temperature from moments (no particles needed):**
 
 ```python
 moments = PICDataReader.read_multiple_fields_3d(
@@ -165,71 +164,71 @@ n    = moments["rho_i/p0/3d"].ravel()
 Pxx  = moments["txx_i/p0/3d"].ravel()
 Pzz  = moments["tzz_i/p0/3d"].ravel()
 
-T_par  = Pzz / n          # temperatura paralela por celda
-T_perp = 0.5 * Pxx / n    # (promedio Pxx + Pyy) / 2n
-A_i    = T_perp / T_par   # anisotropía
+T_par  = Pzz / n          # parallel temperature per cell
+T_perp = 0.5 * Pxx / n    # (Pxx + Pyy average) / 2n
+A_i    = T_perp / T_par   # anisotropy
 ```
 
 ---
 
-## 2b. Formato ADIOS2: Archivos `.bp`
+## 2b. ADIOS2 format: `.bp` files
 
-Si PSC se compila con `PSC_HAVE_ADIOS2` y se selecciona `WriterAdios2` en el `.cxx`:
+If PSC is built with `PSC_HAVE_ADIOS2` and `WriterAdios2` is selected in the
+`.cxx`:
 
 ```cpp
-// En el .cxx de simulación:
-using Writer = WriterADIOS2;   // en vez de WriterDefault (HDF5/MRC)
+// In the simulation .cxx:
+using Writer = WriterADIOS2;   // instead of WriterDefault (HDF5/MRC)
 ```
 
-entonces **todos** los archivos de salida (campos, momentos, partículas, checkpoints)
-cambian de `.h5` a `.bp`.
+then **all** output files (fields, moments, particles, checkpoints) change from
+`.h5` to `.bp`.
 
-### Nombres de archivo: `.h5` → `.bp`
+### File names: `.h5` → `.bp`
 
-| HDF5 (WriterDefault)            | ADIOS2 (WriterADIOS2)              |
+| HDF5 (WriterDefault) | ADIOS2 (WriterADIOS2) |
 |---------------------------------|------------------------------------|
 | `pfd.000001200_p0.h5`           | `pfd.000001200.bp/`                |
 | `pfd_moments.000001200_p0.h5`   | `pfd_moments.000001200.bp/`        |
 | `prt.000001200.h5`              | `prt.000001200.bp/`                |
 | —                               | `checkpoint_5000.bp/`              |
 
-> **Nota:** Un `.bp` no es un archivo único sino un **directorio** que contiene
-> `md.idx`, `md.0`, `data.0`, etc. Para el usuario se maneja como si fuera
-> un solo archivo.
+> **Note:** a `.bp` is not a single file but a **directory** containing `md.idx`,
+> `md.0`, `data.0`, etc. For the user it behaves as a single file.
 
-### Estructura interna: ¿Qué cambia?
+### Internal structure: what changes?
 
-La jerarquía lógica de los datos **es la misma** que con HDF5.  Lo que cambia
-es el contenedor y la API de lectura:
+The logical hierarchy of the data **is the same** as with HDF5. What changes is
+the container and the reading API:
 
 ```
 pfd.000001200.bp/
-├── step         (int)       ← paso de simulación
-├── time         (double)    ← tiempo en unidades de código
-├── length       (Real3)     ← extensión del dominio [Lx, Ly, Lz]
-├── corner       (Real3)     ← esquina inferior del dominio
-├── ib           (Int3)      ← offset del ghost boundary
-├── im           (Int3)      ← dimensiones incluyendo ghost
+├── step         (int)       ← simulation step
+├── time         (double)    ← time in code units
+├── length       (Real3)     ← domain extent [Lx, Ly, Lz]
+├── corner       (Real3)     ← lower corner of the domain
+├── ib           (Int3)      ← ghost boundary offset
+├── im           (Int3)      ← dimensions including ghosts
 └── jeh-<UID>/
-    ├── hx_fc/p0/3d[Nx,Ny,Nz]   ← Bx (face-centered) — misma ruta que HDF5
+    ├── hx_fc/p0/3d[Nx,Ny,Nz]   ← Bx (face-centered) — same path as HDF5
     ├── hy_fc/p0/3d[Nx,Ny,Nz]   ← By
     ├── hz_fc/p0/3d[Nx,Ny,Nz]   ← Bz
     ├── ex_ec/p0/3d              ← Ex (edge-centered)
     └── ...
 ```
 
-Los datasets de partículas (`prt.*.bp`) tienen la misma estructura
+The particle datasets (`prt.*.bp`) have the same structure
 `particles/p0/1d/{q, m, px, py, pz, w}`.
 
-### Metadatos extra en `.bp`
+### Extra metadata in `.bp`
 
-ADIOS2 agrega automáticamente:
-- `step` y `time` como variables escalares en cada archivo.
-- `length` y `corner` del dominio (no existían en el `.h5` nativo).
-- `ib` / `im` — offsets y dimensiones del ghost boundary (útiles para
-  reconstruir el dominio global a partir de parches MPI).
+ADIOS2 automatically adds:
+- `step` and `time` as scalar variables in every file.
+- Domain `length` and `corner` (which did not exist in the native `.h5`).
+- `ib` / `im` — ghost boundary offsets and dimensions (useful to reconstruct the
+  global domain from MPI patches).
 
-Estos metadatos son escritos por `WriterADIOS2::begin_step()`:
+This metadata is written by `WriterADIOS2::begin_step()`:
 ```cpp
 file_.put("step", step);
 file_.put("time", time);
@@ -237,25 +236,25 @@ file_.put("length", grid.domain.length);
 file_.put("corner", grid.domain.corner);
 ```
 
-### Cómo leer `.bp` en Python
+### How to read `.bp` in Python
 
 ```python
 import adios2
 import numpy as np
 
-# Abrir un archivo .bp de campos
+# Open a field .bp file
 with adios2.open("pfd.000001200.bp", "r") as f:
     for step in f:
-        # Leer metadatos
+        # Read metadata
         sim_step = step.read("step")
         sim_time = step.read("time")
 
-        # Leer campos — misma ruta lógica que en HDF5
+        # Read fields — same logical path as in HDF5
         Bz = step.read("jeh/hz_fc/p0/3d")
         Bx = step.read("jeh/hx_fc/p0/3d")
         By = step.read("jeh/hy_fc/p0/3d")
 
-# Abrir un archivo .bp de partículas
+# Open a particle .bp file
 with adios2.open("prt.000001200.bp", "r") as f:
     for step in f:
         q  = step.read("particles/p0/1d/q")
@@ -265,41 +264,40 @@ with adios2.open("prt.000001200.bp", "r") as f:
         pz = step.read("particles/p0/1d/pz")
 ```
 
-> **Diferencia clave con `h5py`:**  En ADIOS2 la API es `step.read("ruta")`
-> en lugar de `f["ruta"][:]`.  Además, la navegación por grupos usa `/` plano
-> en vez de la jerarquía de objetos de HDF5 (`f["particles"]["p0"]["1d"]`).
+> **Key difference from `h5py`:** in ADIOS2 the API is `step.read("path")`
+> instead of `f["path"][:]`. Also, group navigation uses a flat `/` rather than
+> the HDF5 object hierarchy (`f["particles"]["p0"]["1d"]`).
 
-### Diferencia en el prefijo UID del grupo
+### Difference in the group UID prefix
 
-| HDF5                          | ADIOS2                        |
+| HDF5 | ADIOS2 |
 |-------------------------------|-------------------------------|
 | `jeh-abc123/hx_fc/p0/3d`     | `jeh/hx_fc/p0/3d`            |
 | `all_1st-xyz789/txx_i/p0/3d` | `all_1st/txx_i/p0/3d`        |
 
-En HDF5, PSC agrega un hash UUID al nombre del grupo (`jeh-<uid>`) para evitar
-colisiones MPI.  En ADIOS2 este hash **no se agrega** — el prefijo es limpio
-(`jeh/`, `all_1st/`).  Esto significa que `PICDataReader.get_uid_group()`
-no es necesario con `.bp`.
+In HDF5, PSC appends a UUID hash to the group name (`jeh-<uid>`) to avoid MPI
+collisions. In ADIOS2 this hash is **not** added — the prefix is clean (`jeh/`,
+`all_1st/`). This means `PICDataReader.get_uid_group()` is not needed with `.bp`.
 
-### Soporte implementado para `.bp`
+### Implemented `.bp` support
 
-| Componente | Estado |
+| Component | Status |
 |---|---|
-| `data_reader.py` | Lector unificado HDF5/BP, resolución de grupos UID y compatibilidad con `FileReader`, `Stream` y `adios2.open`. |
-| `physical_diagnostics.py` | Partículas, campos y momentos se leen mediante `PICDataReader`; no contiene una ruta HDF5 paralela. |
-| Descubrimiento | Busca automáticamente `pfd`, `pfd_moments` y `prt_*` en ambos formatos. |
-| Espectros | El diagnóstico maestro calcula directamente $E_{B_\perp}(k)$. |
-| Checkpoints | Se reservan para restart; no se interpretan como snapshots físicos. |
+| `data_reader.py` | Unified HDF5/BP reader, UID group resolution and compatibility with `FileReader`, `Stream` and `adios2.open`. |
+| `physical_diagnostics.py` | Particles, fields and moments are read through `PICDataReader`; there is no parallel HDF5 path. |
+| Discovery | Automatically looks for `pfd`, `pfd_moments` and `prt_*` in both formats. |
+| Spectra | The master diagnostic computes $E_{B_\perp}(k)$ directly. |
+| Checkpoints | Reserved for restart; not interpreted as physical snapshots. |
 
-### Estrategia dual recomendada
+### Recommended dual strategy
 
-Para soportar ambos formatos sin duplicar código:
+To support both formats without duplicating code:
 
 ```python
 import os
 
 def open_data_file(filepath):
-    """Retorna un lector según la extensión del archivo."""
+    """Return a reader according to the file extension."""
     if filepath.endswith(".bp") or os.path.isdir(filepath):
         import adios2
         return adios2.open(filepath, "r")
@@ -308,69 +306,69 @@ def open_data_file(filepath):
         return h5py.File(filepath, "r")
 ```
 
-O bien, usar la variable de entorno:
+Alternatively, use the environment variable:
 ```bash
-export PSC_IO_BACKEND=adios2   # ó "hdf5" (default)
+export PSC_IO_BACKEND=adios2   # or "hdf5" (default)
 ```
 
 ---
 
-## 3. Árbol de Scripts y sus Responsabilidades
+## 3. Script tree and responsibilities
 
 ```
 CodeforAnalisys/
 │
-├── psc_units.py              ← MÓDULO CENTRAL: constantes y conversiones de unidades
+├── psc_units.py              ← CENTRAL MODULE: constants and unit conversions
 │   │                            B0, OMEGA_CI, DI, TI_PAR, TI_PERP, KAPPA ...
-│   └── (importado por todos los demás scripts)
+│   └── (imported by every other script)
 │
-├── data_reader.py            ← LECTOR HDF5/ADIOS2 unificado
-│   │                            PICDataReader: descubrimiento, apertura y resolución de rutas
-│   └── (importado por anisotropy_analysis, diamagnetic_current, mirror_physics)
+├── data_reader.py            ← UNIFIED HDF5/ADIOS2 READER
+│   │                            PICDataReader: discovery, opening and path resolution
+│   └── (imported by anisotropy_analysis, diamagnetic_current, mirror_physics)
 │
-├── plot_prt.py               ← ANÁLISIS DE PARTÍCULAS (lee prt.*.h5)
-│   ├── Plot 1: VDF 2D        f(v_⊥, v_∥) — mapa de calor log
-│   ├── Plot 2: Kappa vs Max  comparación distribución teórica vs datos
-│   ├── Plot 3: KS + AD       tests de bondad de ajuste
-│   ├── Plot 4: Snapshots VDF paneles multi-tiempo
-│   ├── Plot 5: Evolución 1D  f(v_∥,t) y f(v_⊥,t) como heatmap
-│   ├── Plot 6: Anisotropía   T_⊥/T_∥ vs tiempo
-│   ├── Plot 7: Brazil plot   T_⊥/T_∥ vs β_∥ con umbrales
-│   ├── Plot 9: VDF 1D evol.  ← NUEVO: líneas superpuestas + cola supratermal
-│   ├── Plot 10: Partición E  ← NUEVO: E_mag / E_kin / E_térmica vs tiempo
-│   └── Plot 11: Flujo de calor ← NUEVO: q_∥ y q_⊥ en regiones localizadas
+├── plot_prt.py               ← PARTICLE ANALYSIS (reads prt.*.h5)
+│   ├── Plot 1: 2D VDF        f(v_⊥, v_∥) — log heat map
+│   ├── Plot 2: Kappa vs Max  theoretical distribution vs data
+│   ├── Plot 3: KS + AD       goodness-of-fit tests
+│   ├── Plot 4: VDF snapshots multi-time panels
+│   ├── Plot 5: 1D evolution  f(v_∥,t) and f(v_⊥,t) as a heatmap
+│   ├── Plot 6: Anisotropy    T_⊥/T_∥ vs time
+│   ├── Plot 7: Brazil plot   T_⊥/T_∥ vs β_∥ with thresholds
+│   ├── Plot 9: 1D VDF evol.  overlaid lines + suprathermal tail
+│   ├── Plot 10: E partition  E_mag / E_kin / E_thermal vs time
+│   └── Plot 11: Heat flux    q_∥ and q_⊥ in localized regions
 │
-├── anisotropy_analysis.py    ← ANÁLISIS DE ANISOTROPÍA (lee pfd_moments + pfd)
-│   └── Brazil plot desde momentos de grilla (resolución espacial completa)
+├── anisotropy_analysis.py    ← ANISOTROPY ANALYSIS (reads pfd_moments + pfd)
+│   └── Brazil plot from grid moments (full spatial resolution)
 │
-├── mirror_physics.py         ← HOYOS DE ESPEJO (lee pfd)
-│   └── Mapas 2D de |B|, corriente out-of-plane, contornos de fluctuación
+├── mirror_physics.py         ← MIRROR HOLES (reads pfd)
+│   └── 2D maps of |B|, out-of-plane current, fluctuation contours
 │
-├── diamagnetic_current.py    ← CORRIENTE DIAMAGNÉTICA (lee pfd_moments + pfd)
-│   └── Mapas J_dia iónica, electrónica y total
+├── diamagnetic_current.py    ← DIAMAGNETIC CURRENT (reads pfd_moments + pfd)
+│   └── Ion, electron and total J_dia maps
 │
-├── fluctuationofmagneticfiel.py  ← FLUCTUACIONES δB (lee pfd)
-│   └── Mapas de δB, δB/B₀, animaciones GIF
+├── fluctuationofmagneticfiel.py  ← δB FLUCTUATIONS (reads pfd)
+│   └── δB and δB/B₀ maps, GIF animations
 │
-├── spectral_analysis.py      ← MOTOR ESPECTRAL (lee pfd HDF5/BP)
-│   └── PSD 1D y 2D de componentes magnéticas
+├── spectral_analysis.py      ← SPECTRAL ENGINE (reads pfd HDF5/BP)
+│   └── 1D and 2D PSD of the magnetic components
 │
-├── physical_diagnostics.py  ← DIAGNÓSTICO MAESTRO HDF5/BP
-│   ├── partículas, temperaturas, VDF y ajustes
-│   ├── momentos, mapas, corrientes y correlaciones
-│   ├── fluctuaciones, crecimiento y energía
-│   └── espectro transversal E_Bperp(k)
+├── physical_diagnostics.py  ← MASTER HDF5/BP DIAGNOSTIC
+│   ├── particles, temperatures, VDFs and fits
+│   ├── moments, maps, currents and correlations
+│   ├── fluctuations, growth and energy
+│   └── transverse spectrum E_Bperp(k)
 │
-├── validate_moments.py       ← VALIDACIÓN (lee prt.*.h5)
-│   └── Verifica que momentos medidos = parámetros de inicialización
+├── validate_moments.py       ← VALIDATION (reads prt.*.h5)
+│   └── Checks that measured moments = initialization parameters
 │
-├── plot_vdf_3d.py            ← VDF 3D (lee prt.*.h5)
-│   └── Superficie 3D f(vx, vy, vz)
+├── plot_vdf_3d.py            ← 3D VDF (reads prt.*.h5)
+│   └── 3D surface f(vx, vy, vz)
 │
-├── plot_moments_scatter_3d.py ← SCATTER 3D (lee prt.*.h5)
-│   └── Scatter de momentos + histogramas en 3D
+├── plot_moments_scatter_3d.py ← 3D SCATTER (reads prt.*.h5)
+│   └── Momentum scatter + 3D histograms
 │
-└── Makefile                  ← ORQUESTADOR
+└── Makefile                  ← ORCHESTRATOR
     ├── make brazil     → anisotropy_analysis.py
     ├── make mirror     → mirror_physics.py
     ├── make diamagnetic → diamagnetic_current.py
@@ -378,18 +376,18 @@ CodeforAnalisys/
     ├── make spectral   → spectral_analysis.py
     ├── make validate   → validate_moments.py
     ├── make particles  → plot_prt.py + plot_vdf_3d.py + plot_moments_scatter_3d.py
-    └── make all        → todo excepto spectral y report
+    └── make all        → everything except spectral and report
 ```
 
 ---
 
-## 4. Flujo de Datos Completo
+## 4. Complete data flow
 
 ```
 psc_mirror_kappa.cxx              psc_firehose_kappa.cxx
 psc_mirror_maxwellian.cxx         psc_firehose_maxwellian.cxx
          │
-         │  (simulación PIC)
+         │  (PIC simulation)
          ▼
    ../build/src/
    ├── prt.000000000.h5     ← t=0
@@ -423,233 +421,243 @@ prt.*.h5                             pfd.*.h5 + pfd_moments.*.h5
    │         └── heat_flux_timeseries.png   │     └── field_images/
    │                                        │
    ├── validate_moments.py                  └── spectral_analysis.py
-   │     └── validation_plots/                    └── (en desarrollo)
+   │     └── validation_plots/                    └── (under development)
    ├── plot_vdf_3d.py
    └── plot_moments_scatter_3d.py
 ```
 
 ---
 
-## 5. Módulo Central: `psc_units.py`
+## 5. Central module: `psc_units.py`
 
-Todas las constantes físicas derivadas del archivo `.cxx` están aquí:
+All physical constants derived from the `.cxx` file live here:
 
-| Variable       | Valor (Mirror) | Valor (Firehose) | Significado                          |
+| Variable | Value (Mirror) | Value (Firehose) | Meaning |
 |----------------|---------------|------------------|--------------------------------------|
-| `MASS_RATIO`   | 200.0         | 200.0            | mᵢ/mₑ artificial                    |
-| `B0`           | 0.05          | 0.05             | Campo de fondo [= vA/c]              |
-| `VA`           | 0.05          | 0.05             | Velocidad de Alfvén [c=1]            |
-| `OMEGA_CI`     | 0.000250      | 0.000250         | Frecuencia ciclotrón iónica          |
-| `DI`           | ≈14.142       | ≈14.142          | Longitud inercial iónica [celdas]    |
-| `NICELL`       | Según perfil  | Según perfil     | Partículas por celda y especie       |
-| `BETA_I_PAR`   | 5.0           | 10.0             | Beta paralelo iónico                 |
-| `TI_PAR`       | 0.00625       | 0.0125           | Temperatura iónica paralela          |
-| `TI_PERP`      | 0.01875       | 0.00125          | Temperatura iónica perpendicular     |
-| `Ti_⊥/Ti_∥`    | 3.0           | 0.1              | Anisotropía iónica                   |
-| `KAPPA`        | `3.0`/`None`  | `3.0`/`None`     | Kappa ó Maxwellian                   |
+| `MASS_RATIO`   | 200.0         | 200.0            | artificial mᵢ/mₑ                     |
+| `B0`           | 0.05          | 0.05             | Background field [= vA/c]            |
+| `VA`           | 0.05          | 0.05             | Alfvén speed [c=1]                   |
+| `OMEGA_CI`     | 0.000250      | 0.000250         | Ion cyclotron frequency              |
+| `DI`           | ≈14.142       | ≈14.142          | Ion inertial length [cells]          |
+| `NICELL`       | Profile-dependent | Profile-dependent | Particles per cell and species    |
+| `BETA_I_PAR`   | 5.0           | 10.0             | Ion parallel beta                    |
+| `TI_PAR`       | 0.00625       | 0.0125           | Ion parallel temperature             |
+| `TI_PERP`      | 0.01875       | 0.00125          | Ion perpendicular temperature        |
+| `Ti_⊥/Ti_∥`    | 3.0           | 0.1              | Ion anisotropy                       |
+| `KAPPA`        | `3.0`/`None`  | `3.0`/`None`     | Kappa or Maxwellian                  |
 
-> **Resolución de grilla y escalas físicas:**
+> **Grid resolution and physical scales:**
 >
-> Los parámetros de grilla dependen del ejecutable:
+> The grid parameters depend on the executable:
 >
-> | Perfil | Dominio | Grid | Δx [d_i] | Δx [d_e] | ppc | nmax |
+> | Profile | Domain | Grid | Δx [d_i] | Δx [d_e] | ppc | nmax |
 > |---|---|---|---|---|---|---|
 > | `M_S_bM` | 30 × 30 d_i | 1408² | 0.0213 | **0.301** | 1000 | 1,650,000 |
-> | Mirror heredado | 32 × 32 d_i | 1536² | 0.0208 | **0.295** | 1000 | 1,800,000 |
-> | Firehose heredado | 32 × 32 d_i | 1024² | 0.0312 | **0.442** | 1000 | 1,200,000 |
+> | Legacy mirror | 32 × 32 d_i | 1536² | 0.0208 | **0.295** | 1000 | 1,800,000 |
+> | Legacy firehose | 32 × 32 d_i | 1024² | 0.0312 | **0.442** | 1000 | 1,200,000 |
 >
-> - `d_e = c/ω_pe = 1` celda de código (PSC: c=1, n₀=1, mₑ=1)
+> - `d_e = c/ω_pe = 1` code cell (PSC: c=1, n₀=1, mₑ=1)
 > - `d_i = √(mᵢ/mₑ) × d_e = √200 ≈ 14.14 d_e`
-> - Las configuraciones listadas resuelven la skin depth electrónica (`Δx < 1 d_e`).
-> - El tiempo físico final debe calcularse con el `dt` y `nmax` del perfil activo.
+> - The listed configurations resolve the electron skin depth (`Δx < 1 d_e`).
+> - The final physical time must be computed with the `dt` and `nmax` of the
+>   active profile.
 >
-> `PscConfig1vbecSingle` = **full PIC** (1st order Villasenor-Buneman Edge-Centered).
-> Ambas especies (iones y electrones) son **partículas cinéticas**.
+> `PscConfig1vbecSingle` = **full PIC** (1st order Villasenor-Buneman
+> edge-centered). Both species (ions and electrons) are **kinetic particles**.
 
-**Selección de perfil (variable de entorno):**
+**Profile selection (environment variable):**
 
 ```bash
-# Mirror con kappa (por defecto)
 export PSC_PROFILE=mirror_kappa
+```
 
-# Mirror con Maxwellian
+```bash
 export PSC_PROFILE=mirror_maxwellian
+```
 
-# Firehose con kappa
+```bash
 export PSC_PROFILE=firehose_kappa
+```
 
-# Firehose con Maxwellian
+```bash
 export PSC_PROFILE=firehose_maxwellian
 ```
 
-**Conversión de unidades frecuente:**
+**Common unit conversions:**
 
 ```python
 from psc_units import OMEGA_CI, DI, VA
 
-# Paso de simulación → tiempo físico
-t_physical = step * dt_code * OMEGA_CI   # en unidades Ωci⁻¹
+# Simulation step → physical time
+t_physical = step * dt_code * OMEGA_CI   # in units of Ωci⁻¹
 
-# Celda → longitud inercial iónica
+# Cell → ion inertial length
 x_di = x_cells / DI
 
-# Momento → velocidad en unidades de vA
+# Momentum → velocity in units of vA
 v_va = p / VA
 ```
 
 ---
 
-## 6. Helper `PICDataReader` — Cómo Encuentra los Archivos
+## 6. `PICDataReader` helper — how it finds the files
 
 ```python
-# 1. Buscar todos los archivos que coincidan con un patrón glob
+# 1. Find every file matching a glob pattern
 files = PICDataReader.find_files("../build/src/pfd_moments.*.h5")
-# Retorna: {1200: "pfd_moments.001200_p0.h5", 2400: "...", ...}
+# Returns: {1200: "pfd_moments.001200_p0.h5", 2400: "...", ...}
 
-# 2. Encontrar el grupo dinámico dentro del HDF5
-# PSC agrega un UID al nombre del grupo: "jeh-abc123" o "all_1st-xyz"
-group_name = PICDataReader.get_uid_group(f, "jeh-")  # encuentra "jeh-<cualquier_uid>"
+# 2. Find the dynamic group inside the HDF5 file
+# PSC appends a UID to the group name: "jeh-abc123" or "all_1st-xyz"
+group_name = PICDataReader.get_uid_group(f, "jeh-")  # finds "jeh-<any_uid>"
 
-# 3. Leer múltiples datasets de un mismo archivo en una sola apertura
+# 3. Read several datasets from the same file in a single open
 fields = PICDataReader.read_multiple_fields_3d(
     filename, group_prefix, list_of_dataset_paths
 )
 ```
 
-> **¿Por qué el prefijo dinámico?**
-> PSC añade un hash o UID a cada grupo HDF5 para evitar colisiones cuando se
-> escribe en paralelo desde múltiples MPI ranks. `get_uid_group()` resuelve
-> ese nombre en tiempo de ejecución sin necesidad de conocerlo de antemano.
+> **Why the dynamic prefix?**
+> PSC adds a hash or UID to each HDF5 group to avoid collisions when writing in
+> parallel from multiple MPI ranks. `get_uid_group()` resolves that name at
+> runtime without needing to know it in advance.
 
 ---
 
-## 7. Nuevos Diagnósticos (añadidos a `plot_prt.py`)
+## 7. Additional diagnostics (added to `plot_prt.py`)
 
-### Plot 9 — Evolución de la Función de Distribución 1D
+### Plot 9 — Evolution of the 1D distribution function
 
-**Qué hace:** Superpone `f(v_∥)` y `f(v_⊥)` en múltiples tiempos (colormap
-azul→rojo = temprano→tardío), con una Maxwelliana de referencia trazada en
-línea negra discontinua. Cuantifica la **cola supratermal** como fracción de
-partículas con `|v| > 3 v_th`.
+**What it does:** overlays `f(v_∥)` and `f(v_⊥)` at several times (blue→red
+colormap = early→late), with a reference Maxwellian drawn as a dashed black line.
+It quantifies the **suprathermal tail** as the fraction of particles with
+`|v| > 3 v_th`.
 
 ```
-Salidas: `prt_plots/vdf_1d_parallel_evolution.png` y
+Outputs: `prt_plots/vdf_1d_parallel_evolution.png` and
 `prt_plots/vdf_1d_perp_evolution.png`.
 ```
 
-**Física:** Permite ver directamente si la distribución kappa mantiene su cola
-de ley de potencia durante la evolución o si la inestabilidad la modifica.
+**Physics:** shows directly whether the kappa distribution keeps its power-law
+tail during the evolution or whether the instability modifies it.
 
 ---
 
-### Plot 10 — Partición de Energía
+### Plot 10 — Energy partition
 
-**Qué hace:** Traza la evolución temporal de:
-- `E_cin_bulk = ½ mᵢ ⟨v⟩²` (energía del flujo medio)
-- `E_cin_term = ½ mᵢ ⟨δv²⟩` (energía cinética aleatoria)
-- `E_int_ion  = (3/2) Nᵢ Tᵢ` (energía interna iónica)
-- `E_int_elec = (3/2) Nₑ Tₑ` (energía interna electrónica)
-- `E_B = (δB_rms)²/2` (si hay archivos de campo disponibles)
+**What it does:** plots the time evolution of:
+- `E_kin_bulk = ½ mᵢ ⟨v⟩²` (mean-flow energy)
+- `E_kin_therm = ½ mᵢ ⟨δv²⟩` (random kinetic energy)
+- `E_int_ion  = (3/2) Nᵢ Tᵢ` (ion internal energy)
+- `E_int_elec = (3/2) Nₑ Tₑ` (electron internal energy)
+- `E_B = (δB_rms)²/2` (if field files are available)
 
-Todas normalizadas a `E₀` (energía total inicial).
+All normalized to `E₀` (initial total energy).
 
 ```
-Salidas: `prt_plots/particle_energy_partition.png` y
+Outputs: `prt_plots/particle_energy_partition.png` and
 `prt_plots/magnetic_energy_fluctuation.png`.
 ```
 
-**Física:** Reproduce la metodología de estudios PIC de inestabilidades
-de anisotropía (Hellinger & Trávníček 2008; Kunz et al. 2014) para rastrear
-cómo se redistribuye el presupuesto de energía entre distribuciones Maxwelliana
-y kappa.
+**Physics:** reproduces the methodology of PIC studies of anisotropy
+instabilities (Hellinger & Trávníček 2008; Kunz et al. 2014) to track how the
+energy budget is redistributed between Maxwellian and kappa distributions.
 
 ---
 
-### Plot 11 — Diagnóstico de Flujo de Calor
+### Plot 11 — Heat flux diagnostic
 
-**Qué hace:** Calcula los componentes del tensor de flujo de calor:
+**What it does:** computes the components of the heat flux tensor:
 
 ```
 q_∥ = (m/2) ⟨δv² · δv_z⟩
 q_⊥ = (m/2) ⟨δv² · δv_⊥⟩
 ```
 
-Las partículas se dividen en **4 regiones** según cuartiles de `v_z`
-(proxy de posición espacial cuando no se dispone de coordenadas `x,y,z`).
-Genera un panel de barras por región y una serie temporal.
+Particles are split into **4 regions** by `v_z` quartiles (a proxy for spatial
+position when `x,y,z` coordinates are not available). It produces a bar panel per
+region and a time series.
 
 ```
-Salidas: prt_plots/heat_flux_regions.png
+Outputs: prt_plots/heat_flux_regions.png
          prt_plots/heat_flux_timeseries.png
 ```
 
-**Física:** Caracteriza el transporte de energía no térmica asociado a la
-dinámica de la inestabilidad; esencial para distinguir el comportamiento de
-distribuciones kappa (mayor flujo de calor) vs Maxwelliana.
+**Physics:** characterizes the non-thermal energy transport associated with the
+instability dynamics; essential to distinguish the behaviour of kappa
+distributions (larger heat flux) from Maxwellian ones.
 
 ---
 
-## 8. Ejecución Rápida
+## 8. Quick run
 
 ```bash
-# Desde CodeforAnalisys/
-
-# Todos los análisis (usa DATA_DIR=../build/src)
 make all
+```
 
-# Solo partículas (plots 1–11 de plot_prt.py)
+```bash
 make particles
+```
 
-# Solo Brazil plot desde momentos de grilla
+```bash
 make brazil
+```
 
-# Validación de momentos contra parámetros de inicialización
+```bash
 make validate
+```
 
-# Limpiar todos los directorios de salida
+```bash
 make clean
 ```
 
-**Ejecución directa con un archivo específico:**
+(Run from `CodeforAnalisys/`. `make all` uses `DATA_DIR=../build/src`;
+`make particles` runs plots 1–11 of `plot_prt.py`; `make brazil` produces the
+Brazil plot from grid moments; `make validate` checks moments against the
+initialization parameters; `make clean` removes all output directories.)
+
+**Direct run on a specific file:**
 ```bash
 python plot_prt.py ../build/src/prt.000001200.h5
-python plot_prt.py "../build/src/prt.*.h5"    # todos los snapshots (evolución temporal)
 ```
+
+```bash
+python plot_prt.py "../build/src/prt.*.h5"
+```
+
+(The second form takes all snapshots, i.e. the time evolution.)
 
 ---
 
-## 9. Pipeline unificada: 17 diagnósticos físicos
+## 9. Unified pipeline: 17 physical diagnostics
 
-El punto de entrada integrado es:
+The integrated entry point is:
 
 ```bash
-PSC_PROFILE=F_S_bM python physical_diagnostics.py \
-  --data-dir ../corridas_locales/mi_prueba \
-  --outdir ../analysis_results/F_S_bM/09_physical_diagnostics
+PSC_PROFILE=F_S_bM python physical_diagnostics.py --data-dir ../corridas_locales/mi_prueba --outdir ../analysis_results/F_S_bM/09_physical_diagnostics
 ```
 
-Si no se pasan `--particles`, `--fields` o `--moments`,
-`PICDataReader.discover_outputs()` selecciona automáticamente las series
-`.h5` o `.bp`. No se deben mezclar dos formatos para el mismo paso.
+If `--particles`, `--fields` or `--moments` are not given,
+`PICDataReader.discover_outputs()` automatically selects the `.h5` or `.bp`
+series. Two formats must not be mixed for the same step.
 
-### 1. Lectura de datos
+### 1. Data reading
 
-Carga snapshots de partículas, campos y momentos desde HDF5 o ADIOS2. Los
-grupos HDF5 con UID y los nombres limpios de ADIOS2 se resuelven con la misma
-API.
+Loads particle, field and moment snapshots from HDF5 or ADIOS2. HDF5 groups with
+a UID and clean ADIOS2 names are resolved through the same API.
 
-### 2. Separación de especies
+### 2. Species separation
 
-Separa iones y electrones por el signo de la carga:
+Separates ions and electrons by the sign of the charge:
 
 ```text
-q > 0: iones
-q < 0: electrones
+q > 0: ions
+q < 0: electrons
 ```
 
-### 3. Temperaturas y anisotropía
+### 3. Temperatures and anisotropy
 
-Calcula:
+Computes:
 
 ```text
 T_parallel = m <(v_parallel - <v_parallel>)²>
@@ -658,117 +666,109 @@ A          = T_perp / T_parallel
 R          = T_parallel / T_perp
 ```
 
-Salidas principales: `validation_table.csv` y `anisotropy_table.csv`.
+Main outputs: `validation_table.csv` and `anisotropy_table.csv`.
 
-### 4. Series temporales
+### 4. Time series
 
-Genera `anisotropy_vs_time.png` y
+Generates `anisotropy_vs_time.png` and
 `temperature_parallel_perp_vs_time.png`.
 
-### 5. VDF bidimensional
+### 5. Two-dimensional VDF
 
-Construye mapas logarítmicos
-$f(v_\perp,v_\parallel)$ para los snapshots de partículas seleccionados:
-`vdf_2d_step_<step>.png`.
+Builds logarithmic $f(v_\perp,v_\parallel)$ maps for the selected particle
+snapshots: `vdf_2d_step_<step>.png`.
 
-### 6. Ajustes Maxwelliano y Kappa
+### 6. Maxwellian and Kappa fits
 
-Ajusta ambas distribuciones, compara errores globales y de cola, estima
-$\kappa$ y calcula la fracción supratermal. Salidas:
-`fit_metrics.csv`, `kappa_fit_vs_time.png`,
-`suprathermal_fraction_vs_time.png` y
+Fits both distributions, compares global and tail errors, estimates $\kappa$ and
+computes the suprathermal fraction. Outputs: `fit_metrics.csv`,
+`kappa_fit_vs_time.png`, `suprathermal_fraction_vs_time.png` and
 `kappa_vs_maxwellian_step_<step>.png`.
 
 ### 7. Brazil plots
 
-Representa $\langle\beta_{\parallel i}\rangle$ frente a
-$\langle A_i\rangle$ y superpone umbrales mirror/firehose. Salida:
-`brazil_plot_global.png`. (`brazil_plot_spatial.png` fue un alias del mismo
-archivo en versiones anteriores; ya no se genera.)
+Plots $\langle\beta_{\parallel i}\rangle$ against $\langle A_i\rangle$ and
+overlays the mirror/firehose thresholds. Output: `brazil_plot_global.png`.
+(`brazil_plot_spatial.png` was an alias of the same file in earlier versions; it
+is no longer generated.)
 
-### 8. Mapas espaciales de anisotropía
+### 8. Spatial anisotropy maps
 
-Reconstruye $T_{\parallel i}$, $T_{\perp i}$ y
-$A_i(y,z)$ desde momentos de grilla. Produce estadísticas temporales en
-`anisotropy_spatial_stats.csv` y mapas `A_i_map_step_<step>.png`.
+Reconstructs $T_{\parallel i}$, $T_{\perp i}$ and $A_i(y,z)$ from grid moments.
+Produces time statistics in `anisotropy_spatial_stats.csv` and
+`A_i_map_step_<step>.png` maps.
 
-### 9. Fluctuaciones magnéticas
+### 9. Magnetic fluctuations
 
-Calcula $|B|$, $\delta B/B_0$, mínimos, profundidad de estructuras mirror y
-$\delta B_{\mathrm{rms}}(t)$. Salida tabular:
-`field_fluctuation_table.csv`.
+Computes $|B|$, $\delta B/B_0$, minima, the depth of mirror structures and
+$\delta B_{\mathrm{rms}}(t)$. Tabular output: `field_fluctuation_table.csv`.
 
-### 10. Tasa de crecimiento
+### 10. Growth rate
 
-Ajusta la fase aproximadamente lineal de
-$\ln(\delta B_{\mathrm{rms}})$ para estimar $\gamma$. Salidas:
-`growth_rate_summary.csv` y `growth_rate_fit.png`.
+Fits the approximately linear phase of $\ln(\delta B_{\mathrm{rms}})$ to estimate
+$\gamma$. Outputs: `growth_rate_summary.csv` and `growth_rate_fit.png`.
 
-### 11. Componentes magnéticas
+### 11. Magnetic components
 
-Separa fluctuaciones paralelas y transversales respecto a
-$B_0\parallel z$. Salida: `deltaB_components_comparison.png`, que ya contiene
-ambas componentes. (`deltaB_parallel_vs_time.png` y `deltaB_perp_vs_time.png`
-eran alias byte-idénticos del mismo archivo, no gráficas separadas; ya no se
-generan.)
+Separates parallel and transverse fluctuations relative to $B_0\parallel z$.
+Output: `deltaB_components_comparison.png`, which already contains both
+components. (`deltaB_parallel_vs_time.png` and `deltaB_perp_vs_time.png` were
+byte-identical aliases of the same file, not separate plots; they are no longer
+generated.)
 
-### 12. Espectro magnético transversal
+### 12. Transverse magnetic spectrum
 
-El diagnóstico maestro reutiliza el núcleo numérico de `SpectralAnalyzer` y
-calcula:
+The master diagnostic reuses the numerical core of `SpectralAnalyzer` and
+computes:
 
 ```text
 PSD_Bperp(k_y,k_z) = PSD_deltaBx + PSD_deltaBy
-E_Bperp(k)         = suma radial de PSD_Bperp
+E_Bperp(k)         = radial sum of PSD_Bperp
 ```
 
-Aplica ventana de Hann, obtiene el modo dominante y ajusta una ley de potencia
-en el intervalo central disponible. Salidas:
+It applies a Hann window, obtains the dominant mode and fits a power law over the
+available central interval. Outputs:
 
 ```text
 magnetic_spectrum_step_<step>.png
 magnetic_spectrum_table.csv
 ```
 
-La tabla registra plano, espaciado, `peak_k`, potencia máxima, pendiente y
-coeficiente de correlación del ajuste.
+The table records the plane, the spacing, `peak_k`, the peak power, the slope and
+the correlation coefficient of the fit.
 
-### 13. Corrientes diamagnéticas
+### 13. Diamagnetic currents
 
-Calcula mapas iónicos, electrónicos y totales a partir de
-$\nabla P_\perp\times B/B^2$. Salidas:
-`J_dia_i_map_step_<step>.png`,
-`J_dia_e_map_step_<step>.png` y
+Computes ion, electron and total maps from $\nabla P_\perp\times B/B^2$. Outputs:
+`J_dia_i_map_step_<step>.png`, `J_dia_e_map_step_<step>.png` and
 `J_dia_total_map_step_<step>.png`.
 
-### 14. Correlaciones espaciales
+### 14. Spatial correlations
 
-Evalúa correlaciones de $A_i$ con $\delta B$, $|B|$, $J_{dia}$ y densidad.
-Produce `spatial_correlations.csv` y los scatter plots correspondientes.
+Evaluates the correlations of $A_i$ with $\delta B$, $|B|$, $J_{dia}$ and
+density. Produces `spatial_correlations.csv` and the corresponding scatter plots.
 
-### 15. Partición y conservación de energía
+### 15. Energy partition and conservation
 
-Combina proxies de energía bulk, térmica y magnética; calcula la variación
-relativa respecto al primer estado disponible. Salidas:
-`energy_table.csv`, `energy_partition.png` y
-`energy_conservation_error.png`.
+Combines bulk, thermal and magnetic energy proxies; computes the relative
+variation with respect to the first available state. Outputs: `energy_table.csv`,
+`energy_partition.png` and `energy_conservation_error.png`.
 
-### 16. Flujos de calor
+### 16. Heat fluxes
 
-Calcula los terceros momentos globales de partículas
-$q_\parallel$ y $q_\perp$ para cada snapshot. Salidas:
-`heat_flux_parallel_vs_time.png` y `heat_flux_perp_vs_time.png`.
+Computes the global third particle moments $q_\parallel$ and $q_\perp$ for each
+snapshot. Outputs: `heat_flux_parallel_vs_time.png` and
+`heat_flux_perp_vs_time.png`.
 
-Además calcula proxies espaciales desde el tensor de presión y la velocidad
-bulk:
+It also computes spatial proxies from the pressure tensor and the bulk velocity:
 
 ```text
 q_parallel ≈ P_parallel v_parallel
 q_perp     ≈ P_perp |v_perp|
 ```
 
-El dominio se divide en cuatro cuadrantes fijos para comparar transporte
-localizado. Salidas:
+The domain is split into four fixed quadrants to compare localized transport.
+Outputs:
 
 ```text
 localized_heat_flux_table.csv
@@ -776,97 +776,88 @@ q_parallel_map_step_<step>.png
 q_perp_map_step_<step>.png
 ```
 
-`heat_flux_analysis.py` permanece disponible para una ejecución especializada,
-pero el diagnóstico localizado básico ya forma parte del pipeline maestro y
-usa el mismo lector HDF5/BP.
+`heat_flux_analysis.py` remains available for a specialized run, but the basic
+localized diagnostic is already part of the master pipeline and uses the same
+HDF5/BP reader.
 
-### 17. Comparación Maxwelliana frente a Kappa
+### 17. Maxwellian vs Kappa comparison
 
-`compare_physical_cases.py` combina las tablas de dos o más casos:
+`compare_physical_cases.py` combines the tables of two or more cases:
 
 ```bash
-python compare_physical_cases.py \
-  maxwellian=../analysis_results/mirror_maxwellian/09_physical_diagnostics \
-  kappa=../analysis_results/mirror_kappa/09_physical_diagnostics \
-  --outdir ../analysis_results/comparison_physical
+python compare_physical_cases.py maxwellian=../analysis_results/mirror_maxwellian/09_physical_diagnostics kappa=../analysis_results/mirror_kappa/09_physical_diagnostics --outdir ../analysis_results/comparison_physical
 ```
 
-Compara anisotropía, crecimiento, fluctuaciones, energía, flujo de calor y
-fracción supratermal sin volver a leer los snapshots originales.
+It compares anisotropy, growth, fluctuations, energy, heat flux and the
+suprathermal fraction without re-reading the original snapshots.
 
-## 10. Verificación de formatos
+## 10. Format verification
 
-Instalar las dependencias del análisis:
+Install the analysis dependencies:
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-`requirements.txt` incluye las bindings Python `adios2`; la instalación C++
-de ADIOS2 por sí sola no garantiza que `import adios2` esté disponible.
+`requirements.txt` includes the `adios2` Python bindings; a C++ ADIOS2
+installation on its own does not guarantee that `import adios2` works.
 
-Prueba HDF5 local:
-
-```bash
-PSC_PROFILE=F_S_bM ../.venv/bin/python physical_diagnostics.py \
-  --data-dir ../corridas_locales/mi_prueba \
-  --outdir /tmp/psc_physical_validation \
-  --max-particle-steps 2 --max-map-steps 2
-```
-
-Comprobación ADIOS2 en COSMA:
+Local HDF5 test:
 
 ```bash
-source ../src/cosma_adios2_env.sh
-python -c "import adios2; print(adios2.__file__)"
-
-python physical_diagnostics.py \
-  --data-dir /ruta/a/snapshots_bp \
-  --outdir /ruta/a/resultados
+PSC_PROFILE=F_S_bM ../.venv/bin/python physical_diagnostics.py --data-dir ../corridas_locales/mi_prueba --outdir /tmp/psc_physical_validation --max-particle-steps 2 --max-map-steps 2
 ```
 
-Si el directorio solo contiene `checkpoint_<step>.bp`, faltan las series
-físicas `pfd`, `pfd_moments` y `prt_*`; el checkpoint no es una entrada
-equivalente para estos 17 diagnósticos.
+ADIOS2 check on COSMA:
 
-## 11. Implementación y validación realizadas
+```bash
+source ../src/cosma_adios2_env.sh && python -c "import adios2; print(adios2.__file__)"
+```
 
-Cambios incorporados a la pipeline:
+```bash
+python physical_diagnostics.py --data-dir /path/to/snapshots_bp --outdir /path/to/results
+```
 
-1. `PICDataReader.open_data_file()` unifica HDF5 y ADIOS2.
-2. El descubrimiento reconoce archivos `.h5` y directorios `.bp`.
-3. La resolución de rutas acepta grupos limpios y grupos con UID.
-4. Las partículas BP se leen como variables separadas `q`, `m`, `px`, `py`,
-   `pz` y `w`.
-5. `physical_diagnostics.py` dejó de abrir HDF5 directamente.
-6. El espectro transversal $E_{B_\perp}(k)$ forma parte del diagnóstico
-   maestro.
-7. Se añadieron mapas y estadísticas regionales de flujo de calor.
-8. `spectral_analysis.py` dispone de fallback NumPy cuando SciPy no está
-   instalado.
+If the directory only contains `checkpoint_<step>.bp`, the physical series `pfd`,
+`pfd_moments` and `prt_*` are missing; the checkpoint is not an equivalent input
+for these 17 diagnostics.
 
-Validación ejecutada sobre `corridas_locales/mi_prueba`:
+## 11. Implementation and validation performed
+
+Changes incorporated into the pipeline:
+
+1. `PICDataReader.open_data_file()` unifies HDF5 and ADIOS2.
+2. Discovery recognizes `.h5` files and `.bp` directories.
+3. Path resolution accepts both clean groups and groups with a UID.
+4. BP particles are read as separate variables `q`, `m`, `px`, `py`, `pz` and
+   `w`.
+5. `physical_diagnostics.py` no longer opens HDF5 directly.
+6. The transverse spectrum $E_{B_\perp}(k)$ is part of the master diagnostic.
+7. Regional heat-flux maps and statistics were added.
+8. `spectral_analysis.py` has a NumPy fallback when SciPy is not installed.
+
+Validation run on `corridas_locales/mi_prueba`:
 
 ```text
-25 snapshots de campos HDF5
-25 snapshots de momentos HDF5
-2 snapshots de partículas seleccionados
-2 snapshots espectrales seleccionados
-4 regiones espaciales × 25 pasos = 100 filas de flujo localizado
+25 HDF5 field snapshots
+25 HDF5 moment snapshots
+2 selected particle snapshots
+2 selected spectral snapshots
+4 spatial regions × 25 steps = 100 localized-flux rows
 ```
 
-Resultados comprobados:
+Verified results:
 
 ```text
-physical_diagnostics.py: finaliza con código 0
-compare_physical_cases.py: finaliza con código 0
-magnetic_spectrum_table.csv: generado
-localized_heat_flux_table.csv: generado
-q_parallel_map_step_<step>.png: generado
-q_perp_map_step_<step>.png: generado
+physical_diagnostics.py: exits with code 0
+compare_physical_cases.py: exits with code 0
+magnetic_spectrum_table.csv: generated
+localized_heat_flux_table.csv: generated
+q_parallel_map_step_<step>.png: generated
+q_perp_map_step_<step>.png: generated
 ```
 
-La ruta ADIOS2 también se comprobó con un backend simulado que reproduce
-`FileReader` y con variables separadas de campos y partículas. La prueba real
-en un clúster requiere que las bindings Python ADIOS2 estén instaladas en el
-entorno que ejecuta el análisis.
+The ADIOS2 path was also checked with a simulated backend reproducing
+`FileReader` and with separate field and particle variables. A real cluster test
+requires the ADIOS2 Python bindings to be installed in the environment that runs
+the analysis.
