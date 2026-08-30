@@ -47,7 +47,17 @@ REPO="$BASE/pcseditado"
 BUILD_DIR="${BUILD_DIR:-$REPO/build}"
 RUN_ROOT="$BASE/anisotropy_adios2"
 PSC_TARGET=psc_firehose_bikappa3_bigbox40
-RUN_DIR="$RUN_ROOT/${PSC_TARGET}_${SLURM_JOB_ID}"
+
+# =====================================================================
+#  Carpeta de la corrida: se identifica por RUN_TAG, no por
+#  SLURM_JOB_ID. Antes era ${PSC_TARGET}_${SLURM_JOB_ID} y, como este
+#  job nunca exporta PSC_RESTART, cada reenvio creaba una carpeta nueva
+#  y empezaba desde t=0: asi acabo esta corrida partida en varias
+#  carpetas (_11654252, _11657054, _11657093) sin ninguna completa.
+#  Con RUN_TAG una reanudacion escribe en la MISMA carpeta.
+# =====================================================================
+RUN_TAG="${RUN_TAG:-$SLURM_JOB_ID}"
+RUN_DIR="$RUN_ROOT/${PSC_TARGET}_${RUN_TAG}"
 
 # ngrid=1152 en caja de 40 d_i = misma resolucion que los casos
 # estandar (576 en 20 d_i, ~28.8 celdas/d_i). La caja de 40 d_i vive
@@ -61,6 +71,12 @@ PSC_ENERGIES_EVERY="${PSC_ENERGIES_EVERY:-0}"
 PSC_LAUNCHER="${PSC_LAUNCHER:-mpirun}"
 export PSC_NGRID PSC_NICELL PSC_NP_Y PSC_NP_Z PSC_CHECKPOINT_EVERY PSC_ENERGIES_EVERY PSC_LAUNCHER
 
+# PSC_RESTART solo se exporta si viene definido: el caso lo lee con
+# getenv y arranca desde ese checkpoint en vez de desde t=0.
+if [ -n "${PSC_RESTART:-}" ]; then
+  export PSC_RESTART
+fi
+
 # shellcheck source=../../src/cosma_adios2_env.sh
 source "$REPO/src/cosma_adios2_env.sh"
 
@@ -71,6 +87,15 @@ test -x "$BUILD_DIR/src/$PSC_TARGET" || {
   exit 1
 }
 
+# Un envio sin PSC_RESTART sobre una carpeta que ya tiene datos
+# empezaria de cero encima de una corrida existente. Se aborta.
+if [ -z "${PSC_RESTART:-}" ] && compgen -G "$RUN_DIR/pfd.*" >/dev/null 2>&1; then
+  echo "ERROR: $RUN_DIR ya contiene snapshots y no se paso PSC_RESTART." >&2
+  echo "       Para reanudar:  --export=ALL,RUN_TAG=$RUN_TAG,PSC_RESTART=<checkpoint>.bp" >&2
+  echo "       Para empezar otra corrida distinta: usa otro RUN_TAG." >&2
+  exit 1
+fi
+
 mkdir -p "$RUN_DIR"
 cp "$BUILD_DIR/src/$PSC_TARGET" "$RUN_DIR/"
 cp "$REPO/adios2cfg.xml" "$RUN_DIR/"
@@ -78,6 +103,8 @@ cd "$RUN_DIR"
 
 echo "target=$PSC_TARGET"
 echo "job=$SLURM_JOB_ID"
+echo "run_tag=$RUN_TAG   (reanuda con RUN_TAG=$RUN_TAG)"
+echo "restart=${PSC_RESTART:-<none, desde t=0>}"
 echo "nodes=$SLURM_JOB_NODELIST"
 echo "ntasks=$SLURM_NTASKS"
 echo "domain_di=40  (compile-time)"

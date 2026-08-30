@@ -19,6 +19,7 @@ Repository root on COSMA: `/cosma7/data/dp433/dc-mart18/pcseditado`
 | `sim_mirror_bikappa3_moderate.sh` | Moderate bi-Kappa-3 mirror (compares against bimaxwellian moderate) | 20 d_i | ngrid 576 |
 | `sim_firehose_bimaxwellian_moderate_40di.sh` | Moderate bi-Maxwellian firehose, big box | **40 d_i** | ngrid 1152 |
 | `sim_firehose_bikappa3_40di.sh` | Bi-Kappa-3 firehose, big box | **40 d_i** | ngrid 1152 |
+| `sim_firehose_bimaxwellian_strong_40di.sh` | Strong bi-Maxwellian firehose, big box — the **controlled twin** of the bi-Kappa-3 run | **40 d_i** | ngrid 1152 |
 
 ### `analisis/` — Python pipeline over finished runs
 
@@ -29,6 +30,16 @@ Repository root on COSMA: `/cosma7/data/dp433/dc-mart18/pcseditado`
 | `analisis_mirror_bikappa3_moderate_pauper.sh` | Mirror **bikappa3** moderate | cosma7-rp-pauper / 24h |
 | `analisis_firehose_bimaxwellian_moderate_bigbox40_pauper.sh` | Firehose bimaxwellian moderate, 40 d_i box | cosma7-rp-pauper / 24h |
 | `analisis_firehose_bikappa3_bigbox40_pauper.sh` | Firehose bikappa3, 40 d_i box | cosma7-rp-pauper / 24h |
+
+### `utils/` — helpers that do not submit anything
+
+| Script | What it does |
+|---|---|
+| `merge_run_folders.sh` | Reports the step range of every run folder of a case and, **only if the ranges are disjoint**, hardlinks them into a single `<target>_merged` folder. Refuses to merge overlapping folders, because those are independent runs from t = 0 rather than segments of one run. Sources are never modified. |
+
+```bash
+cosma_jobs/utils/merge_run_folders.sh psc_firehose_bikappa3_bigbox40
+```
 
 > Each analysis job spreads the 8 independent stages of the Makefile `common`
 > target (`brazil fields particles spectral diamagnetic heatflux validate
@@ -155,12 +166,26 @@ sbatch cosma_jobs/analisis/analisis_firehose_bimaxwellian_moderate_bigbox40_paup
 sbatch cosma_jobs/analisis/analisis_firehose_bikappa3_bigbox40_pauper.sh
 ```
 
-> **bikappa3 has three run folders** (`_11654252`, `_11657054`, `_11657093`)
-> because `sim_firehose_bikappa3_40di.sh` creates a new `RUN_DIR` per
-> `SLURM_JOB_ID` on every submission; the snapshots are split across them and no
-> single folder holds the complete run. Without `DATA_DIR` the job picks the one
-> with the most snapshots and lists all three in the log. Check the `.out`/`.err`
-> of each job id before trusting the result, and force the folder if needed:
+> **bikappa3 is split across several run folders** (`_11657054`, `_11657093`; an
+> earlier `_11654252` is no longer on disk). The cause: `RUN_DIR` used to be keyed
+> on `SLURM_JOB_ID`, and the job never exported `PSC_RESTART` — so every
+> resubmission created a new folder **and restarted from t = 0**. The folders are
+> therefore independent partial runs, not consecutive segments of one run, and
+> concatenating them would splice two different trajectories into one time series.
+>
+> Both scripts now key `RUN_DIR` on `RUN_TAG` (defaults to the first job id, which
+> is printed in the log) and refuse to start on top of an existing run without
+> `PSC_RESTART`. To continue a run instead of starting a new one:
+>
+> ```bash
+> sbatch --export=ALL,RUN_TAG=11657093,PSC_RESTART=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/psc_firehose_bikappa3_bigbox40_11657093/checkpoint_<step>.bp cosma_jobs/simulacion/sim_firehose_bikappa3_40di.sh
+> ```
+>
+> To find out what the existing folders actually contain, run
+> `cosma_jobs/utils/merge_run_folders.sh` (see below). Without `DATA_DIR` the
+> analysis job picks the folder with the most snapshots and lists them all in the
+> log. Check the `.out`/`.err` of each job id before trusting the result, and
+> force the folder if needed:
 >
 > ```bash
 > sbatch --export=ALL,DATA_DIR=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/psc_firehose_bikappa3_bigbox40_11657093 cosma_jobs/analisis/analisis_firehose_bikappa3_bigbox40_pauper.sh
