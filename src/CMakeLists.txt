@@ -49,6 +49,9 @@ add_psc_executable(psc_firehose_bikappa5)
 # por eso son ejecutables aparte. Ver cosma_jobs/README.md.
 add_psc_executable(psc_firehose_bimaxwellian_moderate_bigbox40)
 add_psc_executable(psc_firehose_bikappa3_bigbox40)
+# Gemelo Bi-Maxwelliano de psc_firehose_bikappa3_bigbox40 (mismo
+# beta_i_par=10 y Ai=0.1): el par controlado para aislar el efecto de kappa.
+add_psc_executable(psc_firehose_bimaxwellian_strong_bigbox40)
 
 add_psc_executable(psc_reconnection)
 # Reconexion con parametros igualados a los casos de anisotropia
