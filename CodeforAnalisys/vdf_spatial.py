@@ -20,7 +20,16 @@ Dos diagnósticos:
      |B| de su celda en `hole` (percentil bajo), `ambient` y `peak`
      (percentil alto), y se comparan f(v_par) y f(v_perp) de cada población.
      Esta es la pregunta de los magnetic holes: si la anisotropía se regula
-     localmente, la VDF dentro del hueco no es la del fondo.
+     localmente, la VDF dentro del hueco no es la del fondo. Cada población
+     lleva además su kappa_eff (estimador truncado y blanqueado de
+     `kappa_eff.py`).
+
+  3. **Atrapadas/pasantes y perfiles por b.** Cada partícula se etiqueta con
+     b = |B|_local/B_ref y con el criterio adiabático sin^2(alpha) > b, y se
+     binea en b: n(b), T_perp/T_par(b), fracción atrapada(b) y kappa_eff(b),
+     por snapshot y agregado (superposed epoch en espacio de campo). Es el
+     perfil que predicen los cierres de Liouville (`liouville_kappa.py`) y la
+     figura central del paper.
 
 Convención de ejes (verificada contra `rho_i`, corr = 0.81 vs 0.01 para la
 transpuesta): los arrays de campo/momentos llegan como (Nz, Ny), eje 0 = Z,
@@ -53,9 +62,10 @@ import plot_style as ps
 
 ps.apply()
 
+import kappa_eff as ke
 from data_reader import PICDataReader
 from psc_units import (
-    B0, DOMAIN_DE, DOMAIN_DI_Y, DOMAIN_DI_Z, DI, N_GRID_Y, N_GRID_Z,
+    B0, DOMAIN_DE, DOMAIN_DI_Y, DOMAIN_DI_Z, DI, KAPPA, N_GRID_Y, N_GRID_Z,
     PROFILE_LABEL, step_to_omegaci,
 )
 
@@ -221,7 +231,9 @@ def macrocell_map(part: dict, vel: dict, lo, hi, nblocks: int) -> dict:
 
 # ── Diagnóstico 2: VDF condicionada al |B| local ─────────────────────────────
 
-def condition_on_field(part: dict, vel: dict, lo, hi, percentile: float) -> dict:
+def condition_on_field(part: dict, vel: dict, lo, hi, percentile: float,
+                       s_max: float = ke.DEFAULT_S_MAX,
+                       n_boot: int = 0) -> dict:
     """Separa hole / ambient / peak por el |B| local de cada partícula."""
     y0, y1 = int(lo[1]), int(hi[1])
     z0, z1 = int(lo[2]), int(hi[2])
@@ -259,6 +271,17 @@ def condition_on_field(part: dict, vel: dict, lo, hi, percentile: float) -> dict
         stats["A_global_z"] = glob["A"]
         stats["b_mean_over_B0"] = float(np.mean(b_local[idx]) / B0)
         stats["idx"] = idx
+        # kappa_eff de la población (truncado + blanqueado): la comparación
+        # hole vs peak es la versión de dos puntos de la fig. 7.
+        if idx.size >= 2000:
+            res = ke.kappa_eff_from_velocities(
+                vel["v_par"][idx], vel["v_perp1"][idx], vel["v_perp2"][idx],
+                weights=part["w"][idx], s_max=s_max, n_boot=n_boot)
+            stats["kappa_eff"] = res["kappa"]
+            stats["kappa_err"] = res["kappa_err"]
+        else:
+            stats["kappa_eff"] = float("nan")
+            stats["kappa_err"] = float("nan")
         out[name] = stats
     return out
 
@@ -294,6 +317,301 @@ def vdf_profiles(part: dict, vel: dict, groups: dict, nbins: int = 120) -> dict:
         profiles[f"{name}_par"] = h_par
         profiles[f"{name}_perp"] = h_perp
     return profiles
+
+
+# ── Diagnóstico 3: atrapadas/pasantes y perfiles bineados por b ──────────────
+#
+# Época superpuesta en espacio de campo: cada partícula se etiqueta con
+# b = |B|_local / B_ref (B_ref = percentil alto del |B| sobre las celdas de la
+# ventana, o sea el campo "pico" contra el que rebotan las atrapadas), se
+# clasifica atrapada/pasante con el criterio adiabático sin^2(alpha) > b, y se
+# binea en b. Por bin: densidad, T_perp/T_par, fracción atrapada y el kappa_eff
+# truncado y blanqueado — el perfil que predicen los cierres de Liouville.
+#
+# Decisiones físicas, explícitas:
+#   * Los ángulos de paso se miden en el marco de la deriva media de la
+#     ventana (pesada, en el marco local b). Restar la deriva celda a celda
+#     estaría dominado por ruido PIC con nicell ~ 1e3; la media de ventana es
+#     el compromiso estable, y en estas corridas periódicas la deriva es ~0.
+#   * B_ref sale de las celdas de campo del MISMO snapshot, así que los
+#     cambios seculares del campo de fondo (p.ej. calentamiento numérico) no
+#     se filtran en b como una evolución temporal falsa.
+#   * Una partícula con b >= 1 no puede cumplir sin^2(alpha) > b: queda
+#     pasante automáticamente, sin necesidad de un caso especial.
+
+
+def trapping_classification(part: dict, vel: dict, bfield: dict, lo, hi,
+                            b_ref_percentile: float) -> dict:
+    """Etiqueta cada partícula con b = |B|/B_ref y atrapada/pasante."""
+    y0, y1 = int(lo[1]), int(hi[1])
+    z0, z1 = int(lo[2]), int(hi[2])
+    inside = ((part["iy"] >= y0) & (part["iy"] < y1) &
+              (part["iz"] >= z0) & (part["iz"] < z1))
+
+    b_cells = bfield["bmag"][z0:z1, y0:y1].ravel()
+    b_ref = float(np.percentile(b_cells, b_ref_percentile))
+
+    w = part["w"]
+    w_in = w[inside]
+    drift = [np.average(vel[k][inside], weights=w_in)
+             for k in ("v_par", "v_perp1", "v_perp2")]
+    dv_par = vel["v_par"] - drift[0]
+    dv_p1 = vel["v_perp1"] - drift[1]
+    dv_p2 = vel["v_perp2"] - drift[2]
+
+    v2 = dv_par**2 + dv_p1**2 + dv_p2**2
+    v2 = np.where(v2 > 1e-60, v2, 1e-60)
+    sin2a = (dv_p1**2 + dv_p2**2) / v2
+
+    b = vel["bmag_local"] / b_ref
+    return {"inside": inside, "b": b, "b_ref": b_ref,
+            "b_ref_over_B0": b_ref / B0,
+            "trapped": sin2a > b, "sin2a": sin2a,
+            "dv_par": dv_par, "dv_p1": dv_p1, "dv_p2": dv_p2,
+            "cell_b": b_cells / b_ref, "drift": drift}
+
+
+def bin_by_b(part: dict, trap: dict, edges: np.ndarray, s_max: float,
+             n_boot: int, min_count: int = 200,
+             min_count_kappa: int = 2000) -> list[dict]:
+    """Perfiles n, A, fracción atrapada y kappa_eff por bin de b."""
+    inside = trap["inside"]
+    w = part["w"]
+    nbins = len(edges) - 1
+
+    # densidad: partículas por celda de la ventana, normalizada a la media
+    cell_hist, _ = np.histogram(trap["cell_b"], bins=edges)
+    w_all = float(np.sum(w[inside]))
+    n_cells_win = trap["cell_b"].size
+    mean_w_per_cell = w_all / n_cells_win if n_cells_win else float("nan")
+
+    idx_all = np.flatnonzero(inside)
+    which = np.digitize(trap["b"][idx_all], edges) - 1
+
+    rows = []
+    for j in range(nbins):
+        sel = idx_all[which == j]
+        row = {
+            "b_lo": float(edges[j]), "b_hi": float(edges[j + 1]),
+            "b_center": float(0.5 * (edges[j] + edges[j + 1])),
+            "count": int(sel.size), "n_cells": int(cell_hist[j]),
+            "b_mean": float("nan"), "n_over_mean": float("nan"),
+            "T_parallel": float("nan"), "T_perp": float("nan"),
+            "A": float("nan"), "A_err": float("nan"),
+            "trapped_fraction": float("nan"),
+            "trapped_fraction_iso": float("nan"),
+            "kappa_eff": float("nan"), "kappa_err": float("nan"),
+            "kappa_lo": float("nan"), "kappa_hi": float("nan"),
+        }
+        if sel.size < min_count or cell_hist[j] == 0:
+            rows.append(row)
+            continue
+
+        wj = w[sel]
+        row["b_mean"] = float(np.average(trap["b"][sel], weights=wj))
+        row["n_over_mean"] = float(
+            np.sum(wj) / cell_hist[j] / mean_w_per_cell)
+        stats = anisotropy_from(trap["dv_par"][sel], trap["dv_p1"][sel],
+                                trap["dv_p2"][sel], wj, part["mass"])
+        row["T_parallel"], row["T_perp"] = stats["T_parallel"], stats["T_perp"]
+        row["A"] = stats["A"]
+        row["A_err"] = stats["A"] * anisotropy_noise_floor(sel.size) \
+            if np.isfinite(stats["A"]) else float("nan")
+        row["trapped_fraction"] = float(
+            np.average(trap["trapped"][sel], weights=wj))
+        # referencia geométrica: fracción atrapada de una f isótropa
+        b_clip = min(max(row["b_mean"], 0.0), 1.0)
+        row["trapped_fraction_iso"] = float(np.sqrt(1.0 - b_clip))
+
+        if sel.size >= min_count_kappa:
+            res = ke.kappa_eff_from_velocities(
+                trap["dv_par"][sel], trap["dv_p1"][sel], trap["dv_p2"][sel],
+                weights=wj, s_max=s_max, n_boot=n_boot)
+            row["kappa_eff"] = res["kappa"]
+            row["kappa_err"] = res["kappa_err"]
+            row["kappa_lo"], row["kappa_hi"] = res["kappa_lo"], res["kappa_hi"]
+        rows.append(row)
+    return rows
+
+
+def aggregate_b_rows(per_step: dict[int, list[dict]]) -> list[dict]:
+    """Combina los perfiles por b de varios snapshots (bins comunes).
+
+    Momentos y fracciones se combinan pesando por el número de partículas del
+    bin en cada step; kappa_eff se combina como media pesada por particulas y
+    su error como dispersión entre steps (los steps son la unidad
+    estadísticamente independiente, no las partículas).
+    """
+    if not per_step:
+        return []
+    steps = sorted(per_step)
+    nbins = len(per_step[steps[0]])
+    out = []
+    for j in range(nbins):
+        rows = [per_step[s][j] for s in steps]
+        counts = np.array([r["count"] for r in rows], dtype=float)
+        base = {"b_lo": rows[0]["b_lo"], "b_hi": rows[0]["b_hi"],
+                "b_center": rows[0]["b_center"],
+                "count": int(counts.sum()),
+                "n_cells": int(sum(r["n_cells"] for r in rows)),
+                "n_steps": len(steps)}
+
+        def wmean(key):
+            vals = np.array([r[key] for r in rows], dtype=float)
+            good = np.isfinite(vals) & (counts > 0)
+            if not np.any(good):
+                return float("nan"), float("nan"), 0
+            mean = float(np.average(vals[good], weights=counts[good]))
+            if good.sum() > 1:
+                spread = float(np.sqrt(np.average(
+                    (vals[good] - mean) ** 2, weights=counts[good])
+                    / (good.sum() - 1)))
+            else:
+                spread = float("nan")
+            return mean, spread, int(good.sum())
+
+        for key, err_key in (("b_mean", None), ("n_over_mean", "n_err"),
+                             ("A", "A_err"), ("T_parallel", None),
+                             ("T_perp", None),
+                             ("trapped_fraction", "trapped_fraction_err"),
+                             ("trapped_fraction_iso", None)):
+            mean, spread, _ = wmean(key)
+            base[key] = mean
+            if err_key:
+                base[err_key] = spread
+
+        # kappa se agrega en 1/kappa: el límite Maxwelliano (kappa = inf) es
+        # un dato legítimo, no un hueco, y en 1/kappa vale exactamente 0.
+        inv = np.array([1.0 / r["kappa_eff"] if np.isfinite(r["kappa_eff"])
+                        else (0.0 if np.isinf(r["kappa_eff"]) else np.nan)
+                        for r in rows])
+        good = np.isfinite(inv) & (counts > 0)
+        if np.any(good):
+            inv_mean = float(np.average(inv[good], weights=counts[good]))
+            if good.sum() > 1:
+                inv_spread = float(np.sqrt(np.average(
+                    (inv[good] - inv_mean) ** 2, weights=counts[good])
+                    / (good.sum() - 1)))
+            else:
+                inv_spread = float("nan")
+            base["kappa_eff"] = 1.0 / inv_mean if inv_mean > 0 else float("inf")
+            base["kappa_err"] = (inv_spread / inv_mean ** 2
+                                 if inv_mean > 0 and np.isfinite(inv_spread)
+                                 else float("nan"))
+            base["kappa_n_steps"] = int(good.sum())
+        else:
+            base["kappa_eff"] = float("nan")
+            base["kappa_err"] = float("nan")
+            base["kappa_n_steps"] = 0
+        out.append(base)
+    return out
+
+
+def plot_b_profiles(agg: list[dict], per_step: dict[int, list[dict]],
+                    b_ref_info: dict, outdir: Path, prefix: str):
+    """Figura tipo fig. 7: n, A, fracción atrapada y kappa_eff vs b."""
+    good = [r for r in agg if r["count"] > 0]
+    if not good:
+        return None
+    b = np.array([r["b_mean"] for r in good])
+    steps = sorted(per_step)
+
+    fig, axes = plt.subplots(2, 2, figsize=(12.5, 9.5), sharex=True)
+    fig.subplots_adjust(hspace=0.12, wspace=0.28)
+
+    def faint_curves(ax, key):
+        for s in steps:
+            rows = per_step[s]
+            bb = np.array([r["b_mean"] for r in rows])
+            vv = np.array([r[key] for r in rows])
+            m = np.isfinite(bb) & np.isfinite(vv)
+            if m.sum() > 1:
+                ax.plot(bb[m], vv[m], color="0.65", lw=0.8, alpha=0.6,
+                        zorder=1)
+
+    # (a) densidad
+    ax = axes[0, 0]
+    faint_curves(ax, "n_over_mean")
+    v = np.array([r["n_over_mean"] for r in good])
+    e = np.array([r.get("n_err", np.nan) for r in good])
+    ax.errorbar(b, v, yerr=e, color=ps.c("#1f77b4"), lw=2.0, marker="o",
+                ms=4, capsize=2, zorder=3)
+    ax.axhline(1.0, color="0.4", lw=0.8, ls=":")
+    ax.set_ylabel(r"$n \, / \, \langle n \rangle_{\rm window}$")
+    ax.set_title("Density")
+
+    # (b) anisotropía
+    ax = axes[0, 1]
+    faint_curves(ax, "A")
+    v = np.array([r["A"] for r in good])
+    e = np.array([r.get("A_err", np.nan) for r in good])
+    ax.errorbar(b, v, yerr=e, color=ps.c("#d62728"), lw=2.0, marker="o",
+                ms=4, capsize=2, zorder=3)
+    ax.set_ylabel(r"$A = T_\perp / T_\parallel$")
+    ax.set_title("Anisotropy")
+
+    # (c) fracción atrapada
+    ax = axes[1, 0]
+    faint_curves(ax, "trapped_fraction")
+    v = np.array([r["trapped_fraction"] for r in good])
+    e = np.array([r.get("trapped_fraction_err", np.nan) for r in good])
+    ax.errorbar(b, v, yerr=e, color=ps.c("#2ca02c"), lw=2.0, marker="o",
+                ms=4, capsize=2, zorder=3, label="measured")
+    iso = np.array([r["trapped_fraction_iso"] for r in good])
+    order = np.argsort(b)
+    ax.plot(b[order], iso[order], color="0.3", lw=1.4, ls="--",
+            label=r"isotropic $f$: $\sqrt{1-b}$")
+    ax.set_xlabel(r"$b = |B| / B_{\rm ref}$")
+    ax.set_ylabel("trapped weight fraction")
+    ax.set_title(r"Trapped domain ($\sin^2\alpha > b$)")
+    ax.legend(framealpha=0.9)
+
+    # (d) kappa_eff. El eje se acota: kappa = inf (Maxwelliano-consistente) y
+    # los valores gigantes con error gigante son la MISMA afirmación física
+    # ("sin cola resoluble") y se dibujan como cotas: triángulo en el tope.
+    ax = axes[1, 1]
+    cap = 3.0 * KAPPA if KAPPA is not None else 20.0
+    v = np.array([r["kappa_eff"] for r in good])
+    e = np.array([r.get("kappa_err", np.nan) for r in good])
+    m = np.isfinite(v) & (v <= cap)
+    ax.errorbar(b[m], v[m], yerr=np.clip(e[m], 0.0, cap), color=ps.c("#9467bd"),
+                lw=2.0, marker="o", ms=4, capsize=2, zorder=3,
+                label="measured")
+    bound = (np.isinf(v)) | (np.isfinite(v) & (v > cap))
+    if np.any(bound):
+        ax.plot(b[bound], np.full(bound.sum(), 0.97 * cap), marker="^",
+                ls="none", ms=7, color=ps.c("#9467bd"), alpha=0.7,
+                zorder=3, label=r"Maxwellian-consistent ($\kappa\to\infty$)")
+    ax.set_ylim(0.0, cap)
+    if KAPPA is not None:
+        ax.axhline(KAPPA, color=ps.c("#ff7f0e"), lw=1.4, ls="--",
+                   label=rf"adiabatic invariance: $\kappa_0 = {KAPPA:g}$")
+    ax.set_xlabel(r"$b = |B| / B_{\rm ref}$")
+    ax.set_ylabel(r"$\kappa_{\rm eff}$ (truncated moments)")
+    ax.set_title(r"Spectral index")
+    ax.legend(framealpha=0.9)
+
+    n_steps = len(steps)
+    fig.suptitle(
+        rf"Superposed-epoch profiles in $b$ — {PROFILE_LABEL}, "
+        rf"{n_steps} snapshot{'s' if n_steps != 1 else ''}, "
+        rf"$B_{{\rm ref}} = {b_ref_info['b_ref_over_B0']:.3f}\,B_0$ "
+        rf"(p{b_ref_info['percentile']:g} of window $|B|$)", y=0.97)
+    out = outdir / f"{prefix}vdf_b_profiles.png"
+    ps.save(fig, out)
+    plt.close(fig)
+    return out
+
+
+def write_b_profile_csv(rows: list[dict], step, outdir: Path,
+                        prefix: str) -> Path:
+    tag = "aggregate" if step is None else f"step{step:09d}"
+    out = outdir / f"{prefix}vdf_b_profile_{tag}.csv"
+    with open(out, "w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    return out
 
 
 # ── Figuras ──────────────────────────────────────────────────────────────────
@@ -413,9 +731,12 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
         if not g:
             continue
         err = g["A"] * anisotropy_noise_floor(g["count"])
+        kap = g.get("kappa_eff", float("nan"))
+        kap_txt = (r"$\kappa$=inf" if np.isinf(kap)
+                   else rf"$\kappa$={kap:.2f}" if np.isfinite(kap) else "")
         lines.append(
             rf"{labels.get(name, name):<18s} A={g['A']:.4f}$\pm${err:.4f}   "
-            rf"$A_z$={g['A_global_z']:.4f}   N={g['count']:,}")
+            rf"$A_z$={g['A_global_z']:.4f}   {kap_txt}   N={g['count']:,}")
 
     # La pregunta de los magnetic holes: A dentro del hueco vs en el pico,
     # medido contra el ruido de muestreo de ambas poblaciones.
@@ -497,6 +818,8 @@ def summary_rows(groups: dict, mac: dict, step: int) -> list[dict]:
             "A_local_b": g["A"],
             "A_local_b_error": g["A"] * anisotropy_noise_floor(g["count"]),
             "A_global_z": g["A_global_z"],
+            "kappa_eff": g.get("kappa_eff", float("nan")),
+            "kappa_eff_error": g.get("kappa_err", float("nan")),
             "count": g["count"],
             "b_lo_over_B0": thr.get("b_lo_over_B0", float("nan")),
             "b_hi_over_B0": thr.get("b_hi_over_B0", float("nan")),
@@ -567,7 +890,10 @@ def main() -> int:
     print(f"Macro-celdas:    {args.macrocells} x {args.macrocells}")
     print(f"Steps:           {len(prt_steps)}")
 
+    b_edges = np.linspace(args.b_min, args.b_max, args.b_bins + 1)
     all_rows: list[dict] = []
+    b_rows_by_step: dict[int, list[dict]] = {}
+    b_ref_info: dict = {}
     for step in prt_steps:
         # el snapshot de campos más cercano al de partículas
         near = int(field_steps[np.argmin(np.abs(field_steps - step))])
@@ -580,8 +906,17 @@ def main() -> int:
         bfield = load_b_field(fields[near])
         vel = local_frame_velocities(part, bfield)
         mac = macrocell_map(part, vel, lo, hi, args.macrocells)
-        groups = condition_on_field(part, vel, lo, hi, args.percentile)
+        groups = condition_on_field(part, vel, lo, hi, args.percentile,
+                                    s_max=args.s_max, n_boot=args.kappa_boot)
         profiles = vdf_profiles(part, vel, groups)
+
+        trap = trapping_classification(part, vel, bfield, lo, hi,
+                                       args.b_ref_percentile)
+        b_rows = bin_by_b(part, trap, b_edges, args.s_max, args.kappa_boot)
+        b_rows_by_step[step] = b_rows
+        b_ref_info = {"b_ref_over_B0": trap["b_ref_over_B0"],
+                      "percentile": args.b_ref_percentile}
+        write_b_profile_csv(b_rows, step, outdir, args.prefix)
 
         png = plot_overview(bfield, mac, window, groups, profiles, step,
                             outdir, args.prefix)
@@ -598,6 +933,15 @@ def main() -> int:
         else:
             print(f"  step {step:>9} (campo {near}): {png.name}  |  {csv_path.name}")
 
+    if b_rows_by_step:
+        agg = aggregate_b_rows(b_rows_by_step)
+        if agg:
+            write_b_profile_csv(agg, None, outdir, args.prefix)
+            png = plot_b_profiles(agg, b_rows_by_step, b_ref_info, outdir,
+                                  args.prefix)
+            if png:
+                print(f"Perfiles por b:  {png}")
+
     if all_rows:
         summary = outdir / f"{args.prefix}vdf_hole_vs_peak_summary.csv"
         with open(summary, "w", newline="") as fh:
@@ -611,6 +955,10 @@ def main() -> int:
         json.dump({"profile": PROFILE_LABEL, "species": args.species,
                    "prt_window": window, "macrocells": args.macrocells,
                    "percentile": args.percentile,
+                   "b_bins": args.b_bins, "b_range": [args.b_min, args.b_max],
+                   "b_ref_percentile": args.b_ref_percentile,
+                   "b_ref_over_B0": b_ref_info.get("b_ref_over_B0"),
+                   "kappa_s_max": args.s_max, "kappa_boot": args.kappa_boot,
                    "steps": [int(s) for s in prt_steps]}, fh, indent=2)
     return 0
 
@@ -631,6 +979,21 @@ def parse_args():
     p.add_argument("--max-particles", type=int, default=4_000_000)
     p.add_argument("--max-step-mismatch", type=int, default=3000,
                    help="desfase máximo permitido entre snapshot prt y de campos")
+    p.add_argument("--b-bins", type=int, default=10,
+                   help="número de bins en b = |B|/B_ref")
+    p.add_argument("--b-min", type=float, default=0.60,
+                   help="borde inferior del bineado en b")
+    p.add_argument("--b-max", type=float, default=1.05,
+                   help="borde superior del bineado en b")
+    p.add_argument("--b-ref-percentile", type=float, default=98.0,
+                   help="percentil de |B| en la ventana que define B_ref "
+                        "(el campo 'pico' contra el que rebotan las atrapadas)")
+    p.add_argument("--s-max", type=float, default=ke.DEFAULT_S_MAX,
+                   help="radio de truncamiento del estimador kappa_eff "
+                        "(unidades blanqueadas)")
+    p.add_argument("--kappa-boot", type=int, default=24,
+                   help="réplicas bootstrap para el error de kappa_eff "
+                        "(0 = sin error)")
     return p.parse_args()
 
 

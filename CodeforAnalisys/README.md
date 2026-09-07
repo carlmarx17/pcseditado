@@ -1010,6 +1010,73 @@ units of \(\sigma\), so that an apparent separation in a colour map is not
 mistaken for a measurement. The anisotropy is taken relative to the local field
 \(\hat{b}\), not to the global \(z\).
 
+### 12. Spatially resolved kappa index: estimator, b-binned profiles, closures
+
+#### 12.1. Physical rationale
+
+The adiabatic Liouville mapping of a bi-kappa along a mirror structure
+conserves \(\kappa\) on the passing branch — only \(\theta_\perp\) is
+renormalised, \(\theta_{\perp,\rm eff}^2 = \theta_\perp^2\, b /
+[1 - A_0(1-b)]\), with \(b = B/B_{\rm ref}\) and maximum depth
+\(a_{\max} = 1 - 1/A_0\). Any measured variation of \(\kappa_{\rm eff}(b)\)
+is therefore a signature of how the trapped domain
+(\(\sin^2\alpha > b\)) is filled, or of non-adiabatic dynamics.
+
+#### 12.2. The estimator (`kappa_eff.py`)
+
+\(\kappa_{\rm eff}\) comes from the moment ratio
+\(K = \langle s^4\rangle/\langle s^2\rangle^2\) with the velocities
+**whitened** per component (\(s_j = v_j/\sigma_j\), drift subtracted) and
+**truncated** at \(s \le s_{\max}\) (default 6):
+
+* whitening removes anisotropy aliasing — a bi-Maxwellian with \(A \ne 1\)
+  would otherwise report a spurious finite kappa;
+* truncation handles the divergence of \(\langle v^4\rangle\) for
+  \(\kappa \le 5/2\) (the \(\kappa = 3\) runs!) and mimics an instrument's
+  finite energy range. The truncated relation \(K_t(\kappa, s_{\max})\) is
+  inverted numerically; the untruncated limit is
+  \(\kappa = \tfrac52 (K-1)/(K-\tfrac53)\).
+
+The same estimator is applied to particles
+(`kappa_eff_from_velocities`) and to theoretical distributions on a
+\((v_\parallel, v_\perp)\) quadrature grid (`kappa_eff_from_grid`), so
+theory, simulation and (eventually) instrument data share one definition.
+Validation against loader-consistent synthetic bi-kappas lives in
+`test_kappa_eff.py`; `make kappa-eff-self-test` runs a quick check.
+
+#### 12.3. b-binned profiles (`vdf_spatial.py`, paper fig. 7)
+
+Each particle is tagged with \(b = |B|_{\rm local}/B_{\rm ref}\)
+(\(B_{\rm ref}\) = high percentile of the window \(|B|\), per snapshot) and
+classified trapped/passing with \(\sin^2\alpha > b\) in the drift-subtracted
+local-\(\hat b\) frame. Binning in \(b\) yields \(n(b)\), \(T_\perp/T_\parallel(b)\),
+the trapped fraction (with the isotropic reference \(\sqrt{1-b}\)) and
+\(\kappa_{\rm eff}(b)\), per snapshot and aggregated (superposed epoch in
+field space; kappa aggregates in \(1/\kappa\), where the Maxwellian limit is
+exactly 0). Outputs: `vdf_b_profile_step*.csv`, `vdf_b_profile_aggregate.csv`
+and `vdf_b_profiles.png`. Tune with `VDF_FLAGS='--b-bins 12 --b-ref-percentile 98
+--s-max 6 --kappa-boot 24'`. When aggregating, restrict `--steps` to the
+saturated phase — mixing the linear stage in smears the profiles.
+
+#### 12.4. Liouville closures (`liouville_kappa.py`, paper fig. 2)
+
+Computes the closed-form mapped passing branch plus the three trapped-domain
+closures — case 1 `empty` (\(f=0\)), case 2 `flat` (continuity, flat along
+\(v_\parallel\)), case 3 `own` (own bi-kappa \(\kappa_t\); with
+\(\kappa_t=\kappa_0\) it is the seamless filling and
+\(\kappa_{\rm eff}(b) = \kappa_0\) exactly) — and their \(n\), \(A\),
+trapped-fraction and \(\kappa_{\rm eff}\) profiles vs \(b\), overlayable on
+the measured fig. 7:
+
+```bash
+make theory-liouville CASE=mirror_bikappa3_moderate
+make liouville-self-test
+```
+
+The self-test verifies the closed form against the raw Liouville mapping
+point-wise (the kappa-invariance theorem), the depth bound \(b > 1 - 1/A_0\),
+and that the closure signatures in \(\kappa_{\rm eff}\) behave as documented.
+
 ## Technical documentation
 
 For the internal file structure, HDF5 datasets and the responsibilities of each

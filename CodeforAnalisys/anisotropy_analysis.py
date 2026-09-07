@@ -293,10 +293,50 @@ def _robust_plot_ranges(beta, aniso):
 
 
 # ── Plot 1: Brazil acumulado coloreado por tiempo ─────────────────────────────
+def load_kappa_timeseries(path) -> dict:
+    """step -> kappa_eff desde un CSV de vdf_spatial.py.
+
+    Acepta `vdf_hole_vs_peak_summary.csv` (usa la población "all") o
+    cualquier CSV con columnas `step` y `kappa_eff`. `inf` (Maxwelliano-
+    consistente) es un valor legítimo y se conserva.
+    """
+    import csv as _csv
+    out = {}
+    with open(path, newline="") as fh:
+        for row in _csv.DictReader(fh):
+            if row.get("population", "all") != "all":
+                continue
+            try:
+                out[int(float(row["step"]))] = float(row["kappa_eff"])
+            except (KeyError, ValueError):
+                continue
+    return out
+
+
+def _kappa_for_steps(steps, kappa_by_step: dict, tol: int = 5000):
+    """kappa_eff del snapshot prt más cercano a cada step de momentos."""
+    if not kappa_by_step:
+        return None
+    known = np.array(sorted(kappa_by_step))
+    vals = np.full(len(steps), np.nan)
+    for i, s in enumerate(steps):
+        j = int(np.argmin(np.abs(known - s)))
+        if abs(int(known[j]) - int(s)) <= tol:
+            vals[i] = kappa_by_step[int(known[j])]
+    return vals
+
+
 def plot_brazil_accumulated(
-    all_beta, all_aniso, snap_stats, steps, outdir: Path, b0_ref: float
+    all_beta, all_aniso, snap_stats, steps, outdir: Path, b0_ref: float,
+    kappa_by_step: dict | None = None,
 ):
-    """Scatter coloreado por Omega_ci*t con histograma de densidad superpuesto."""
+    """Scatter coloreado por Omega_ci*t con histograma de densidad superpuesto.
+
+    Con `kappa_by_step`, la trayectoria global se colorea por 1/kappa_eff
+    (0 = Maxwelliano) en lugar de por tiempo: es la versión (beta_par, A)
+    del diagnóstico de colas suprathermales, con el MISMO estimador truncado
+    usado en teoría y en los perfiles por b.
+    """
     if len(all_beta) == 0:
         print("[WARN] Sin datos para Brazil acumulado"); return
 
@@ -350,11 +390,28 @@ def plot_brazil_accumulated(
         aniso_med = np.array([s["aniso_global"] for s in snap_stats])
         time_med = np.array([s["toci"] for s in snap_stats])
         ax.plot(beta_med, aniso_med, color=ps.TEXT_CLR, lw=2.0, alpha=0.9, zorder=10)
-        ax.scatter(
-            beta_med, aniso_med, c=time_med, cmap="cool", s=46,
-            edgecolors="white", linewidths=0.4, zorder=11,
-            label="Global state per snapshot",
-        )
+        kap_vals = _kappa_for_steps([s["step"] for s in snap_stats],
+                                    kappa_by_step or {})
+        if kap_vals is not None and np.isfinite(1.0 / kap_vals).sum() >= 2:
+            with np.errstate(divide="ignore"):
+                inv_kap = np.where(np.isnan(kap_vals), np.nan, 1.0 / kap_vals)
+            sc = ax.scatter(
+                beta_med, aniso_med, c=inv_kap, cmap="plasma", s=52,
+                vmin=0.0, edgecolors="white", linewidths=0.4, zorder=11,
+                label="Global state per snapshot",
+            )
+            kcb = plt.colorbar(sc, ax=ax, pad=0.10, fraction=0.04)
+            kcb.set_label(r"$1/\kappa_{\rm eff}$  (0 = Maxwellian)",
+                          fontsize=BRAZIL_LABEL, color=TEXT_CLR)
+            kcb.ax.yaxis.set_tick_params(color=TEXT_CLR,
+                                         labelsize=BRAZIL_TICK)
+            plt.setp(kcb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
+        else:
+            ax.scatter(
+                beta_med, aniso_med, c=time_med, cmap="cool", s=46,
+                edgecolors="white", linewidths=0.4, zorder=11,
+                label="Global state per snapshot",
+            )
         ax.scatter(beta_med[0], aniso_med[0], marker="D", s=90,
                    color=ps.c("#2ecc71"), edgecolor="white", zorder=12, label="Measured start")
         ax.scatter(beta_med[-1], aniso_med[-1], marker="*", s=190,
@@ -616,7 +673,8 @@ def write_summary_csv(snap_stats: list, outdir: Path):
 # ── Analisis principal ────────────────────────────────────────────────────────
 def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
                  outdir: str = "anisotropy_plots", n_grid_snaps: int = 12,
-                 run_name: str = "", jobs: int = 0):
+                 run_name: str = "", jobs: int = 0,
+                 kappa_timeseries: str = ""):
     global OUTPUT_PREFIX
     clean_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", run_name).strip("_")
     OUTPUT_PREFIX = f"{clean_name}_" if clean_name else ""
@@ -711,7 +769,12 @@ def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
     all_beta  = np.asarray(all_beta)
     all_aniso = np.asarray(all_aniso)
     print("Generando graficas...")
-    plot_brazil_accumulated(all_beta, all_aniso, snap_stats, common, out, B0_ref)
+    kappa_by_step = (load_kappa_timeseries(kappa_timeseries)
+                     if kappa_timeseries else None)
+    if kappa_timeseries and not kappa_by_step:
+        print(f"[WARN] Sin valores kappa_eff utilizables en {kappa_timeseries}")
+    plot_brazil_accumulated(all_beta, all_aniso, snap_stats, common, out,
+                            B0_ref, kappa_by_step=kappa_by_step)
     plot_temporal_evolution(snap_stats, out)
     plot_brazil_grid(grid_snaps, out, B0_ref, n_cols=4)
     write_summary_csv(snap_stats, out)
@@ -748,6 +811,10 @@ if __name__ == "__main__":
                         help="Nombre incluido en cada archivo de salida.")
     parser.add_argument("--jobs", "-j", type=int, default=0,
                         help="Número de procesos en paralelo (0 = usar todos los cores disponibles).")
+    parser.add_argument("--kappa-timeseries", default="",
+                        help="CSV con step,kappa_eff (p.ej. el "
+                             "vdf_hole_vs_peak_summary.csv de vdf_spatial.py) "
+                             "para colorear la trayectoria por 1/kappa_eff.")
     args = parser.parse_args()
 
     if args.data_dir:
@@ -766,4 +833,5 @@ if __name__ == "__main__":
         n_grid_snaps=args.nsnaps,
         run_name=args.run_name,
         jobs=args.jobs,
+        kappa_timeseries=args.kappa_timeseries,
     )

@@ -274,6 +274,20 @@ theory: check-case
 theory-self-test:
 	$(PYTHON) linear_theory.py --self-test
 
+# Adiabatic Liouville mapping + trapped-domain closures (paper fig. 2).
+# Defaults (kappa0, A0) come from the active PSC_PROFILE; override with
+# LIOUVILLE_FLAGS='--kappa0 3 --A0 2'.
+theory-liouville: check-case
+	@echo "Computing Liouville closure profiles for $(CASE)"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) liouville_kappa.py --figure \
+		--outdir "$(SPECTRAL_OUT)" $(LIOUVILLE_FLAGS)
+
+liouville-self-test:
+	$(PYTHON) liouville_kappa.py --self-test
+
+kappa-eff-self-test:
+	$(PYTHON) kappa_eff.py --self-test
+
 prt-region: check-case check-fields
 	@echo "Locating the prt window in the field-fluctuation maps"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) prt_region_field_cut.py \
