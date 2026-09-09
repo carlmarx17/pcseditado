@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 from pathlib import Path
 
 import matplotlib
@@ -16,6 +17,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+import plot_style as ps
+
+ps.apply()
 
 plt.rcParams.update({
     "font.size": 15,
@@ -27,10 +31,10 @@ plt.rcParams.update({
     "figure.titlesize": 20,
 })
 
-DARK_BG = "#0d1117"
-PANEL_BG = "#161b22"
-TEXT_CLR = "#e6edf3"
-GRID_CLR = "#30363d"
+DARK_BG = ps.c("#0d1117")
+PANEL_BG = ps.c("#161b22")
+TEXT_CLR = ps.c("#e6edf3")
+GRID_CLR = ps.c("#30363d")
 
 
 def _read_csv(path: Path) -> list[dict]:
@@ -68,8 +72,7 @@ def _style(ax):
 
 def _save(fig, path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
-    plt.close(fig)
+    ps.save(fig, path)
 
 
 def parse_case_arg(raw: str) -> tuple[str, Path]:
@@ -81,6 +84,10 @@ def parse_case_arg(raw: str) -> tuple[str, Path]:
 
 
 def load_case(name: str, path: Path) -> dict:
+    manifests = list(path.glob("*_analysis_manifest.json")) or list(path.parent.glob("*_analysis_manifest.json"))
+    if len(manifests) > 1:
+        raise ValueError(f"Ambiguous analysis manifests for {name}: {manifests}")
+    manifest = json.loads(manifests[0].read_text()) if manifests else {}
     rows = {}
     for table_name, table_path in [
         ("anisotropy", path / "anisotropy_table.csv"),
@@ -96,7 +103,9 @@ def load_case(name: str, path: Path) -> dict:
             rows[step].update({f"{table_name}_{k}": v for k, v in row.items()})
 
     gamma_rows = _read_csv(path / "growth_rate_summary.csv")
-    gamma = _to_float(gamma_rows[0].get("gamma")) if gamma_rows else np.nan
+    gamma_raw = _to_float(gamma_rows[0].get("gamma")) if gamma_rows else np.nan
+    fit_ok = bool(gamma_rows) and gamma_rows[0].get("fit_ok", "").strip().lower() in ("1", "true")
+    gamma = gamma_raw if fit_ok else np.nan
     merged = []
     for step in sorted(rows):
         row = rows[step]
@@ -116,14 +125,44 @@ def load_case(name: str, path: Path) -> dict:
             "delta_B_rms": _to_float(row.get("field_delta_B_rms")),
             "delta_B_rms_over_B0": _to_float(row.get("field_delta_B_rms_over_B0")),
             "gamma": gamma,
+            "gamma_raw": gamma_raw,
+            "gamma_fit_ok": fit_ok,
             "kappa_fit": _to_float(row.get("fit_kappa_fit")),
             "F_supra": _to_float(row.get("fit_suprathermal_fraction")),
             "E_B": _to_float(row.get("energy_E_B")),
-            "E_total": _to_float(row.get("energy_E_total")),
+            "E_proxy": _to_float(row.get("energy_E_proxy")),
             "q_parallel": _to_float(row.get("anisotropy_q_parallel_particle")),
             "q_perp": _to_float(row.get("anisotropy_q_perp_particle")),
         })
-    return {"name": name, "rows": merged, "gamma": gamma}
+    return {"name": name, "rows": merged, "gamma": gamma, "manifest": manifest}
+
+
+def validate_comparison(cases: list[dict], mode: str = "distribution") -> list[str]:
+    """Check declared parameters; this does not certify the initial measured VDF."""
+    fixed = ["mass_ratio", "n0", "B0", "beta_i_parallel", "A_i", "beta_e_parallel", "A_e"]
+    if mode == "distribution":
+        fixed += ["domain_di", "grid", "dt_code_from_profile", "nicell_from_profile"]
+    elif mode == "convergence":
+        fixed += ["kappa"]
+    else:
+        raise ValueError("comparison mode must be distribution or convergence")
+    errors = []
+    for case in cases:
+        physics = case["manifest"].get("physics", {})
+        for key in fixed:
+            if key not in physics:
+                errors.append(f"{case['name']}: missing {key}; regenerate its manifest")
+    if errors or not cases:
+        return errors
+    reference = cases[0]["manifest"]["physics"]
+    for case in cases[1:]:
+        physics = case["manifest"]["physics"]
+        for key in fixed:
+            left, right = reference[key], physics[key]
+            equal = left == right if left is None or right is None else np.allclose(left, right, rtol=1e-10, atol=1e-12)
+            if not equal:
+                errors.append(f"{case['name']}: {key}={right} differs from {cases[0]['name']} ({left})")
+    return errors
 
 
 def plot_timeseries(cases: list[dict], ykeys: list[str], labels: list[str], path: Path, title: str, yscale=None):
@@ -164,10 +203,23 @@ def main():
     parser = argparse.ArgumentParser(description="Compare physical diagnostics between PSC cases.")
     parser.add_argument("cases", nargs="+", help="Case directories, optionally NAME=/path/to/09_physical_diagnostics")
     parser.add_argument("--outdir", default="comparison_physical", help="Output directory.")
+    parser.add_argument("--comparison-mode", choices=["distribution", "convergence"], default="distribution")
+    parser.add_argument("--allow-parameter-mismatch", action="store_true",
+                        help="Produce an explicitly uncontrolled comparison despite missing/inconsistent metadata.")
     args = parser.parse_args()
 
     cases = [load_case(*parse_case_arg(raw)) for raw in args.cases]
+    issues = validate_comparison(cases, args.comparison_mode)
+    if issues and not args.allow_parameter_mismatch:
+        raise SystemExit("Comparison is not controlled:\n" + "\n".join(issues))
     outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    (outdir / "comparison_validation.json").write_text(json.dumps({
+        "mode": args.comparison_mode, "declared_parameters_match": not issues,
+        "issues": issues, "requires_initial_moment_validation": True,
+    }, indent=2), encoding="utf-8")
+    if issues:
+        print("[WARN] Uncontrolled comparison:\n" + "\n".join(issues))
     rows = [row for case in cases for row in case["rows"]]
     _write_csv(outdir / "comparison_kappa_vs_maxwellian.csv", rows)
 
@@ -176,10 +228,10 @@ def main():
     plot_timeseries(cases, ["delta_B_rms_over_B0"], [r"$\delta B_{\rm rms}/B_0$"],
                     outdir / "comparison_deltaB.png", "Magnetic-fluctuation comparison", yscale="log")
     plot_growth_bars(cases, outdir / "comparison_growth_rate.png")
-    plot_timeseries(cases, ["E_B", "E_total"], [r"$E_B$", r"$E_{\rm total}$"],
-                    outdir / "comparison_energy.png", "Energy comparison")
-    plot_timeseries(cases, ["q_parallel", "q_perp"], [r"$q_\parallel$", r"$q_\perp$"],
-                    outdir / "comparison_heat_flux.png", "Heat-flux comparison")
+    plot_timeseries(cases, ["E_B", "E_proxy"], [r"$E_B$", r"$E_{\rm proxy}$"],
+                    outdir / "comparison_energy.png", "Partial energy proxy comparison")
+    plot_timeseries(cases, ["q_parallel", "q_perp"], [r"$q_\parallel/n$", r"$|q_\perp|/n$"],
+                    outdir / "comparison_heat_flux.png", "Window third moments relative to B0")
     print(f"Comparison written to {outdir}")
 
 

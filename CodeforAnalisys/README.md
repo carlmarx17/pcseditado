@@ -3,6 +3,16 @@
 This folder contains the maintained pipeline used to analyse the anisotropy runs
 `M_*_bM`, `F_*_bM`, `W_*_bM` and the Kappa/Maxwellian cases.
 
+Physical audit and publication priorities (2026-09-09):
+[AUDITORIA_FISICA_PAPER.md](AUDITORIA_FISICA_PAPER.md).
+Regenerate affected outputs in a new results directory after this revision.
+The Alfvén speed now satisfies `VA = OMEGA_CI * DI`; the historical profile
+key `vA_over_c` is the simulated `B0`, not the physical Alfvén speed.
+The energy table now reports `E_proxy` and `energy_proxy_relative_change`,
+not a conserved total. `electron_energy_trend.csv` describes a fit without
+subtracting it or attributing it to numerical heating. Old corrected-energy
+files in existing output directories are obsolete and are not removed automatically.
+
 ## Expected input
 
 Each data directory must contain a single PSC run:
@@ -314,13 +324,17 @@ of particle scattering by the generated waves.
 
 #### 4.2. Formulas used
 
-1. Ion mirror:
+1. Ion mirror, cold-electron bi-Maxwellian reference:
 
    \[
-   A_i>1+\frac{1}{\beta_{\parallel i}},
+   A_i>\frac{1+\sqrt{1+4/\beta_{\parallel i}}}{2},
    \qquad
-   \beta_{\parallel i}(A_i-1)>1.
+   \beta_{\perp i}(A_i-1)=\beta_{\parallel i}A_i(A_i-1)>1.
    \]
+
+   This reference omits hot-electron effects and is not a Kappa threshold or
+   the CGL mirror condition. See [Hellinger (2007), Eq. (16)](https://space.asu.cas.cz/~helinger/hell07.pdf).
+   A case-specific stability claim requires the appropriate kinetic calculation.
 
 2. Fluid firehose:
 
@@ -992,6 +1006,9 @@ make polarization DATA_DIR=/path CASE=firehose_bikappa3_bigbox40 THEORY_CSV=../a
 the analytical parallel-firehose threshold \(\beta_\parallel - \beta_\perp = 2\)).
 The solver covers **parallel propagation only**: the mirror mode is oblique and
 aperiodic and does not come out of this relation.
+These self-tests do not validate finite-Kappa temperatures or root convergence.
+The audit records unresolved thermal-scale and polarization-CSV issues; generated
+theory curves must not yet be treated as validated quantitative PIC comparisons.
 
 For the spatially resolved VDF and the location of the prt window:
 

@@ -8,12 +8,13 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-import h5py
-
 from data_reader import PICDataReader
 from psc_units import (
     B0, DOMAIN_DI, DRIVEN_SPECIES, INSTABILITY, MASS_RATIO, N_GRID_Y,
     N_GRID_Z, PARTICLE_BASENAME, PROFILE_LABEL, SIM_PROFILE,
+    VA, VA_OVER_C, DT_CODE, OMEGA_CI, DI,
+    N0, NICELL, KAPPA, BETA_I_PAR, BETA_E_PAR,
+    BETA_I_PERP_OVER_PAR, BETA_E_PERP_OVER_PAR,
 )
 
 
@@ -44,10 +45,10 @@ def main() -> None:
     detected_grid = None
     if moments:
         first_moment = moments[min(moments)]
-        with h5py.File(first_moment, "r") as handle:
-            group = PICDataReader.get_uid_group(handle, "all_1st")
-            shape = handle[f"{group}/rho_i/p0/3d"].shape
-            detected_grid = [int(size) for size in shape if size > 1]
+        fields_at_start = PICDataReader.read_multiple_fields_3d(
+            first_moment, "all_1st", ["rho_i/p0/3d"]
+        )
+        detected_grid = [int(size) for size in fields_at_start["rho_i/p0/3d"].shape if size > 1]
         if detected_grid != [N_GRID_Y, N_GRID_Z]:
             raise SystemExit(
                 f"Grid/profile mismatch for CASE={args.case}: profile expects "
@@ -81,8 +82,24 @@ def main() -> None:
             "last_particle_step": max(particles) if particles else None,
         },
         "physics": {
+            "analysis_conventions_version": 3,
+            "parameter_source": "analysis profile; verify against runtime log and initial moments",
             "mass_ratio": MASS_RATIO,
+            "n0": N0,
+            "beta_i_parallel": BETA_I_PAR,
+            "A_i": BETA_I_PERP_OVER_PAR,
+            "beta_e_parallel": BETA_E_PAR,
+            "A_e": BETA_E_PERP_OVER_PAR,
+            "kappa": KAPPA,
+            "kappa_scope": "both species for maintained anisotropy cases",
+            "nicell_from_profile": NICELL,
             "B0": B0,
+            "vA_code": VA,
+            "vA_over_c": VA_OVER_C,
+            "dt_code_from_profile": DT_CODE,
+            "omega_ci_code": OMEGA_CI,
+            "di_code": DI,
+            "mirror_reference": "cold-electron bi-Maxwellian: beta_parallel*A*(A-1)=1",
             "domain_di": DOMAIN_DI,
             "grid": [N_GRID_Y, N_GRID_Z],
         },

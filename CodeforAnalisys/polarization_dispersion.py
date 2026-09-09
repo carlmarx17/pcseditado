@@ -223,14 +223,47 @@ def validate_polarization_convention(n: int = 64, nt: int = 32, k_index: int = 3
 
 # ── Theory overlay ────────────────────────────────────────────────────────
 
-def load_theory(path: str) -> dict:
+def load_theory(path: str, polarization: str | None = None,
+                allow_unverified: bool = False) -> dict:
+    """Read one circular channel without interpolating across failed roots.
+
+    Legacy tables without a polarization or convergence status require an
+    explicit opt-in and a channel supplied by the caller.
+    """
     with open(path, newline="") as handle:
         rows = list(csv.DictReader(handle))
+    if not rows:
+        raise ValueError(f"Empty theory table: {path}")
+    branches = {r.get("polarization", "") for r in rows}
+    if "" in branches:
+        if not allow_unverified or polarization is None:
+            raise ValueError("Unlabelled theory requires an explicit channel and --allow-unverified-theory")
+    else:
+        if not branches <= {"plus", "minus"}:
+            raise ValueError(f"Unknown theory polarization: {branches}")
+        if polarization is None:
+            if len(branches) != 1:
+                raise ValueError("Theory contains multiple polarizations; select plus or minus")
+            polarization = next(iter(branches))
+        rows = [r for r in rows if r["polarization"] == polarization]
+    if not rows:
+        raise ValueError(f"No {polarization} theory branch in {path}")
+    if not allow_unverified and any("converged" not in r or "residual" not in r for r in rows):
+        raise ValueError("Theory lacks convergence/residual metadata; regenerate or explicitly allow unverified theory")
     kdi = np.array([float(r["kdi"]) for r in rows])
     omega_r = np.array([float(r["omega_r_over_Omegai"]) for r in rows])
     gamma = np.array([float(r["gamma_over_Omegai"]) for r in rows])
+    for i, row in enumerate(rows):
+        if "converged" in row:
+            accepted = row["converged"].strip().lower() in ("true", "1")
+            residual = float(row.get("residual", "nan"))
+            if not accepted or not np.isfinite(residual) or not 0 <= residual <= 1e-8:
+                omega_r[i] = gamma[i] = np.nan
     order = np.argsort(kdi)
-    return {"kdi": kdi[order], "omega_r": omega_r[order], "gamma": gamma[order]}
+    if not np.all(np.isfinite(kdi)) or np.any(kdi <= 0) or np.any(np.diff(kdi[order]) <= 0):
+        raise ValueError("Theory k must be finite, positive and unique within each polarization")
+    return {"kdi": kdi[order], "omega_r": omega_r[order], "gamma": gamma[order],
+            "polarization": polarization}
 
 
 def interp_theory(theory: dict | None, k_query: float) -> tuple[float, float]:
@@ -517,7 +550,11 @@ def main() -> int:
     parser.add_argument("--k-target-di", type=float, default=None,
                         help="Theoretical k_max*d_i to center the per-mode growth-curve selection on.")
     parser.add_argument("--theory-csv", default=None,
-                        help="CSV with columns kdi,omega_r_over_Omegai,gamma_over_Omegai.")
+                        help="Theory CSV including polarization, converged and residual columns.")
+    parser.add_argument("--allow-unverified-theory", action="store_true",
+                        help="Allow legacy theory tables without convergence metadata.")
+    parser.add_argument("--theory-polarization", choices=["plus", "minus"],
+                        help="Select a single theory channel; required for unlabelled legacy CSVs.")
     parser.add_argument("--mirror", action="store_true", default=None,
                         help="Also produce the mirror delta_Bz oblique spectrum (default: on for mirror cases).")
     parser.add_argument("--outdir", default="spectral_plots")
@@ -575,18 +612,23 @@ def main() -> int:
     power_minus, _ = temporal_dispersion(A_minus, times_norm_win, nfft=args.temporal_fft_size, detrend=args.detrend)
     sigma = sigma_m(power_plus, power_minus)
 
-    theory = load_theory(args.theory_csv) if args.theory_csv else None
-    if theory is not None and length_unit != "d_i":
+    theories = {p: None for p in ("plus", "minus")}
+    if args.theory_csv and length_unit != "d_i":
         print("[WARN] --theory-csv is given in k*d_i; skipping theory overlay for electron normalization.")
-        theory = None
+    elif args.theory_csv:
+        if args.allow_unverified_theory and args.theory_polarization is None:
+            raise ValueError("Unverified theory requires --theory-polarization; do not reuse one curve for both channels")
+        selected_channels = [args.theory_polarization] if args.theory_polarization else list(theories)
+        for pol in selected_channels:
+            theories[pol] = load_theory(args.theory_csv, pol, args.allow_unverified_theory)
 
     plot_dispersion_map(
         power_plus, k_par, omega, fr"$P_+(k_\parallel,\omega)$ — {PROFILE_LABEL}",
-        outdir / f"polarization_dispersion_plus_{series['plane']}.png", k_label, omega_label, theory,
+        outdir / f"polarization_dispersion_plus_{series['plane']}.png", k_label, omega_label, theories["plus"],
     )
     plot_dispersion_map(
         power_minus, k_par, omega, fr"$P_-(k_\parallel,\omega)$ — {PROFILE_LABEL}",
-        outdir / f"polarization_dispersion_minus_{series['plane']}.png", k_label, omega_label, theory,
+        outdir / f"polarization_dispersion_minus_{series['plane']}.png", k_label, omega_label, theories["minus"],
     )
     plot_sigma_map(
         sigma, k_par, omega, fr"Reduced helicity $\sigma_m(k_\parallel,\omega)$ — {PROFILE_LABEL}",
@@ -606,12 +648,12 @@ def main() -> int:
         for polarization, A in (("plus", A_plus), ("minus", A_minus)):
             growth_rows += growth_rate_rows(
                 SIM_PROFILE, distribution, INSTABILITY, polarization,
-                times_norm_win, A, k_par, [mode_idx], length_unit, theory,
+                times_norm_win, A, k_par, [mode_idx], length_unit, theories[polarization],
             )
             plot_mode_growth(
                 times_norm_win, A, mode_idx, k_val, "+" if polarization == "plus" else "-",
                 length_unit, time_unit,
-                outdir / f"mode_growth_{polarization}_n{mode_idx}_{series['plane']}.png", theory,
+                outdir / f"mode_growth_{polarization}_n{mode_idx}_{series['plane']}.png", theories[polarization],
             )
     _write_csv(outdir / "polarization_growth_rates.csv", growth_rows)
 

@@ -29,6 +29,7 @@ import matplotlib.cm as cm
 from pathlib import Path
 
 from data_reader import PICDataReader
+from plasma_physics import field_aligned_pressures, mirror_threshold
 from psc_units import (
     B0, BETA_E_PAR, BETA_E_PERP_OVER_PAR, BETA_I_PAR,
     BETA_I_PERP_OVER_PAR, DRIVEN_SPECIES, FIELD_FILE_PATTERN, INSTABILITY,
@@ -90,7 +91,6 @@ ACCENT   = ps.c("#58a6ff")
 
 
 # ── Umbrales de inestabilidad ─────────────────────────────────────────────────
-def mirror_threshold(b):   return 1.0 + 1.0 / b
 def firehose_threshold(b): return 1.0 - 2.0 / b
 def oblique_firehose_threshold(b):
     with np.errstate(invalid="ignore", divide="ignore"):
@@ -100,7 +100,7 @@ def whistler_threshold(b): return 1.0 + 0.21 / b**0.6
 
 
 def instability_threshold(beta):
-    """Return the active marginal-stability threshold at beta_parallel."""
+    """Return a reference curve, not a case-specific kinetic stability test."""
     beta = np.maximum(np.asarray(beta, dtype=float), 1e-12)
     if INSTABILITY == "firehose":
         return firehose_threshold(beta)
@@ -110,27 +110,10 @@ def instability_threshold(beta):
 
 
 def instability_drive(anisotropy, threshold):
-    """Positive values mean that the state is on the unstable side."""
+    """Signed distance towards the unstable side of the chosen reference."""
     if INSTABILITY == "firehose":
         return np.asarray(threshold) - np.asarray(anisotropy)
     return np.asarray(anisotropy) - np.asarray(threshold)
-
-
-def field_aligned_pressures(
-    Pxx, Pyy, Pzz, Pxy, Pyz, Pzx, Bx, By, Bz
-):
-    """Project a symmetric pressure tensor onto the local magnetic field."""
-    B2 = Bx**2 + By**2 + Bz**2
-    inv_B = 1.0 / np.sqrt(np.maximum(B2, 1e-30))
-    bx, by, bz = Bx * inv_B, By * inv_B, Bz * inv_B
-    p_par = (
-        Pxx * bx**2 + Pyy * by**2 + Pzz * bz**2
-        + 2.0 * Pxy * bx * by
-        + 2.0 * Pyz * by * bz
-        + 2.0 * Pzx * bz * bx
-    )
-    p_perp = 0.5 * (Pxx + Pyy + Pzz - p_par)
-    return p_par, p_perp, B2
 
 
 # ── Lectura de un snapshot ────────────────────────────────────────────────────
@@ -235,7 +218,7 @@ def _draw_thresholds(ax, xmin, xmax, ymin, ymax):
     m = mirror_threshold(b)
     ok = (m >= ymin * 0.7) & (m <= ymax * 1.5)
     ax.plot(b[ok], m[ok], "--", color=ps.c("#ff6b6b"), lw=2.2, zorder=8, alpha=0.9,
-            label=r"Mirror  $1+1/\beta_\parallel$")
+            label="Mirror reference (cold electrons)")
     ax.fill_between(b, np.clip(m, ymin, ymax * 2), ymax * 2,
                     alpha=0.08, color=ps.c("#ff4444"), zorder=2)
 
@@ -481,7 +464,7 @@ def plot_temporal_evolution(snap_data: list, outdir: Path):
         threshold_label = r"Firehose threshold $1-2/\beta_\parallel(t)$"
         threshold_color = ps.c("#74b9ff")
     elif INSTABILITY == "mirror":
-        threshold_label = r"Mirror threshold $1+1/\beta_\parallel(t)$"
+        threshold_label = "Mirror reference (cold electrons)"
         threshold_color = ps.c("#ff9999")
     else:
         threshold_label = r"Whistler threshold $1+0.21/\beta_{e\parallel}^{0.6}$"

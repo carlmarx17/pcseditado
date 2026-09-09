@@ -44,6 +44,7 @@ except ImportError:
         return values
 
 from data_reader import PICDataReader
+from plasma_physics import mirror_threshold
 from psc_units import (
     B0,
     DI,
@@ -306,8 +307,8 @@ class HeatFluxAnalyzer:
             threshold = 1.0 - 2.0 / beta_arr
             threshold_label = r"Firehose threshold $1-2/\beta_\parallel$"
         elif INSTABILITY == "mirror":
-            threshold = 1.0 + 1.0 / beta_arr
-            threshold_label = r"Mirror threshold $1+1/\beta_\parallel$"
+            threshold = mirror_threshold(beta_arr)
+            threshold_label = "Mirror reference (cold electrons)"
         else:
             threshold = 1.0 + 0.21 / beta_arr**0.6
             threshold_label = r"Whistler threshold $1+0.21/\beta_\parallel^{0.6}$"

@@ -56,11 +56,12 @@ Uso típico:
 import argparse
 import csv
 import math
+import warnings
 from pathlib import Path
 
 import numpy as np
-from scipy.integrate import quad
-from scipy.special import gamma as gamma_fn
+from scipy.integrate import IntegrationWarning, quad
+from scipy.special import gammaln
 from scipy.special import wofz
 
 
@@ -83,23 +84,28 @@ def Z_kappa(zeta: complex, kappa: float, limit: int = 200) -> complex:
     Im(ζ) > 0 (modos crecientes); fuera de ahí se devuelve NaN en vez de un
     número silenciosamente incorrecto.
     """
-    if kappa is None or not np.isfinite(kappa):
+    if kappa is None or kappa == np.inf:
         return Z(zeta)
-    if kappa > 50:
-        # Por encima de este valor la kappa es indistinguible de la Maxwelliana
-        # dentro del error de la cuadratura, y Z es mucho más barata.
-        return Z(zeta)
+    if not np.isfinite(kappa) or kappa <= 1.5:
+        raise ValueError("A finite-temperature bi-Kappa requires kappa > 1.5")
     if np.imag(zeta) <= 0:
         return complex(np.nan, np.nan)
 
-    norm = (gamma_fn(kappa) / (math.sqrt(math.pi * kappa) * gamma_fn(kappa - 0.5)))
+    norm = math.exp(gammaln(kappa) - gammaln(kappa - 0.5)) / math.sqrt(math.pi * kappa)
 
     def integrand(x, part):
-        val = (1.0 + x * x / kappa) ** (-kappa) / (x - zeta)
+        val = np.exp(-kappa * np.log1p(x * x / kappa)) / (x - zeta)
         return val.real if part == 0 else val.imag
 
-    re, _ = quad(integrand, -np.inf, np.inf, args=(0,), limit=limit)
-    im, _ = quad(integrand, -np.inf, np.inf, args=(1,), limit=limit)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", IntegrationWarning)
+        try:
+            re, _ = quad(integrand, -np.inf, np.inf, args=(0,), limit=limit,
+                         epsabs=1e-10, epsrel=1e-10)
+            im, _ = quad(integrand, -np.inf, np.inf, args=(1,), limit=limit,
+                         epsabs=1e-10, epsrel=1e-10)
+        except IntegrationWarning:
+            return complex(np.nan, np.nan)
     return norm * complex(re, im)
 
 
@@ -108,14 +114,24 @@ def Z_kappa(zeta: complex, kappa: float, limit: int = 200) -> complex:
 class ParallelDispersion:
     """D(ω, k) para modos EM de propagación paralela en un plasma bi-especie.
 
-    Todas las cantidades normalizadas: ω en Ω_ci, k en 1/d_i, velocidades en
-    v_A. `polarization` es 'plus' (R) o 'minus' (L).
+    Frequencies are in Omega_ci, k in 1/di, velocities in vA. For
+    exp[i(kz-omega*t)], 'plus' is Bx+i*By (denominator omega-Omega_s),
+    'minus' is Bx-i*By (omega+Omega_s). Omega_s is signed. At positive
+    frequency the plus channel contains the ion-cyclotron resonance.
+    Both species use the same kappa, as in the current PSC case loader.
     """
 
     def __init__(self, beta_par_i: float, A_i: float,
                  beta_par_e: float, A_e: float,
                  mass_ratio: float, c_over_va: float,
                  kappa: float | None = None):
+        values = (beta_par_i, A_i, beta_par_e, A_e, mass_ratio, c_over_va)
+        if not all(np.isfinite(v) and v > 0 for v in values):
+            raise ValueError("Betas, anisotropies, mass ratio and c/vA must be positive")
+        if kappa == np.inf:
+            kappa = None
+        if kappa is not None and (not np.isfinite(kappa) or kappa <= 1.5):
+            raise ValueError("A finite-temperature bi-Kappa requires kappa > 1.5")
         self.beta_par_i = beta_par_i
         self.A_i = A_i
         self.beta_par_e = beta_par_e
@@ -124,9 +140,11 @@ class ParallelDispersion:
         self.c_over_va = c_over_va
         self.kappa = kappa
 
-        # Velocidades térmicas paralelas en unidades de v_A.
-        self.v_i = math.sqrt(beta_par_i)
-        self.v_e = math.sqrt(beta_par_e * mass_ratio)
+        # Fixed second-moment temperature, matching createKappaMultivariate.
+        # Lazar et al. (2011), Eqs. (5), (11), (12), bi-Kappa (not product).
+        scale = 1.0 if kappa is None else math.sqrt((kappa - 1.5) / kappa)
+        self.v_i = math.sqrt(beta_par_i) * scale
+        self.v_e = math.sqrt(beta_par_e * mass_ratio) * scale
         # Giro-frecuencias con signo, en unidades de Ω_ci.
         self.omega_c_i = 1.0
         self.omega_c_e = -mass_ratio
@@ -147,6 +165,10 @@ class ParallelDispersion:
     def __call__(self, omega: complex, k: float,
                  polarization: str = "plus") -> complex:
         """Residuo D(ω,k); cero en una raíz del modo."""
+        if polarization not in ("plus", "minus"):
+            raise ValueError("polarization must be plus or minus")
+        if not np.isfinite(k) or k <= 0:
+            raise ValueError("This solver requires k_parallel > 0")
         sign = 1.0 if polarization == "plus" else -1.0
         ion = self._species_term(omega, k, sign, self.A_i, self.v_i,
                                  self.omega_c_i)
@@ -160,8 +182,18 @@ class ParallelDispersion:
 
     def solve(self, k: float, polarization: str = "plus",
               omega_guess: complex | None = None,
-              tol: float = 1e-10, max_iter: int = 120) -> complex:
-        """Raíz compleja ω(k) por el método de la secante en el plano complejo."""
+              tol: float = 1e-10, max_iter: int = 120,
+              residual_tol: float = 1e-8) -> complex:
+        """Complex secant iteration; return NaN unless the residual converges.
+
+        residual_tol bounds |D|/k^2. A small step alone is not convergence,
+        especially when a Kappa iteration approaches the Im(omega)=0 boundary.
+        """
+        if k <= 0 or not np.isfinite(k) or polarization not in ("plus", "minus"):
+            raise ValueError("Require positive k and a plus/minus polarization")
+        if tol <= 0 or residual_tol <= 0 or max_iter < 1:
+            raise ValueError("Solver tolerances and max_iter must be positive")
+        self.last_solve = {"converged": False, "residual": float("nan"), "iterations": 0}
         if omega_guess is None:
             omega_guess = complex(0.3 * k, 0.05)
         w0 = omega_guess
@@ -172,7 +204,8 @@ class ParallelDispersion:
         except (ValueError, ZeroDivisionError):
             return complex(np.nan, np.nan)
 
-        for _ in range(max_iter):
+        for iteration in range(max_iter):
+            self.last_solve["iterations"] = iteration + 1
             if not (np.isfinite(f0) and np.isfinite(f1)):
                 return complex(np.nan, np.nan)
             if abs(f1 - f0) < 1e-300:
@@ -184,7 +217,12 @@ class ParallelDispersion:
             # en el semiplano superior evita evaluar donde no es válida.
             if self.kappa is not None and np.imag(w2) <= 0:
                 w2 = complex(np.real(w2), max(1e-6, 0.5 * np.imag(w1)))
-            if abs(w2 - w1) < tol * max(1.0, abs(w2)):
+            f2 = self(w2, k, polarization)
+            residual = float(abs(f2) / (k * k))
+            self.last_solve["residual"] = residual
+            if (np.isfinite(residual) and residual <= residual_tol
+                    and abs(w2 - w1) < tol * max(1.0, abs(w2))):
+                self.last_solve["converged"] = True
                 return w2
             w0, f0 = w1, f1
             w1 = w2
@@ -192,7 +230,7 @@ class ParallelDispersion:
                 f1 = self(w1, k, polarization)
             except (ValueError, ZeroDivisionError):
                 return complex(np.nan, np.nan)
-        return w1
+        return complex(np.nan, np.nan)
 
     def scan(self, k_values: np.ndarray, polarization: str = "plus",
              omega_guess: complex | None = None) -> list[dict]:
@@ -208,6 +246,7 @@ class ParallelDispersion:
                 "omega_r_over_Omegai": float(np.real(root)),
                 "gamma_over_Omegai": float(np.imag(root)),
                 "polarization": polarization,
+                **self.last_solve,
             })
         return rows
 
@@ -307,7 +346,7 @@ def main() -> int:
 
     if args.case:
         import os
-        os.environ.setdefault("PSC_PROFILE", args.case)
+        os.environ["PSC_PROFILE"] = args.case
     from psc_units import (
         BETA_I_PAR, BETA_I_PERP_OVER_PAR, BETA_E_PAR, BETA_E_PERP_OVER_PAR,
         KAPPA, MASS_RATIO, VA_OVER_C, INSTABILITY, PROFILE_LABEL,
@@ -349,10 +388,12 @@ def main() -> int:
         print("[WARN] ninguna raiz convergio; revisa el rango de k o la semilla.")
 
     out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", newline="") as fh:
         writer = csv.DictWriter(
             fh, fieldnames=["kdi", "omega_r_over_Omegai",
-                            "gamma_over_Omegai", "polarization"])
+                            "gamma_over_Omegai", "polarization", "converged",
+                            "residual", "iterations"])
         writer.writeheader()
         writer.writerows(rows)
     print(f"Escrito: {out}")

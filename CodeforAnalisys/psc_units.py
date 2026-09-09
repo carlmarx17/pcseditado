@@ -9,7 +9,7 @@ En PSC (en unidades internas del código):
 Masa artificial: mi/me = 200  =>  me = 1.0,  mi = 200.0
 
 Parámetros comunes de los ejecutables actuales de anisotropía:
-  - mass_ratio = 200,  vA/c = B0 = 0.08
+  - mass_ratio = 200, B0 = 0.08, vA/c = B0/sqrt(n0*mi)
   - dominio = 20 d_i x 20 d_i, grilla = 1024 x 1024, nicell = 1500
 
 Los perfiles heredados `F_*_bM`, `M_*_bM`, `W_*_bM` y `*_lite` se mantienen
@@ -585,7 +585,7 @@ DRIVEN_SPECIES = _active["driven_species"]
 # ── Parámetros de la simulación (desde los .cxx) ────────────────────────
 MASS_RATIO      = _active["mass_ratio"]       # mi/me = 200
 ZI              = 1.0                          # carga iónica (en unidades de e)
-VA_OVER_C       = _active["vA_over_c"]        # vA/c = 0.05
+B0_INPUT        = _active["vA_over_c"]        # historical C++ name; actually B0
 BETA_I_PAR      = _active["beta_i_par"]       # 5 (mirror) ó 10 (firehose)
 BETA_I_PERP_OVER_PAR = _active["Ti_perp_over_Ti_par"]  # 3.0 ó 0.1
 BETA_E_PAR      = _active["beta_e_par"]       # 1.0
@@ -598,10 +598,11 @@ M_ELEC = 1.0                    # masa del electrón  [unidades código]
 M_ION  = MASS_RATIO * ZI        # masa del ión       [unidades código]  = 200.0
 
 # ── Campo magnético y velocidad de Alfvén ───────────────────────────────
-# En los .cxx: g.B0 = g.vA_over_c = 0.05
-# (simplificación PIC con c=1, n₀=1)
-B0   = VA_OVER_C                # = 0.05  (campo de fondo, consistente con CXX)
-VA   = VA_OVER_C                # velocidad Alfvén normalizada [c=1]
+# Preserve the simulated B0. The historical input name does not include mi.
+# Ion-inertia convention: vA = Omega_ci * di (mu0=c=1).
+B0   = B0_INPUT
+VA   = B0 / np.sqrt(N0 * M_ION)
+VA_OVER_C = VA
 
 # ── Temperaturas (de las betas y B0) ────────────────────────────────────
 # T = beta * B0² / 2  (con n=1, mu0=1)

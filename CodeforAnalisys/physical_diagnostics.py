@@ -43,6 +43,7 @@ except ImportError:  # pragma: no cover - requirements include scipy
     curve_fit = None
 
 from data_reader import PICDataReader
+from plasma_physics import field_aligned_pressures, mirror_threshold
 from spectral_analysis import SpectralAnalyzer
 from psc_units import (
     B0,
@@ -314,6 +315,37 @@ def particle_temperatures(snapshot: ParticleSnapshot, species: str = "ion") -> d
     }
 
 
+def particle_kinematics_validity(snapshot: ParticleSnapshot, species: str) -> dict:
+    """Quantify u=gamma*v versus v for the nonrelativistic particle diagnostics.
+
+    Compare diagonal central m<u*u> with m<u*v> in the window's lab frame.
+    This checks an approximation; it is not a relativistic rest-frame temperature.
+    """
+    mask = _species_mask(snapshot, species)
+    if not np.any(mask):
+        return {}
+    u = np.stack([snapshot.px[mask], snapshot.py[mask], snapshot.pz[mask]])
+    weights = snapshot.w[mask]
+    u2 = np.sum(u*u, axis=0)
+    gamma = np.sqrt(1.0 + u2)
+    velocity = u / gamma
+    # u^2/(gamma+1) avoids cancellation in gamma-1 for cold particles.
+    exact = _weighted_mean(u2 / (gamma + 1.0), weights)
+    approximate = 0.5 * _weighted_mean(u2, weights)
+    errors = []
+    for uj, vj in zip(u, velocity):
+        central_uv = _weighted_mean(uj*vj, weights) - _weighted_mean(uj, weights)*_weighted_mean(vj, weights)
+        central_uu = _weighted_var(uj, weights)
+        if central_uv > 0:
+            errors.append(abs(central_uu-central_uv)/central_uv)
+    return {
+        "max_lorentz_gamma": float(np.max(gamma)),
+        "nr_energy_relative_error": (approximate-exact)/exact if exact > 0 else 0.0,
+        "max_nr_diagonal_pressure_relative_error": max(errors) if errors else float("nan"),
+        "fraction_u_above_c": _weighted_mean(u2 > 1.0, weights),
+    }
+
+
 def load_fields(path: str) -> dict[str, np.ndarray]:
     data = PICDataReader.read_multiple_fields_3d(
         path, "jeh-", ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"]
@@ -331,6 +363,9 @@ def load_moments(path: str, suffix: str = "i") -> dict[str, np.ndarray]:
         f"txx_{suffix}/p0/3d",
         f"tyy_{suffix}/p0/3d",
         f"tzz_{suffix}/p0/3d",
+        f"txy_{suffix}/p0/3d",
+        f"tyz_{suffix}/p0/3d",
+        f"tzx_{suffix}/p0/3d",
         f"px_{suffix}/p0/3d",
         f"py_{suffix}/p0/3d",
         f"pz_{suffix}/p0/3d",
@@ -360,6 +395,9 @@ def moment_thermal_maps(moment_file: str, field_file: str | None = None,
     pxx = mom[f"txx_{suffix}"] - mom[f"px_{suffix}"] ** 2 / (safe_n * mass)
     pyy = mom[f"tyy_{suffix}"] - mom[f"py_{suffix}"] ** 2 / (safe_n * mass)
     pzz = mom[f"tzz_{suffix}"] - mom[f"pz_{suffix}"] ** 2 / (safe_n * mass)
+    pxy = mom[f"txy_{suffix}"] - mom[f"px_{suffix}"] * mom[f"py_{suffix}"] / (safe_n * mass)
+    pyz = mom[f"tyz_{suffix}"] - mom[f"py_{suffix}"] * mom[f"pz_{suffix}"] / (safe_n * mass)
+    pzx = mom[f"tzx_{suffix}"] - mom[f"pz_{suffix}"] * mom[f"px_{suffix}"] / (safe_n * mass)
 
     if field_file:
         fld = load_fields(field_file)
@@ -368,17 +406,25 @@ def moment_thermal_maps(moment_file: str, field_file: str | None = None,
         bz = PICDataReader.flatten_2d_slice(fld["Bz"])
         bmag = np.sqrt(bx**2 + by**2 + bz**2)
     else:
+        bx = np.zeros_like(pzz)
+        by = np.zeros_like(pzz)
+        bz = np.full_like(pzz, B0)
         bmag = np.full_like(pzz, B0)
 
-    tpar = pzz / safe_n
-    tperp = 0.5 * (pxx + pyy) / safe_n
+    ppar, pperp, _ = field_aligned_pressures(
+        pxx, pyy, pzz, pxy, pyz, pzx, bx, by, bz
+    )
+    tpar = ppar / safe_n
+    tperp = pperp / safe_n
     anisotropy = tperp / (tpar + 1e-30)
-    beta_par = 2.0 * pzz / (bmag**2 + 1e-30)
+    beta_par = 2.0 * ppar / (bmag**2 + 1e-30)
     return {
         "n": n,
         "Pxx": pxx,
         "Pyy": pyy,
         "Pzz": pzz,
+        "P_parallel": ppar,
+        "P_perp": pperp,
         "T_parallel": tpar,
         "T_perp": tperp,
         "A": anisotropy,
@@ -780,6 +826,11 @@ def fit_distribution(snapshot: ParticleSnapshot, species: str = "ion") -> dict:
 
 
 def particle_heat_flux(snapshot: ParticleSnapshot, species: str = "ion") -> dict:
+    """Third central moments per particle, relative to B0 along z.
+
+    A window mean removes only the window bulk flow. Multiply by local density
+    and use local velocities/field directions for a spatial heat-flux density.
+    """
     mask = _species_mask(snapshot, species)
     if not np.any(mask):
         return {}
@@ -792,10 +843,13 @@ def particle_heat_flux(snapshot: ParticleSnapshot, species: str = "ion") -> dict
     dvy = vy - _weighted_mean(vy, weights)
     dvz = vz - _weighted_mean(vz, weights)
     dv2 = dvx**2 + dvy**2 + dvz**2
-    dvperp = np.sqrt(dvx**2 + dvy**2)
+    qx = 0.5 * mass * _weighted_mean(dv2 * dvx, weights)
+    qy = 0.5 * mass * _weighted_mean(dv2 * dvy, weights)
     return {
         "q_parallel_particle": 0.5 * mass * _weighted_mean(dv2 * dvz, weights),
-        "q_perp_particle": 0.5 * mass * _weighted_mean(dv2 * dvperp, weights),
+        "q_perp_particle": float(np.hypot(qx, qy)),
+        "q_x_particle": qx,
+        "q_y_particle": qy,
     }
 
 
@@ -1481,20 +1535,10 @@ def localized_heat_flux_rows(
 
 
 def secular_heating(rows: list[dict], anisotropy_rows: list[dict] | None = None) -> dict:
-    """Aísla la parte secular (lineal en t) del calentamiento electrónico.
+    """Describe an electron-energy trend without assigning a numerical cause.
 
-    En estas corridas la energía interna electrónica crece de forma lineal en
-    el tiempo, isótropa (A_e ~ 1) y con la MISMA pendiente para bi-kappa que
-    para bi-Maxwelliana. Ésa es la firma de calentamiento numérico de grilla
-    (longitud de Debye sub-resuelta), no de interacción onda-partícula: el
-    calentamiento físico seguiría la saturación de la inestabilidad y
-    dependería de la forma de la VDF.
-
-    Sin separar esa componente, `energy_error` llega a +44 % y +73 % en los
-    casos bi-kappa y ningún balance de energía es defendible. Se ajusta
-    E_e(t) = a + b t y se devuelve b junto con el R^2 y la anisotropía
-    electrónica media, que son los dos tests que distinguen calentamiento
-    numérico de físico.
+    Linearity and isotropy do not distinguish physical from numerical heating.
+    A control run and convergence evidence are needed for that attribution.
     """
     t = np.array([r.get("omega_ci_t", np.nan) for r in rows], dtype=float)
     e_e = np.array([r.get("E_internal_e", np.nan) for r in rows], dtype=float)
@@ -1515,15 +1559,14 @@ def secular_heating(rows: list[dict], anisotropy_rows: list[dict] | None = None)
                    dtype=float)
     a_e_mean = float(np.nanmean(a_e)) if np.any(np.isfinite(a_e)) else float("nan")
 
-    # Diagnóstico: lineal + isótropo => numérico; si no, hay física mezclada.
     linear = np.isfinite(r2) and r2 > 0.9
-    isotropic = (not np.isfinite(a_e_mean)) or abs(a_e_mean - 1.0) < 0.1
+    isotropic = np.isfinite(a_e_mean) and abs(a_e_mean - 1.0) < 0.1
     if linear and isotropic:
-        verdict = "secular+isotropo: compatible con calentamiento numerico"
+        verdict = "tendencia lineal e isotropa; origen fisico/numerico no determinado"
     elif linear:
-        verdict = "lineal pero anisotropo: revisar, puede haber fisica"
+        verdict = "tendencia lineal; origen fisico/numerico no determinado"
     else:
-        verdict = "no lineal: probablemente no es solo numerico"
+        verdict = "ajuste lineal insuficiente; origen fisico/numerico no determinado"
 
     e_e0 = float(intercept)
     return {
@@ -1534,34 +1577,11 @@ def secular_heating(rows: list[dict], anisotropy_rows: list[dict] | None = None)
         "n_points": int(t.size),
         "t_start": float(t[0]),
         "t_end": float(t[-1]),
-        "spurious_gain_at_end": float(slope * (t[-1] - t[0])),
+        "fitted_change_at_end": float(slope * (t[-1] - t[0])),
         "relative_to_E_e0": float(slope * (t[-1] - t[0]) / e_e0)
         if e_e0 not in (0.0,) and np.isfinite(e_e0) else float("nan"),
         "verdict": verdict,
     }
-
-
-def apply_heating_correction(rows: list[dict], heating: dict) -> None:
-    """Añade a cada fila el total corregido por el calentamiento secular.
-
-    La energía inyectada espuriamente hasta t es b*(t - t0). Restarla del
-    total deja un presupuesto en el que la parte NO secular del calentamiento
-    electrónico (`E_internal_e_residual`) sigue presente: si hay calentamiento
-    físico real, aparece ahí y no queda enmascarado por la deriva numérica.
-    """
-    if not heating or not rows:
-        return
-    slope = heating["slope_per_omegaci"]
-    t0 = heating["t_start"]
-    for row in rows:
-        t = row.get("omega_ci_t", np.nan)
-        if not np.isfinite(t):
-            continue
-        spurious = slope * (t - t0)
-        row["E_internal_e_secular"] = slope * t + heating["intercept"]
-        row["E_internal_e_residual"] = (
-            row.get("E_internal_e", np.nan) - row["E_internal_e_secular"])
-        row["E_total_corrected"] = row.get("E_total", np.nan) - spurious
 
 
 def correlations(a_map: np.ndarray, delta_b: np.ndarray, bmag: np.ndarray,
@@ -1653,6 +1673,9 @@ def _process_particle_step_worker(args):
             }
             row.update(particle_heat_flux(snap, "ion"))
             row.update(particle_energy(snap, "ion"))
+            for species, suffix in [("ion", "i"), ("electron", "e")]:
+                row.update({f"{key}_{suffix}": value for key, value in
+                            particle_kinematics_validity(snap, species).items()})
 
         # Both species, both a 2D reduced (v_par,v_perp) heatmap and a true 3D
         # (vx,vy,vz) scatter -- but only on the steps selected for the VDF
@@ -1829,6 +1852,13 @@ class PhysicalDiagnostics:
         field_rows = self.run_fields()
         spatial_rows = self.run_moments_and_correlations()
         self.run_energy_summary(particle_rows, field_rows)
+        energy_files = sorted(self.data_dir.glob("diag*.asc"))
+        if energy_files:
+            from energy_conservation import write_energy_analysis
+            try:
+                write_energy_analysis(energy_files, self.outdir)
+            except ValueError as exc:
+                print(f"[WARN] Global energy diagnostic unavailable: {exc}")
         print(f"Physical diagnostics written to {self.outdir}")
         if not (particle_rows or field_rows or spatial_rows):
             print("[WARN] No diagnostics were generated; check input file patterns.")
@@ -2124,12 +2154,11 @@ class PhysicalDiagnostics:
 
         bgrid = np.logspace(np.log10(max(np.nanmin(beta) * 0.6, 0.05)),
                             np.log10(max(np.nanmax(beta) * 1.6, 0.2)), 300)
-        # Umbrales CGL/fluido. Los contornos cinéticos ajustados (gamma_max =
-        # 1e-3 Omega) requieren el solver de linear_theory.py y no son estos.
-        mirror_curve = 1.0 + 1.0 / bgrid
+        # Reference curves only; linear_theory.py cannot solve oblique mirror.
+        mirror_curve = mirror_threshold(bgrid)
         visible = np.any((mirror_curve >= y_lo) & (mirror_curve <= y_hi))
         ax.plot(bgrid, mirror_curve, "--", color=ps.c("#ff7b72"),
-                label="mirror (CGL)" if visible else None)
+                label="mirror reference (cold electrons)" if visible else None)
         ax.fill_between(bgrid, mirror_curve, 1e3, color=ps.c("#ff7b72"), alpha=0.08)
         fh = bgrid[bgrid > 2.0]
         if len(fh):
@@ -2179,11 +2208,9 @@ class PhysicalDiagnostics:
             e_b = r.get("magnetic_energy_fluct", np.nan)
             if not np.all(np.isfinite([e_bulk, e_th, e_b])):
                 continue
-            # Internal (thermal) energy densities per species, (3/2) n T with
-            # n = N0 = 1 in code units and T = (T_par + 2 T_perp)/3. The old
-            # table set E_internal_e = nan and summed ONLY the ion thermal
-            # energy into E_total, so all energy scattered to electrons was
-            # booked as a spurious "conservation error" of tens of percent.
+            # This mixes window particle averages (assuming n=1) with global
+            # magnetic fluctuations. It is a proxy, not a conserved total:
+            # electric energy and electron bulk energy are also absent.
             e_int_i = 1.5 * (r.get("T_parallel_i", np.nan) + 2.0 * r.get("T_perp_i", np.nan)) / 3.0
             e_int_e = 1.5 * (r.get("T_parallel_e", np.nan) + 2.0 * r.get("T_perp_e", np.nan)) / 3.0
             total = e_bulk + e_int_i + e_int_e + e_b
@@ -2195,30 +2222,22 @@ class PhysicalDiagnostics:
                 "E_internal_i": e_int_i,
                 "E_internal_e": e_int_e,
                 "E_B": e_b,
-                "E_total": total,
-                # A_e viaja con la fila para que secular_heating pueda usar la
-                # isotropía electrónica como test de calentamiento numérico.
+                "E_proxy": total,
+                "is_conservation_diagnostic": False,
                 "A_e": r.get("A_e", np.nan),
             })
         heating = secular_heating(rows)
-        apply_heating_correction(rows, heating)
 
-        if rows and np.isfinite(rows[0]["E_total"]) and rows[0]["E_total"] != 0:
-            e0 = rows[0]["E_total"]
+        if rows and np.isfinite(rows[0]["E_proxy"]) and rows[0]["E_proxy"] != 0:
+            e0 = rows[0]["E_proxy"]
             for row in rows:
-                row["energy_error"] = (row["E_total"] - e0) / e0
-        if rows and np.isfinite(rows[0].get("E_total_corrected", np.nan)) \
-                and rows[0]["E_total_corrected"] != 0:
-            e0c = rows[0]["E_total_corrected"]
-            for row in rows:
-                row["energy_error_corrected"] = \
-                    (row["E_total_corrected"] - e0c) / e0c
+                row["energy_proxy_relative_change"] = (row["E_proxy"] - e0) / e0
 
         _write_csv(self.outdir / "energy_table.csv", rows)
         if heating:
-            _write_csv(self.outdir / "numerical_heating.csv", [heating])
+            _write_csv(self.outdir / "electron_energy_trend.csv", [heating])
             print(f"  calentamiento electrónico secular: "
-                  f"dTe/dt = {heating['slope_per_omegaci']:.3e} por Omega_ci^-1, "
+                  f"dEe/dt = {heating['slope_per_omegaci']:.3e} por Omega_ci^-1, "
                   f"R2 = {heating['r_squared']:.4f}, "
                   f"A_e medio = {heating['A_e_mean']:.3f} "
                   f"-> {heating['verdict']}")
@@ -2236,14 +2255,11 @@ class PhysicalDiagnostics:
             ("E_internal_i", ps.c("#ff7b72"), "ion internal"),
             ("E_internal_e", ps.c("#d2a8ff"), "electron internal"),
             ("E_B", ps.c("#56d364"), "magnetic fluct."),
-            ("E_total", ps.c("#f2cc60"), "total"),
-            ("E_total_corrected", ps.c("#ffa657"), "total (sin deriva secular)"),
+            ("E_proxy", ps.c("#f2cc60"), "partial energy proxy"),
         ]:
             y = np.array([r.get(key, np.nan) for r in rows], dtype=float)
             if np.any(np.isfinite(y)):
                 style = _series_style(len(t))
-                if key == "E_total_corrected":
-                    style = {**style, "linestyle": "--", "marker": "none"}
                 ax.plot(t, y, color=color, label=label, **style)
         if heating:
             ax.plot(t, heating["slope_per_omegaci"] * t + heating["intercept"],
@@ -2252,12 +2268,12 @@ class PhysicalDiagnostics:
                            rf"($R^2$={heating['r_squared']:.3f})"))
         ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
         ax.set_ylabel("energy proxy [code]", color=TEXT_CLR)
-        ax.set_title("Energy partition", color=TEXT_CLR, fontweight="bold")
+        ax.set_title("Partial energy proxy", color=TEXT_CLR, fontweight="bold")
         ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR,
                   fontsize=11)
         _savefig(fig, self.outdir / "energy_partition.png")
 
-        err = np.array([r.get("energy_error", np.nan) for r in rows], dtype=float)
+        err = np.array([r.get("energy_proxy_relative_change", np.nan) for r in rows], dtype=float)
         if np.any(np.isfinite(err)):
             fig, ax = plt.subplots(figsize=(8.8, 5.4))
             fig.patch.set_facecolor(DARK_BG)
@@ -2266,8 +2282,8 @@ class PhysicalDiagnostics:
             ax.axhline(0, color=TEXT_CLR, alpha=0.35, linestyle=":")
             ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
             ax.set_ylabel(r"$(E(t)-E(0))/E(0)$", color=TEXT_CLR)
-            ax.set_title("Energy conservation error", color=TEXT_CLR, fontweight="bold")
-            _savefig(fig, self.outdir / "energy_conservation_error.png")
+            ax.set_title("Relative change of partial energy proxy", color=TEXT_CLR, fontweight="bold")
+            _savefig(fig, self.outdir / "energy_proxy_relative_change.png")
 
 
 def parse_args():
