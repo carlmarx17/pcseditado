@@ -46,6 +46,7 @@
 #SBATCH --nodes=83
 #SBATCH --ntasks-per-node=28
 #SBATCH --ntasks=2304
+#SBATCH --exclude=m7010,m7174
 #SBATCH --time=48:00:00
 #SBATCH --output=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.out
 #SBATCH --error=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.err
@@ -77,7 +78,7 @@ PSC_NICELL="${PSC_NICELL:-1000}"
 PSC_NP_Y="${PSC_NP_Y:-48}"
 PSC_NP_Z="${PSC_NP_Z:-48}"
 PSC_CHECKPOINT_EVERY="${PSC_CHECKPOINT_EVERY:-150000}"
-PSC_ENERGIES_EVERY="${PSC_ENERGIES_EVERY:-0}"
+PSC_ENERGIES_EVERY="${PSC_ENERGIES_EVERY:-500}"
 PSC_LAUNCHER="${PSC_LAUNCHER:-mpirun}"
 export PSC_NGRID PSC_NICELL PSC_NP_Y PSC_NP_Z PSC_CHECKPOINT_EVERY PSC_ENERGIES_EVERY PSC_LAUNCHER
 

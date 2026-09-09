@@ -34,13 +34,13 @@ same grid, outputs and intervals, unless overridden via the environment.
 |---|---:|
 | PSC configuration | `PscConfig1vbecSingle<dim_yz>` |
 | Background field | `B0 = 0.08` |
-| `vA/c` | 0.08 |
+| `vA/c` (ion inertia) | `0.08/sqrt(200) = 0.005657` |
 | `mi/me` | 200 |
 | `lambda0` | 20 |
 | Initial density | 1.0 |
 | Domain | `20 d_i × 20 d_i` |
 | Grid | `576×576` |
-| Resolution | `28.8 cells/d_i` (`dx = dz = 0.034722 d_i` ≈ `0.491 d_e`, `dx/λ_De ≈ 3.78`) |
+| Resolution | `28.8 cells/d_i` (`dx = dz = 0.034722 d_i` ≈ `0.491 d_e`, `dx/λ_De ≈ 8.68` for `beta_e_par=1`) |
 | Particles per cell | 1000 (default) |
 | Maximum steps | Depend on saturation (`PSC_NMAX`, default 1,200,000) |
 | Boundaries | Periodic |

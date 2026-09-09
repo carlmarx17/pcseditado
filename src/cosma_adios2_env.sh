@@ -86,6 +86,8 @@ psc_mpi_run() {
   nproc=$1
   shift
 
+  bash "$(dirname "${BASH_SOURCE[0]}")/preserve_energy_diagnostic.sh" . || return
+
   case "${PSC_LAUNCHER:-srun}" in
     srun)
       if [ -n "${PSC_SRUN_MPI_TYPE:-}" ]; then

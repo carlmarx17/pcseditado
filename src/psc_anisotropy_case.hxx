@@ -55,11 +55,9 @@
 #define PSC_DOMAIN_DI 20.0
 #endif
 
-// NGRID=576 da dx/d_i=0.0347 (~28.8 celdas/d_i) y dx/lambda_De~3.78 con
-// mass_ratio=200: resuelve la escala ionica sin sub-resolver Debye mas alla
-// del limite citado en la literatura PIC (~3.4-5). Acordado tras revisar
-// costo computacional (~8.4x mas barato que 1024/1500) vs riesgo de
-// calentamiento numerico de grilla finita.
+// NGRID=576 gives dx/di=0.0347. For mi/me=200, B0=0.08 and beta_e_par=1,
+// lambda_De=sqrt(Te_par)=0.05657 and dx/lambda_De=8.68.
+// Ion-scale resolution alone does not establish convergence of heating.
 #ifndef PSC_NGRID_DEFAULT
 #define PSC_NGRID_DEFAULT 576
 #endif
@@ -93,7 +91,7 @@
 #endif
 
 #ifndef PSC_ENERGIES_EVERY_DEFAULT
-#define PSC_ENERGIES_EVERY_DEFAULT 0
+#define PSC_ENERGIES_EVERY_DEFAULT 500
 #endif
 
 // ======================================================================

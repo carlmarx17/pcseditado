@@ -22,8 +22,13 @@ Physical condition:
 
 ```text
 A_i > 1
-beta_i_parallel * (A_i - 1) > 1
+beta_i_perp * (A_i - 1) = beta_i_parallel * A_i * (A_i - 1) > 1
 ```
+
+This is a cold-electron, bi-Maxwellian reference, not the full hot-electron
+or Kappa threshold. On a parallel-beta plot the reference curve is
+`A = (1 + sqrt(1 + 4/beta_i_parallel))/2`.
+See `CodeforAnalisys/AUDITORIA_FISICA_PAPER.md` for publication limitations.
 
 Expected signatures:
 
