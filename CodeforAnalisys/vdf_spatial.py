@@ -1,50 +1,54 @@
 #!/usr/bin/env python3
 """
-vdf_spatial.py — VDF resuelta en el espacio dentro de la ventana prt
-====================================================================
-El resto de la pipeline promedia la VDF sobre toda la ventana de partículas,
-de modo que un hueco magnético y el plasma de fondo se mezclan en el mismo
-histograma. Aquí se usan las posiciones que PSC sí escribe en los archivos
-prt (`hdf5_prt`: x, y, z, px, py, pz, q, m, w) y que
-`PICDataReader.read_particles_snapshot` descarta.
+vdf_spatial.py — spatially resolved VDF inside the prt window
+=============================================================
+The rest of the pipeline averages the VDF over the whole particle window, so a
+magnetic hole and the background plasma end up mixed into the same histogram.
+This module uses the positions PSC does write to the prt files (`hdf5_prt`:
+x, y, z, px, py, pz, q, m, w) and that
+`PICDataReader.read_particles_snapshot` discards.
 
-Dos diagnósticos:
+Four diagnostics:
 
-  1. **Mapa de anisotropía por macro-celda.** La ventana prt se divide en
-     `--macrocells` x `--macrocells` bloques; en cada uno se calculan
-     T_par, T_perp y A a partir de las partículas. Es independiente de
-     `moment_thermal_maps`, que los obtiene de los momentos de la grilla, y
-     sirve para cruzarlos.
+  1. **Anisotropy map per macro-cell.** The prt window is split into
+     `--macrocells` x `--macrocells` blocks; T_par, T_perp and A are computed
+     from the particles in each. This is independent of `moment_thermal_maps`,
+     which gets them from the grid moments, so the two can be cross-checked.
 
-  2. **VDF condicionada al |B| local.** Las partículas se clasifican por el
-     |B| de su celda en `hole` (percentil bajo), `ambient` y `peak`
-     (percentil alto), y se comparan f(v_par) y f(v_perp) de cada población.
-     Esta es la pregunta de los magnetic holes: si la anisotropía se regula
-     localmente, la VDF dentro del hueco no es la del fondo. Cada población
-     lleva además su kappa_eff (estimador truncado y blanqueado de
-     `kappa_eff.py`).
+  2. **VDF conditioned on the local |B|.** Particles are classified by the |B|
+     of their cell into `hole` (low percentile), `ambient` and `peak` (high
+     percentile), and f(v_par) and f(v_perp) are compared across populations.
+     This is the magnetic-hole question: if the anisotropy is regulated
+     locally, the VDF inside the hole is not the background one. Each
+     population also carries its kappa_eff (the truncated, whitened estimator
+     from `kappa_eff.py`).
 
-  3. **Atrapadas/pasantes y perfiles por b.** Cada partícula se etiqueta con
-     b = |B|_local/B_ref y con el criterio adiabático sin^2(alpha) > b, y se
-     binea en b: n(b), T_perp/T_par(b), fracción atrapada(b) y kappa_eff(b),
-     por snapshot y agregado (superposed epoch en espacio de campo). Es el
-     perfil que predicen los cierres de Liouville (`liouville_kappa.py`) y la
-     figura central del paper.
+  3. **Trapped/passing split and b-binned profiles.** Every particle is
+     labelled with b = |B|_local/B_ref and with the adiabatic criterion
+     sin^2(alpha) > b, then binned in b: n(b), T_perp/T_par(b), trapped
+     fraction(b) and kappa_eff(b), per snapshot and aggregated (a superposed
+     epoch in field space). This is the profile the Liouville closures predict
+     (`liouville_kappa.py`) and the central figure of the paper.
 
-Convención de ejes (verificada contra `rho_i`, corr = 0.81 vs 0.01 para la
-transpuesta): los arrays de campo/momentos llegan como (Nz, Ny), eje 0 = Z,
-eje 1 = Y. Las posiciones de las partículas vienen en unidades de código
-(d_e) con el origen en el centro del dominio, así que
-`celda = (coord + DOMAIN_DE/2) / dx_code`.
+  4. **2D VDF with the trapping boundary.** f(v_par, v_perp) for the three
+     populations of item 2, on a common grid and colour scale, with the
+     sin^2(alpha) = b boundary drawn on top. It is the velocity-plane version
+     of what item 3 measures integrated: where the domain sits that the
+     adiabatic mapping cannot fill.
 
-La anisotropía se mide respecto al **campo local** b = B/|B|, no respecto a
-z global: dentro de un hueco el campo se dobla y proyectar sobre z mezcla
-las componentes. Se reportan ambas para poder comparar.
+Axis convention (verified against `rho_i`, corr = 0.81 vs 0.01 for the
+transpose): field and moment arrays arrive as (Nz, Ny), axis 0 = Z,
+axis 1 = Y. Particle positions come in code units (d_e) with the origin at the
+centre of the domain, hence `cell = (coord + DOMAIN_DE/2) / dx_code`.
 
-Uso típico:
-    python vdf_spatial.py --data-dir ../corridas_locales/mi_prueba --outdir salida
-    python vdf_spatial.py --data-dir /ruta/corrida --steps 600000 900000
-    python vdf_spatial.py --data-dir /ruta/corrida --species electron --macrocells 12
+The anisotropy is measured against the **local field** b = B/|B|, not against
+global z: inside a hole the field bends, and projecting onto z mixes the
+components. Both are reported so they can be compared.
+
+Typical use:
+    python vdf_spatial.py --data-dir ../corridas_locales/mi_prueba --outdir out
+    python vdf_spatial.py --data-dir /path/to/run --steps 600000 900000
+    python vdf_spatial.py --data-dir /path/to/run --species electron --macrocells 12
 """
 
 import argparse
@@ -56,6 +60,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.colors import LogNorm
 from matplotlib.patches import Rectangle
 
 import plot_style as ps
@@ -80,17 +85,17 @@ plt.rcParams.update({
 })
 
 DPI = 200
-DX_CODE = DOMAIN_DE / N_GRID_Y          # tamaño de celda en unidades de código
+DX_CODE = DOMAIN_DE / N_GRID_Y          # cell size in code units
 
 
-# ── Lectura ──────────────────────────────────────────────────────────────────
+# ── Reading ──────────────────────────────────────────────────────────────────
 
 def load_particles(path: str, species: str, max_particles: int) -> dict:
-    """Partículas de una especie con su celda (iy, iz) ya calculada."""
+    """Particles of one species with their (iy, iz) cell already computed."""
     data = PICDataReader.read_particles_with_positions(path, max_particles)
     mask = data["q"] > 0 if species == "ion" else data["q"] < 0
     if not np.any(mask):
-        raise ValueError(f"No hay partículas de especie '{species}' en {path}")
+        raise ValueError(f"No '{species}' particles in {path}")
 
     out = {k: data[k][mask] for k in ("y", "z", "px", "py", "pz", "w", "m")}
     out["iy"] = np.floor((out["y"] + DOMAIN_DE / 2.0) / DX_CODE).astype(int)
@@ -102,7 +107,7 @@ def load_particles(path: str, species: str, max_particles: int) -> dict:
 
 
 def load_b_field(field_file: str) -> dict:
-    """(Bx, By, Bz) como arrays 2D (Nz, Ny) más |B| y la fluctuación."""
+    """(Bx, By, Bz) as 2D (Nz, Ny) arrays, plus |B| and its fluctuation."""
     fields = PICDataReader.read_multiple_fields_3d(
         field_file, "jeh", ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"])
     bx = PICDataReader.flatten_2d_slice(fields["hx_fc/p0/3d"]).astype(float)
@@ -113,14 +118,14 @@ def load_b_field(field_file: str) -> dict:
             "delta_b_over_b0": (bmag - B0) / B0}
 
 
-# ── Marco local y momentos ───────────────────────────────────────────────────
+# ── Local frame and moments ──────────────────────────────────────────────────
 
 def local_frame_velocities(part: dict, bfield: dict) -> dict:
-    """Proyecta las velocidades sobre el campo *local* de cada partícula.
+    """Project the velocities onto each particle's *local* field.
 
-    Devuelve v_par y las dos componentes perpendiculares (v_perp1, v_perp2)
-    en una base ortonormal ligada a b = B/|B|, además de la versión global
-    (z como eje paralelo) para comparar.
+    Returns v_par and the two perpendicular components (v_perp1, v_perp2) in an
+    orthonormal basis tied to b = B/|B|, plus the global version (z as the
+    parallel axis) for comparison.
     """
     iz, iy = part["iz"], part["iy"]
     bx = bfield["bx"][iz, iy]
@@ -130,8 +135,9 @@ def local_frame_velocities(part: dict, bfield: dict) -> dict:
     bmag = np.where(bmag > 1e-30, bmag, 1e-30)
     ux, uy, uz = bx / bmag, by / bmag, bz / bmag
 
-    # Referencia para construir la base perpendicular; se cambia de eje donde
-    # b es casi paralelo a z para no degenerar el producto cruz.
+    # Reference vector for building the perpendicular basis; the axis is
+    # swapped where b is nearly parallel to z, so the cross product does not
+    # degenerate.
     near_z = np.abs(uz) > 0.9
     rx = np.where(near_z, 1.0, 0.0)
     ry = np.zeros_like(ux)
@@ -163,12 +169,12 @@ def _wvar(values: np.ndarray, weights: np.ndarray) -> float:
 
 
 def anisotropy_noise_floor(count: int) -> float:
-    """Error relativo esperado de A por ruido de muestreo con N partículas.
+    """Expected relative error of A from sampling noise with N particles.
 
-    Para un estimador de varianza con N muestras independientes,
-    Var(s^2)/sigma^4 ~ 2/N. T_par usa una componente (2/N) y T_perp promedia
-    dos (1/N), de modo que sigma_A / A ~ sqrt(3/N). Sin este piso, la escala
-    de color de un mapa de A convierte ruido PIC en estructura aparente.
+    For a variance estimator with N independent samples,
+    Var(s^2)/sigma^4 ~ 2/N. T_par uses one component (2/N) and T_perp averages
+    two (1/N), so sigma_A / A ~ sqrt(3/N). Without this floor, the colour scale
+    of an A map turns PIC noise into apparent structure.
     """
     if count <= 0:
         return float("nan")
@@ -176,7 +182,7 @@ def anisotropy_noise_floor(count: int) -> float:
 
 
 def anisotropy_from(v_par, v_p1, v_p2, weights, mass) -> dict:
-    """T_par, T_perp y A de un subconjunto de partículas."""
+    """T_par, T_perp and A of a subset of particles."""
     tpar = mass * _wvar(v_par, weights)
     tperp = 0.5 * mass * (_wvar(v_p1, weights) + _wvar(v_p2, weights))
     if not np.isfinite(tpar) or tpar <= 0:
@@ -186,10 +192,10 @@ def anisotropy_from(v_par, v_p1, v_p2, weights, mass) -> dict:
             "A": float(tperp / tpar), "count": int(v_par.size)}
 
 
-# ── Diagnóstico 1: mapa por macro-celda ──────────────────────────────────────
+# ── Diagnostic 1: map per macro-cell ─────────────────────────────────────────
 
 def macrocell_map(part: dict, vel: dict, lo, hi, nblocks: int) -> dict:
-    """Anisotropía por bloque espacial dentro de la ventana prt."""
+    """Anisotropy per spatial block inside the prt window."""
     y0, y1 = int(lo[1]), int(hi[1])
     z0, z1 = int(lo[2]), int(hi[2])
     edges_y = np.linspace(y0, y1, nblocks + 1)
@@ -200,7 +206,7 @@ def macrocell_map(part: dict, vel: dict, lo, hi, nblocks: int) -> dict:
     inside = ((part["iy"] >= y0) & (part["iy"] < y1) &
               (part["iz"] >= z0) & (part["iz"] < z1))
 
-    a_map = np.full((nblocks, nblocks), np.nan)      # [bloque_z, bloque_y]
+    a_map = np.full((nblocks, nblocks), np.nan)      # [block_z, block_y]
     tpar_map = np.full((nblocks, nblocks), np.nan)
     tperp_map = np.full((nblocks, nblocks), np.nan)
     count_map = np.zeros((nblocks, nblocks), dtype=int)
@@ -213,7 +219,7 @@ def macrocell_map(part: dict, vel: dict, lo, hi, nblocks: int) -> dict:
 
     for cell in range(nblocks * nblocks):
         sel = idx_inside[bounds[cell]:bounds[cell + 1]]
-        if sel.size < 200:                      # ruido PIC: bloque insuficiente
+        if sel.size < 200:                      # PIC noise: block too sparse
             continue
         stats = anisotropy_from(vel["v_par"][sel], vel["v_perp1"][sel],
                                 vel["v_perp2"][sel], part["w"][sel],
@@ -229,12 +235,12 @@ def macrocell_map(part: dict, vel: dict, lo, hi, nblocks: int) -> dict:
             "nblocks": nblocks}
 
 
-# ── Diagnóstico 2: VDF condicionada al |B| local ─────────────────────────────
+# ── Diagnostic 2: VDF conditioned on the local |B| ───────────────────────────
 
 def condition_on_field(part: dict, vel: dict, lo, hi, percentile: float,
                        s_max: float = ke.DEFAULT_S_MAX,
                        n_boot: int = 0) -> dict:
-    """Separa hole / ambient / peak por el |B| local de cada partícula."""
+    """Split into hole / ambient / peak by each particle's local |B|."""
     y0, y1 = int(lo[1]), int(hi[1])
     z0, z1 = int(lo[2]), int(hi[2])
     inside = ((part["iy"] >= y0) & (part["iy"] < y1) &
@@ -271,8 +277,8 @@ def condition_on_field(part: dict, vel: dict, lo, hi, percentile: float,
         stats["A_global_z"] = glob["A"]
         stats["b_mean_over_B0"] = float(np.mean(b_local[idx]) / B0)
         stats["idx"] = idx
-        # kappa_eff de la población (truncado + blanqueado): la comparación
-        # hole vs peak es la versión de dos puntos de la fig. 7.
+        # kappa_eff of the population (truncated + whitened): the hole vs peak
+        # comparison is the two-point version of fig. 7.
         if idx.size >= 2000:
             res = ke.kappa_eff_from_velocities(
                 vel["v_par"][idx], vel["v_perp1"][idx], vel["v_perp2"][idx],
@@ -287,7 +293,7 @@ def condition_on_field(part: dict, vel: dict, lo, hi, percentile: float,
 
 
 def vdf_profiles(part: dict, vel: dict, groups: dict, nbins: int = 120) -> dict:
-    """f(v_par) y f(v_perp) normalizadas, en una malla común a los 3 grupos."""
+    """Normalised f(v_par) and f(v_perp) on a grid common to the 3 groups."""
     present = [g for g in ("hole", "ambient", "peak") if g in groups]
     if not present:
         return {}
@@ -311,7 +317,7 @@ def vdf_profiles(part: dict, vel: dict, groups: dict, nbins: int = 120) -> dict:
         h_par, _ = np.histogram(vel["v_par"][idx], bins=par_edges,
                                 weights=w, density=True)
         h_perp, _ = np.histogram(vperp, bins=perp_edges, weights=w)
-        # f(v_perp) por unidad de área en el plano perpendicular
+        # f(v_perp) per unit area in the perpendicular plane
         area = np.pi * (perp_edges[1:]**2 - perp_edges[:-1]**2)
         h_perp = h_perp / (np.sum(w) * area)
         profiles[f"{name}_par"] = h_par
@@ -319,30 +325,30 @@ def vdf_profiles(part: dict, vel: dict, groups: dict, nbins: int = 120) -> dict:
     return profiles
 
 
-# ── Diagnóstico 3: atrapadas/pasantes y perfiles bineados por b ──────────────
+# ── Diagnostic 3: trapped/passing split and b-binned profiles ────────────────
 #
-# Época superpuesta en espacio de campo: cada partícula se etiqueta con
-# b = |B|_local / B_ref (B_ref = percentil alto del |B| sobre las celdas de la
-# ventana, o sea el campo "pico" contra el que rebotan las atrapadas), se
-# clasifica atrapada/pasante con el criterio adiabático sin^2(alpha) > b, y se
-# binea en b. Por bin: densidad, T_perp/T_par, fracción atrapada y el kappa_eff
-# truncado y blanqueado — el perfil que predicen los cierres de Liouville.
+# A superposed epoch in field space: every particle is labelled with
+# b = |B|_local / B_ref (B_ref = a high percentile of |B| over the window
+# cells, i.e. the "peak" field the trapped particles bounce against), it is
+# classified trapped/passing with the adiabatic criterion sin^2(alpha) > b, and
+# then binned in b. Per bin: density, T_perp/T_par, trapped fraction and the
+# truncated, whitened kappa_eff — the profile the Liouville closures predict.
 #
-# Decisiones físicas, explícitas:
-#   * Los ángulos de paso se miden en el marco de la deriva media de la
-#     ventana (pesada, en el marco local b). Restar la deriva celda a celda
-#     estaría dominado por ruido PIC con nicell ~ 1e3; la media de ventana es
-#     el compromiso estable, y en estas corridas periódicas la deriva es ~0.
-#   * B_ref sale de las celdas de campo del MISMO snapshot, así que los
-#     cambios seculares del campo de fondo (p.ej. calentamiento numérico) no
-#     se filtran en b como una evolución temporal falsa.
-#   * Una partícula con b >= 1 no puede cumplir sin^2(alpha) > b: queda
-#     pasante automáticamente, sin necesidad de un caso especial.
+# The physical decisions, stated explicitly:
+#   * Pitch angles are measured in the frame of the mean window drift
+#     (weighted, in the local b frame). Subtracting the drift cell by cell
+#     would be dominated by PIC noise at nicell ~ 1e3; the window mean is the
+#     stable compromise, and in these periodic runs the drift is ~0.
+#   * B_ref comes from the field cells of the SAME snapshot, so secular changes
+#     of the background field (e.g. numerical heating) do not leak into b as a
+#     spurious time evolution.
+#   * A particle with b >= 1 cannot satisfy sin^2(alpha) > b: it is passing
+#     automatically, with no special case needed.
 
 
 def trapping_classification(part: dict, vel: dict, bfield: dict, lo, hi,
                             b_ref_percentile: float) -> dict:
-    """Etiqueta cada partícula con b = |B|/B_ref y atrapada/pasante."""
+    """Label every particle with b = |B|/B_ref and trapped/passing."""
     y0, y1 = int(lo[1]), int(hi[1])
     z0, z1 = int(lo[2]), int(hi[2])
     inside = ((part["iy"] >= y0) & (part["iy"] < y1) &
@@ -371,15 +377,116 @@ def trapping_classification(part: dict, vel: dict, bfield: dict, lo, hi,
             "cell_b": b_cells / b_ref, "drift": drift}
 
 
+def _wquantile(values: np.ndarray, weights: np.ndarray, q) -> np.ndarray:
+    """Weighted quantiles, interpolated over the cumulative CDF."""
+    q = np.atleast_1d(np.asarray(q, dtype=float))
+    if values.size == 0 or np.sum(weights) <= 0:
+        return np.full(q.shape, np.nan)
+    order = np.argsort(values)
+    v, w = values[order], weights[order]
+    cdf = (np.cumsum(w) - 0.5 * w) / np.sum(w)
+    return np.interp(q, cdf, v)
+
+
+def trapping_boundary(b, v_perp):
+    """The sin^2(alpha) = b boundary, as v_par(v_perp) rather than v_perp(v_par).
+
+    Solving, v_par = +- v_perp sqrt((1-b)/b): the trapped domain is the wedge
+    |v_par| < v_perp sqrt((1-b)/b) around the perpendicular axis.
+    It is parametrised by v_perp and not by v_par because as b -> 1 the
+    boundary closes onto the v_perp axis; in this form the limiting case comes
+    out on its own (v_par -> 0, empty trapped domain) instead of an infinite
+    slope.
+    """
+    b = float(b)
+    if not np.isfinite(b) or b <= 0.0:
+        return np.full_like(np.asarray(v_perp, dtype=float), np.nan)
+    if b >= 1.0:
+        return np.zeros_like(np.asarray(v_perp, dtype=float))
+    return np.asarray(v_perp, dtype=float) * np.sqrt((1.0 - b) / b)
+
+
+def vdf2d_by_group(part: dict, trap: dict, groups: dict, nbins: int = 90,
+                   min_counts: int = 8) -> dict:
+    """f(v_par, v_perp) per population, on a grid common to all three.
+
+    It uses the drift-subtracted velocities produced by
+    `trapping_classification`, NOT those in `vel`: the sin^2(alpha) = b
+    boundary is drawn on this same plane and each particle's pitch angle is
+    defined in that frame. Mixing the two frames would shift the boundary
+    relative to the particles it is meant to separate.
+
+    What is plotted is the phase-space density f(v_par, v_perp), i.e. the
+    weighted histogram divided by the 2 pi v_perp Jacobian of the gyrotropic
+    annulus — the same convention `vdf_profiles` already uses for f(v_perp).
+    Without that division the v_perp -> 0 edge looks empty for geometric and
+    not physical reasons, exactly where the trapping boundary closes.
+
+    Bins holding fewer than `min_counts` *raw* particles are masked: the
+    (v_par, v_perp) rectangle has nearly empty corners where the weighted
+    density is pure shot noise. This is the same criterion as `plot_vdf2d` in
+    `physical_diagnostics.py`.
+    """
+    present = [g for g in ("hole", "ambient", "peak") if g in groups]
+    if not present:
+        return {}
+
+    all_idx = np.concatenate([groups[g]["idx"] for g in present])
+    vpar_all = trap["dv_par"][all_idx]
+    vperp_all = np.hypot(trap["dv_p1"][all_idx], trap["dv_p2"][all_idx])
+    vpar_max = float(np.percentile(np.abs(vpar_all), 99.5))
+    vperp_max = float(np.percentile(vperp_all, 99.5))
+    if not (vpar_max > 0 and vperp_max > 0):
+        return {}
+
+    par_edges = np.linspace(-vpar_max, vpar_max, nbins + 1)
+    perp_edges = np.linspace(0.0, vperp_max, nbins + 1)
+    perp_centers = 0.5 * (perp_edges[:-1] + perp_edges[1:])
+    d_par = float(par_edges[1] - par_edges[0])
+    d_perp = float(perp_edges[1] - perp_edges[0])
+    cell_volume = 2.0 * np.pi * perp_centers * d_perp * d_par
+
+    out = {"v_par_edges": par_edges, "v_perp_edges": perp_edges,
+           "min_counts": min_counts, "groups": {}}
+    for name in present:
+        idx = groups[name]["idx"]
+        w = part["w"][idx]
+        vpar = trap["dv_par"][idx]
+        vperp = np.hypot(trap["dv_p1"][idx], trap["dv_p2"][idx])
+
+        hist, _, _ = np.histogram2d(vpar, vperp, bins=(par_edges, perp_edges),
+                                    weights=w)
+        counts, _, _ = np.histogram2d(vpar, vperp,
+                                      bins=(par_edges, perp_edges))
+        w_tot = float(np.sum(w))
+        if w_tot <= 0:
+            continue
+        f = hist / (w_tot * cell_volume[None, :])
+        f = np.where((counts >= min_counts) & (f > 0), f, np.nan)
+
+        b_q = _wquantile(trap["b"][idx], w, [0.16, 0.5, 0.84])
+        b_med = float(b_q[1])
+        out["groups"][name] = {
+            "f": f, "count": int(idx.size),
+            "b_lo": float(b_q[0]), "b_med": b_med, "b_hi": float(b_q[2]),
+            "trapped_fraction": float(
+                np.average(trap["trapped"][idx], weights=w)),
+            # geometric reference: the same isotropic f gives sqrt(1-b)
+            "trapped_fraction_iso": float(
+                np.sqrt(1.0 - min(max(b_med, 0.0), 1.0))),
+        }
+    return out
+
+
 def bin_by_b(part: dict, trap: dict, edges: np.ndarray, s_max: float,
              n_boot: int, min_count: int = 200,
              min_count_kappa: int = 2000) -> list[dict]:
-    """Perfiles n, A, fracción atrapada y kappa_eff por bin de b."""
+    """n, A, trapped-fraction and kappa_eff profiles per b bin."""
     inside = trap["inside"]
     w = part["w"]
     nbins = len(edges) - 1
 
-    # densidad: partículas por celda de la ventana, normalizada a la media
+    # density: particles per window cell, normalised to the mean
     cell_hist, _ = np.histogram(trap["cell_b"], bins=edges)
     w_all = float(np.sum(w[inside]))
     n_cells_win = trap["cell_b"].size
@@ -419,7 +526,7 @@ def bin_by_b(part: dict, trap: dict, edges: np.ndarray, s_max: float,
             if np.isfinite(stats["A"]) else float("nan")
         row["trapped_fraction"] = float(
             np.average(trap["trapped"][sel], weights=wj))
-        # referencia geométrica: fracción atrapada de una f isótropa
+        # geometric reference: trapped fraction of an isotropic f
         b_clip = min(max(row["b_mean"], 0.0), 1.0)
         row["trapped_fraction_iso"] = float(np.sqrt(1.0 - b_clip))
 
@@ -435,12 +542,12 @@ def bin_by_b(part: dict, trap: dict, edges: np.ndarray, s_max: float,
 
 
 def aggregate_b_rows(per_step: dict[int, list[dict]]) -> list[dict]:
-    """Combina los perfiles por b de varios snapshots (bins comunes).
+    """Combine the b profiles of several snapshots (shared bins).
 
-    Momentos y fracciones se combinan pesando por el número de partículas del
-    bin en cada step; kappa_eff se combina como media pesada por particulas y
-    su error como dispersión entre steps (los steps son la unidad
-    estadísticamente independiente, no las partículas).
+    Moments and fractions are combined weighting by the bin's particle count at
+    each step; kappa_eff is combined as a particle-weighted mean and its error
+    as the spread between steps (the steps are the statistically independent
+    unit, not the particles).
     """
     if not per_step:
         return []
@@ -480,8 +587,8 @@ def aggregate_b_rows(per_step: dict[int, list[dict]]) -> list[dict]:
             if err_key:
                 base[err_key] = spread
 
-        # kappa se agrega en 1/kappa: el límite Maxwelliano (kappa = inf) es
-        # un dato legítimo, no un hueco, y en 1/kappa vale exactamente 0.
+        # kappa is aggregated in 1/kappa: the Maxwellian limit (kappa = inf) is
+        # a legitimate datum, not a gap, and in 1/kappa it is exactly 0.
         inv = np.array([1.0 / r["kappa_eff"] if np.isfinite(r["kappa_eff"])
                         else (0.0 if np.isinf(r["kappa_eff"]) else np.nan)
                         for r in rows])
@@ -509,7 +616,7 @@ def aggregate_b_rows(per_step: dict[int, list[dict]]) -> list[dict]:
 
 def plot_b_profiles(agg: list[dict], per_step: dict[int, list[dict]],
                     b_ref_info: dict, outdir: Path, prefix: str):
-    """Figura tipo fig. 7: n, A, fracción atrapada y kappa_eff vs b."""
+    """Fig. 7-style figure: n, A, trapped fraction and kappa_eff vs b."""
     good = [r for r in agg if r["count"] > 0]
     if not good:
         return None
@@ -540,7 +647,7 @@ def plot_b_profiles(agg: list[dict], per_step: dict[int, list[dict]],
     ax.set_ylabel(r"$n \, / \, \langle n \rangle_{\rm window}$")
     ax.set_title("Density")
 
-    # (b) anisotropía
+    # (b) anisotropy
     ax = axes[0, 1]
     faint_curves(ax, "A")
     v = np.array([r["A"] for r in good])
@@ -550,7 +657,7 @@ def plot_b_profiles(agg: list[dict], per_step: dict[int, list[dict]],
     ax.set_ylabel(r"$A = T_\perp / T_\parallel$")
     ax.set_title("Anisotropy")
 
-    # (c) fracción atrapada
+    # (c) trapped fraction
     ax = axes[1, 0]
     faint_curves(ax, "trapped_fraction")
     v = np.array([r["trapped_fraction"] for r in good])
@@ -566,9 +673,9 @@ def plot_b_profiles(agg: list[dict], per_step: dict[int, list[dict]],
     ax.set_title(r"Trapped domain ($\sin^2\alpha > b$)")
     ax.legend(framealpha=0.9)
 
-    # (d) kappa_eff. El eje se acota: kappa = inf (Maxwelliano-consistente) y
-    # los valores gigantes con error gigante son la MISMA afirmación física
-    # ("sin cola resoluble") y se dibujan como cotas: triángulo en el tope.
+    # (d) kappa_eff. The axis is capped: kappa = inf (Maxwellian-consistent)
+    # and huge values with huge errors are the SAME physical statement ("no
+    # resolvable tail"), and both are drawn as bounds: a triangle at the top.
     ax = axes[1, 1]
     cap = 3.0 * KAPPA if KAPPA is not None else 20.0
     v = np.array([r["kappa_eff"] for r in good])
@@ -603,6 +710,90 @@ def plot_b_profiles(agg: list[dict], per_step: dict[int, list[dict]],
     return out
 
 
+def plot_vdf2d_trapping(vdf2d: dict, b_ref_info: dict, step: int,
+                        outdir: Path, prefix: str):
+    """f(v_par, v_perp) de hueco / fondo / pico con la frontera de atrapamiento.
+
+    The three populations share a grid and a colour scale, which is the only
+    way for the comparison to be visual rather than an artefact of independent
+    normalisation. Each panel carries the sin^2(alpha) = b boundary evaluated
+    at that population's weighted median b, with a band between its 16th and
+    84th percentiles: within a group b is not a single number, and drawing one
+    clean line would suggest a precision the |B| percentile cut does not have.
+    """
+    groups = vdf2d.get("groups", {})
+    present = [g for g in ("hole", "ambient", "peak") if g in groups]
+    if not present:
+        return None
+
+    par_edges = vdf2d["v_par_edges"]
+    perp_edges = vdf2d["v_perp_edges"]
+    finite = np.concatenate([groups[g]["f"][np.isfinite(groups[g]["f"])]
+                             for g in present])
+    if finite.size == 0:
+        return None
+    vmax = float(np.nanmax(finite))
+    vmin = max(float(np.nanpercentile(finite, 1.0)), vmax * 1e-5)
+    if not (vmax > vmin > 0):
+        return None
+
+    labels = {"hole": r"hole (low $|B|$)", "ambient": "ambient",
+              "peak": r"peak (high $|B|$)"}
+    toci = step_to_omegaci(step)
+    fig, axes = plt.subplots(1, len(present), figsize=(6.1 * len(present), 5.6),
+                             sharex=True, sharey=True)
+    axes = np.atleast_1d(axes)
+
+    cmap = plt.get_cmap(ps.CMAP_SEQUENTIAL).copy()
+    cmap.set_bad(ps.PANEL_BG)
+    edge = ps.c("#ff4444")
+    perp_line = np.linspace(0.0, perp_edges[-1], 200)
+    pcm = None
+    for ax, name in zip(axes, present):
+        g = groups[name]
+        pcm = ax.pcolormesh(par_edges, perp_edges, g["f"].T, cmap=cmap,
+                            norm=LogNorm(vmin=vmin, vmax=vmax), shading="auto")
+
+        # the trapped wedge of the median b, with p16/p84 as dotted lines
+        par_b = trapping_boundary(g["b_med"], perp_line)
+        ax.fill_betweenx(perp_line, -par_b, par_b, color=edge, alpha=0.16,
+                         lw=0, label="trapped domain")
+        ax.plot(par_b, perp_line, color=edge, lw=2.0)
+        ax.plot(-par_b, perp_line, color=edge, lw=2.0,
+                label=r"$\sin^2\alpha = b_{\rm med}$")
+        for b_edge in (g["b_lo"], g["b_hi"]):
+            par_e = trapping_boundary(b_edge, perp_line)
+            ax.plot(par_e, perp_line, color=edge, lw=1.0, ls=":", alpha=0.9)
+            ax.plot(-par_e, perp_line, color=edge, lw=1.0, ls=":", alpha=0.9)
+
+        ax.text(0.97, 0.96,
+                "\n".join([rf"$b = {g['b_med']:.3f}$",
+                           rf"trapped $= {g['trapped_fraction']:.3f}$",
+                           rf"iso. ref. $= {g['trapped_fraction_iso']:.3f}$"]),
+                transform=ax.transAxes, ha="right", va="top", fontsize=11,
+                bbox={"facecolor": ps.LEGEND_BG, "edgecolor": ps.GRID_CLR,
+                      "alpha": 0.85, "pad": 3.5})
+        ax.set_xlim(par_edges[0], par_edges[-1])
+        ax.set_ylim(0.0, perp_edges[-1])
+        ax.set_xlabel(r"$v_\parallel - \langle v_\parallel \rangle$ [code units]")
+        ax.set_title(labels[name], fontsize=14)
+    axes[0].set_ylabel(r"$v_\perp$ [code units]")
+    axes[0].legend(loc="upper left", framealpha=0.9, fontsize=10.5)
+
+    cb = fig.colorbar(pcm, ax=list(axes), pad=0.015, fraction=0.035)
+    cb.set_label(r"$f(v_\parallel, v_\perp)$  [phase-space density]", labelpad=4)
+
+    fig.suptitle(
+        rf"VDF and trapped domain — {PROFILE_LABEL}, step {step}, "
+        rf"$t \approx {toci:.1f}\,\Omega_{{ci}}^{{-1}}$,  "
+        rf"$B_{{\rm ref}} = {b_ref_info['b_ref_over_B0']:.3f}\,B_0$"
+        "\n" r"dotted: $b$ percentiles 16 / 84 within each population",
+        y=1.06, fontsize=15)
+    out = outdir / f"{prefix}vdf_2d_trapping_step{step:09d}.png"
+    ps.save(fig, out)
+    return out
+
+
 def write_b_profile_csv(rows: list[dict], step, outdir: Path,
                         prefix: str) -> Path:
     tag = "aggregate" if step is None else f"step{step:09d}"
@@ -617,7 +808,7 @@ def write_b_profile_csv(rows: list[dict], step, outdir: Path,
 # ── Figuras ──────────────────────────────────────────────────────────────────
 
 def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
-    """Foto de la región guardada + anisotropía por macro-celda + VDFs."""
+    """Snapshot of the saved region + per-macro-cell anisotropy + VDFs."""
     toci = step_to_omegaci(step)
     fig = plt.figure(figsize=(18.5, 12.0))
     gs = fig.add_gridspec(2, 3, hspace=0.32, wspace=0.45)
@@ -625,7 +816,7 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
     z0, z1 = window["z_di"]
     y0, y1 = window["y_di"]
 
-    # (a) dominio completo en fluctuación de campo, con la ventana prt marcada
+    # (a) full domain in field fluctuation, with the prt window marked
     ax = fig.add_subplot(gs[0, 0])
     db = bfield["delta_b_over_b0"]
     lim = float(np.percentile(np.abs(db), 99))
@@ -639,7 +830,7 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
     ax.set_ylabel(r"$Y\ [d_i]$")
     ax.set_title("Full domain\n(green = prt window)")
 
-    # (b) zoom a la ventana prt, misma cantidad
+    # (b) zoom into the prt window, same quantity
     ax = fig.add_subplot(gs[0, 1])
     iz0, iz1 = window["cells_z"]
     iy0, iy1 = window["cells_y"]
@@ -658,9 +849,9 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
     ax.set_ylabel(r"$Y\ [d_i]$")
     ax.set_title("prt window: what is saved\n(grid = macro-cells)")
 
-    # (c) anisotropía por macro-celda, desde partículas.
-    # La escala se fija en múltiplos del ruido de muestreo, de forma que un
-    # mapa plano se vea plano en vez de amplificar ruido PIC.
+    # (c) anisotropy per macro-cell, from the particles.
+    # The scale is set in multiples of the sampling noise, so that a flat map
+    # looks flat instead of amplifying PIC noise.
     ax = fig.add_subplot(gs[0, 2])
     a = mac["A"]
     if np.any(np.isfinite(a)):
@@ -685,7 +876,7 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
     ax.set_xlabel(r"$Z\ [d_i]$")
     ax.set_ylabel(r"$Y\ [d_i]$")
 
-    # (d) f(v_par) por población
+    # (d) f(v_par) per population
     ax = fig.add_subplot(gs[1, 0])
     colors = {"hole": ps.c("#1f77b4"), "ambient": ps.c("#7f7f7f"), "peak": ps.c("#d62728")}
     labels = {"hole": "hole (low $|B|$)", "ambient": "ambient",
@@ -701,7 +892,7 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
     ax.set_title(r"Parallel VDF conditioned on local $|B|$")
     ax.legend(framealpha=0.9)
 
-    # (e) f(v_perp) por población
+    # (e) f(v_perp) per population
     ax = fig.add_subplot(gs[1, 1])
     if profiles:
         for name, color in colors.items():
@@ -714,7 +905,7 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
     ax.set_title(r"Perpendicular VDF conditioned on local $|B|$")
     ax.legend(framealpha=0.9)
 
-    # (f) resumen numérico
+    # (f) numerical summary
     ax = fig.add_subplot(gs[1, 2])
     ax.axis("off")
     lines = [f"{PROFILE_LABEL}", f"step {step}   " +
@@ -738,8 +929,8 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
             rf"{labels.get(name, name):<18s} A={g['A']:.4f}$\pm${err:.4f}   "
             rf"$A_z$={g['A_global_z']:.4f}   {kap_txt}   N={g['count']:,}")
 
-    # La pregunta de los magnetic holes: A dentro del hueco vs en el pico,
-    # medido contra el ruido de muestreo de ambas poblaciones.
+    # The magnetic-hole question: A inside the hole vs at the peak, measured
+    # against the sampling noise of both populations.
     hole, peak = groups.get("hole"), groups.get("peak")
     if hole and peak:
         diff = hole["A"] - peak["A"]
@@ -861,7 +1052,7 @@ def main() -> int:
     fields = outputs["fields"]
     particles = outputs["particles"]
     if not fields or not particles:
-        print(f"ERROR: faltan pfd.* o prt_*.* en {args.data_dir}")
+        print(f"ERROR: missing pfd.* or prt_*.* in {args.data_dir}")
         return 1
     series = next(iter(particles.values()))
 
@@ -870,24 +1061,24 @@ def main() -> int:
         prt_steps = [s for s in args.steps if s in series]
         missing = sorted(set(args.steps) - set(series))
         if missing:
-            print(f"[WARN] steps sin archivo prt: {missing}")
+            print(f"[WARN] steps with no prt file: {missing}")
     elif args.max_snapshots and len(prt_steps) > args.max_snapshots:
         pick = np.linspace(0, len(prt_steps) - 1, args.max_snapshots)
         prt_steps = [prt_steps[i] for i in dict.fromkeys(pick.round().astype(int))]
     if not prt_steps:
-        print("ERROR: ningún step seleccionado.")
+        print("ERROR: no step selected.")
         return 1
 
     field_steps = np.array(sorted(fields))
     lo, hi = PICDataReader.read_prt_window(series[prt_steps[0]])
     window = describe_window(lo, hi)
 
-    print(f"Perfil:          {PROFILE_LABEL}")
-    print(f"Ventana prt:     celdas Y [{window['cells_y'][0]}, {window['cells_y'][1]}), "
+    print(f"Profile:         {PROFILE_LABEL}")
+    print(f"prt window:      cells Y [{window['cells_y'][0]}, {window['cells_y'][1]}), "
           f"Z [{window['cells_z'][0]}, {window['cells_z'][1]})")
     print(f"                 {window['size_di'][0]:.2f} x {window['size_di'][1]:.2f} d_i "
-          f"({100 * window['fraction_of_area']:.1f} % del área)")
-    print(f"Macro-celdas:    {args.macrocells} x {args.macrocells}")
+          f"({100 * window['fraction_of_area']:.1f} % of the area)")
+    print(f"Macro-cells:     {args.macrocells} x {args.macrocells}")
     print(f"Steps:           {len(prt_steps)}")
 
     b_edges = np.linspace(args.b_min, args.b_max, args.b_bins + 1)
@@ -895,11 +1086,11 @@ def main() -> int:
     b_rows_by_step: dict[int, list[dict]] = {}
     b_ref_info: dict = {}
     for step in prt_steps:
-        # el snapshot de campos más cercano al de partículas
+        # the field snapshot closest to the particle one
         near = int(field_steps[np.argmin(np.abs(field_steps - step))])
         if abs(near - step) > args.max_step_mismatch:
-            print(f"[WARN] step {step}: campo más cercano en {near}, "
-                  f"desfase {abs(near - step)} > {args.max_step_mismatch}; se omite.")
+            print(f"[WARN] step {step}: closest field at {near}, "
+                  f"offset {abs(near - step)} > {args.max_step_mismatch}; skipped.")
             continue
 
         part = load_particles(series[step], args.species, args.max_particles)
@@ -918,6 +1109,10 @@ def main() -> int:
                       "percentile": args.b_ref_percentile}
         write_b_profile_csv(b_rows, step, outdir, args.prefix)
 
+        vdf2d = vdf2d_by_group(part, trap, groups, nbins=args.vdf2d_bins,
+                               min_counts=args.vdf2d_min_counts)
+        plot_vdf2d_trapping(vdf2d, b_ref_info, step, outdir, args.prefix)
+
         png = plot_overview(bfield, mac, window, groups, profiles, step,
                             outdir, args.prefix)
         csv_path = write_macrocell_csv(mac, window, step, outdir, args.prefix)
@@ -927,11 +1122,11 @@ def main() -> int:
         peak = groups.get("peak", {})
         if hole and peak and all_rows:
             sigma = all_rows[-1]["A_hole_minus_peak_sigma"]
-            print(f"  step {step:>9} (campo {near}): "
-                  f"A_hueco={hole['A']:.4f}  A_pico={peak['A']:.4f}  "
-                  f"dif={sigma:+.1f}sigma  -> {png.name}")
+            print(f"  step {step:>9} (field {near}): "
+                  f"A_hole={hole['A']:.4f}  A_peak={peak['A']:.4f}  "
+                  f"diff={sigma:+.1f}sigma  -> {png.name}")
         else:
-            print(f"  step {step:>9} (campo {near}): {png.name}  |  {csv_path.name}")
+            print(f"  step {step:>9} (field {near}): {png.name}  |  {csv_path.name}")
 
     if b_rows_by_step:
         agg = aggregate_b_rows(b_rows_by_step)
@@ -940,7 +1135,7 @@ def main() -> int:
             png = plot_b_profiles(agg, b_rows_by_step, b_ref_info, outdir,
                                   args.prefix)
             if png:
-                print(f"Perfiles por b:  {png}")
+                print(f"b profiles:      {png}")
 
     if all_rows:
         summary = outdir / f"{args.prefix}vdf_hole_vs_peak_summary.csv"
@@ -948,7 +1143,7 @@ def main() -> int:
             writer = csv.DictWriter(fh, fieldnames=list(all_rows[0].keys()))
             writer.writeheader()
             writer.writerows(all_rows)
-        print(f"Resumen: {summary}")
+        print(f"Summary: {summary}")
 
     meta = outdir / f"{args.prefix}vdf_spatial_metadata.json"
     with open(meta, "w") as fh:
@@ -959,13 +1154,15 @@ def main() -> int:
                    "b_ref_percentile": args.b_ref_percentile,
                    "b_ref_over_B0": b_ref_info.get("b_ref_over_B0"),
                    "kappa_s_max": args.s_max, "kappa_boot": args.kappa_boot,
+                   "vdf2d_bins": args.vdf2d_bins,
+                   "vdf2d_min_counts": args.vdf2d_min_counts,
                    "steps": [int(s) for s in prt_steps]}, fh, indent=2)
     return 0
 
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="VDF resuelta en el espacio dentro de la ventana prt.")
+        description="Spatially resolved VDF inside the prt window.")
     p.add_argument("--data-dir", default="../build/src")
     p.add_argument("--outdir", default="vdf_spatial_plots")
     p.add_argument("--prefix", default="")
@@ -973,27 +1170,32 @@ def parse_args():
     p.add_argument("--steps", nargs="*", type=int)
     p.add_argument("--max-snapshots", type=int, default=6)
     p.add_argument("--macrocells", type=int, default=8,
-                   help="número de bloques por eje dentro de la ventana prt")
+                   help="number of blocks per axis inside the prt window")
     p.add_argument("--percentile", type=float, default=15.0,
-                   help="percentil de |B| que define hueco y pico")
+                   help="|B| percentile that defines hole and peak")
     p.add_argument("--max-particles", type=int, default=4_000_000)
     p.add_argument("--max-step-mismatch", type=int, default=3000,
-                   help="desfase máximo permitido entre snapshot prt y de campos")
+                   help="largest allowed offset between the prt and field snapshots")
     p.add_argument("--b-bins", type=int, default=10,
-                   help="número de bins en b = |B|/B_ref")
+                   help="number of bins in b = |B|/B_ref")
     p.add_argument("--b-min", type=float, default=0.60,
-                   help="borde inferior del bineado en b")
+                   help="lower edge of the b binning")
     p.add_argument("--b-max", type=float, default=1.05,
-                   help="borde superior del bineado en b")
+                   help="upper edge of the b binning")
     p.add_argument("--b-ref-percentile", type=float, default=98.0,
-                   help="percentil de |B| en la ventana que define B_ref "
-                        "(el campo 'pico' contra el que rebotan las atrapadas)")
+                   help="|B| percentile over the window that defines B_ref "
+                        "(the 'peak' field trapped particles bounce against)")
     p.add_argument("--s-max", type=float, default=ke.DEFAULT_S_MAX,
-                   help="radio de truncamiento del estimador kappa_eff "
-                        "(unidades blanqueadas)")
+                   help="truncation radius of the kappa_eff estimator "
+                        "(whitened units)")
     p.add_argument("--kappa-boot", type=int, default=24,
-                   help="réplicas bootstrap para el error de kappa_eff "
-                        "(0 = sin error)")
+                   help="bootstrap replicas for the kappa_eff error "
+                        "(0 = no error)")
+    p.add_argument("--vdf2d-bins", type=int, default=90,
+                   help="bins per axis of the 2D VDF (v_par, v_perp)")
+    p.add_argument("--vdf2d-min-counts", type=int, default=8,
+                   help="minimum raw particles per 2D-VDF bin; below this the "
+                        "bin is masked as shot noise")
     return p.parse_args()
 
 

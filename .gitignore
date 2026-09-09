@@ -198,3 +198,8 @@ desktop.ini
 # Claude Code actually loads lives in .claude/skills/psc-case-integrity/.
 /.claude/psc-case-integrity/
 /.claude/skills-draft-psc-case-integrity/
+
+# Local SSH helper for COSMA: contains the account name, login hostnames and
+# the path to a private key. Machine-local configuration, not project source.
+/ssh_config_cosma
+/ssh_cosma.sh

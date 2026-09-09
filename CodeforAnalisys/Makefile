@@ -91,6 +91,8 @@ export PSC_FIG_THEME ?= paper
 	anisotropy-dispersion \
 	polarization validate particles heatflux physics compare-physics clean help \
 	theory theory-self-test prt-region vdf-spatial \
+	theory-liouville theory-liouville-x theory-liouville-sweep \
+	liouville-self-test kappa-eff-self-test \
 	check-fields check-moments check-particles check-case check-resolution show-inputs
 
 all: analysis
@@ -239,7 +241,7 @@ polarization: check-case check-fields check-resolution
 	@echo "Generating polarized omega-k dispersion maps and mode-growth curves"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) polarization_dispersion.py \
 		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)" \
-		$(if $(THEORY_CSV),--theory-csv "$(THEORY_CSV)",)
+		$(if $(THEORY_CSV),--theory-csv "$(THEORY_CSV)",) $(POLARIZATION_FLAGS)
 
 validate: check-case check-particles
 	@echo "Validating moments against $(FIRST_PARTICLE)"
@@ -274,6 +276,11 @@ theory: check-case
 theory-self-test:
 	$(PYTHON) linear_theory.py --self-test
 
+.PHONY: energy
+energy: check-case
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) energy_conservation.py \
+		$(DATA_DIR)/diag*.asc --outdir "$(PHYSICS_OUT)"
+
 # Adiabatic Liouville mapping + trapped-domain closures (paper fig. 2).
 # Defaults (kappa0, A0) come from the active PSC_PROFILE; override with
 # LIOUVILLE_FLAGS='--kappa0 3 --A0 2'.
@@ -281,6 +288,34 @@ theory-liouville: check-case
 	@echo "Computing Liouville closure profiles for $(CASE)"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) liouville_kappa.py --figure \
 		--outdir "$(SPECTRAL_OUT)" $(LIOUVILLE_FLAGS)
+
+# The same closures re-labelled along the model structure
+# B(x)/B0 = 1 - a sech^2(x/L). The moments depend on x only through b(x), so
+# this is a re-labelling of theory-liouville and not a second calculation; it
+# is the form that shows how much of the range of b a structure of a given
+# depth actually samples. Cost is one quadrature (~1 s) per distinct b, and
+# b(x) is even, so roughly LIOUVILLE_NX/2 per closure.
+LIOUVILLE_NX ?= 41
+LIOUVILLE_A ?=
+theory-liouville-x: check-case
+	@echo "Computing Liouville closure profiles along B(x) for $(CASE)"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) liouville_kappa.py --figure-x \
+		--outdir "$(SPECTRAL_OUT)" --n-x $(LIOUVILLE_NX) \
+		$(if $(LIOUVILLE_A),--a $(LIOUVILLE_A),) $(LIOUVILLE_FLAGS)
+
+# Parameter study over (kappa, A0, a). Every combination costs a full
+# theory-liouville-x, so keep the lists short and LIOUVILLE_NX small while
+# exploring. kappa = 0 in the list means bi-Maxwellian.
+LIOUVILLE_KAPPA_LIST ?= 3 5 0
+LIOUVILLE_A0_LIST ?=
+LIOUVILLE_A_LIST ?= 0.1 0.25 0.4
+theory-liouville-sweep: check-case
+	@echo "Sweeping Liouville closures over (kappa, A0, a)"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) liouville_kappa.py --sweep \
+		--outdir "$(SPECTRAL_OUT)/liouville_sweep" --n-x $(LIOUVILLE_NX) \
+		--kappa-list $(LIOUVILLE_KAPPA_LIST) \
+		$(if $(LIOUVILLE_A0_LIST),--A0-list $(LIOUVILLE_A0_LIST),) \
+		--a-list $(LIOUVILLE_A_LIST) $(LIOUVILLE_FLAGS)
 
 liouville-self-test:
 	$(PYTHON) liouville_kappa.py --self-test
@@ -329,6 +364,9 @@ help:
 	@echo "  make theory CASE=...                          # solve linear dispersion -> linear_theory.csv (fills gamma_theory)"
 	@echo "  make theory-self-test                         # validate the solver against known limits"
 	@echo "  make prt-region DATA_DIR=... CASE=...          # where the prt window sits in the field fluctuations"
-	@echo "  make vdf-spatial DATA_DIR=... CASE=...         # VDF resolved in space; hole vs peak populations"
+	@echo "  make vdf-spatial DATA_DIR=... CASE=...         # VDF resolved in space; hole vs peak populations + 2D VDF with the trapping boundary"
+	@echo "  make theory-liouville CASE=...                # closure profiles vs b (paper fig. 2)"
+	@echo "  make theory-liouville-x CASE=...              # the same closures vs x along B(x) = B0[1 - a sech^2(x/L)]"
+	@echo "  make theory-liouville-sweep CASE=...          # (kappa, A0, a) study; LIOUVILLE_KAPPA_LIST/A0_LIST/A_LIST, LIOUVILLE_NX"
 	@echo "Utility target: show-inputs"
 	@echo "Results default to ../analysis_results/<RUN_NAME>/"
