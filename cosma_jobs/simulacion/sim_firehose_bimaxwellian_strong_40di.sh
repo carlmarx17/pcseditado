@@ -46,7 +46,7 @@
 #SBATCH --nodes=83
 #SBATCH --ntasks-per-node=28
 #SBATCH --ntasks=2304
-#SBATCH --exclude=m7010,m7174
+#SBATCH --exclude=m7010,m7174,m7078
 #SBATCH --time=48:00:00
 #SBATCH --output=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.out
 #SBATCH --error=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.err
