@@ -1948,7 +1948,7 @@ class PhysicalDiagnostics:
         text = [
             f"Profile: {PROFILE_LABEL}",
             f"Instability: {INSTABILITY}",
-            f"Initial step: {row['step']}",
+            f"First available step: {row['step']}",
             f"T_parallel_i = {row['T_parallel_i']:.8g}",
             f"T_perp_i     = {row['T_perp_i']:.8g}",
             f"A_i          = {row['A_i']:.8g}",
@@ -1956,7 +1956,7 @@ class PhysicalDiagnostics:
             f"beta_parallel_i = {row['beta_parallel_i']:.8g}",
             "",
             *expected,
-            f"Initial check: {'PASS' if ok else 'CHECK'}",
+            f"Initial check: {'NOT_INITIAL (step 0 missing)' if row['step'] != 0 else 'PASS' if ok else 'CHECK'}",
         ]
         (self.outdir / "validation_summary.txt").write_text("\n".join(text) + "\n", encoding="utf-8")
 

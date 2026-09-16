@@ -52,7 +52,7 @@ cd "$REPO/CodeforAnalisys"
 
 DATA_DIR=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/psc_mirror_bikappa3_moderate_11618877
 CASE=mirror_bikappa3_moderate
-RESULTS_ROOT=../analysis_results
+RESULTS_ROOT="${RESULTS_ROOT:-../analysis_results/run_aware_v4}"
 LOGS=/cosma7/data/dp433/dc-mart18/logs
 
 mkdir -p "$LOGS"

@@ -62,7 +62,7 @@ cd "$REPO/CodeforAnalisys"
 
 RUN_ROOT=/cosma7/data/dp433/dc-mart18/anisotropy_adios2
 CASE=firehose_bikappa3_bigbox40
-RESULTS_ROOT=../analysis_results
+RESULTS_ROOT="${RESULTS_ROOT:-../analysis_results/run_aware_v4}"
 
 # =====================================================================
 # Seleccion de carpeta: si no se paso DATA_DIR, elegir entre las
@@ -110,7 +110,7 @@ fi
 SNAPSHOT_EVERY="${SNAPSHOT_EVERY:-100000}"
 GIF_EVERY="${GIF_EVERY:-10000}"
 FIELDS_GIF="${FIELDS_GIF-1}"
-DISPERSION_THETA_MAX="${DISPERSION_THETA_MAX-30}"
+DISPERSION_THETA_MAX="${DISPERSION_THETA_MAX-}"
 
 mkdir -p /cosma7/data/dp433/dc-mart18/logs
 
@@ -156,7 +156,8 @@ fi
 # =====================================================================
 # 2) Las 8 etapas independientes de "common", una por nodo, en paralelo
 # =====================================================================
-STAGES=(brazil fields particles spectral diamagnetic heatflux validate physics)
+STAGES=(brazil fields particles spectral diamagnetic heatflux validate physics energy-if-present)
+if [[ "$CASE" == mirror_* || "$CASE" == M_* ]]; then STAGES+=(mirror); fi
 declare -A PIDS
 
 for stage in "${STAGES[@]}"; do

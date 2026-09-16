@@ -354,6 +354,7 @@ def growth_rate_rows(
             # are kept for provenance but must not enter thesis tables.
             "fit_ok": int(
                 np.isfinite(fit["rvalue"]) and fit["rvalue"] ** 2 >= MIN_FIT_R2
+                and fit["gamma"] > 0
             ),
         })
     return rows
@@ -515,6 +516,52 @@ def mirror_bparallel_spectrum(
     }
 
 
+def stream_polarization(series, spacing, axes, parallel_axis, b0, mirror=False, kmax=2.0):
+    """Exact k_perp=0 reduction plus a bounded oblique spectrum per frame."""
+    from streaming_fields import snapshots, retained_slice
+    if not np.isfinite(b0) or b0 == 0 or parallel_axis not in axes:
+        raise ValueError("Nonzero B0 and a plane containing the parallel axis required")
+    nt, n0, n1 = series.shape[1:]
+    par_dim = axes.index(parallel_axis)
+    perp_dim = 1 - par_dim
+    npar = (n0, n1)[par_dim]
+    kpar = np.fft.fftshift(np.fft.fftfreq(npar, d=spacing[par_dim])) * 2*np.pi
+    plus = np.empty((nt, npar), complex); minus = np.empty_like(plus)
+    c1, c2 = {'x':(1,2), 'y':(2,0), 'z':(0,1)}[parallel_axis]
+    if mirror:
+        k0 = np.fft.fftshift(np.fft.fftfreq(n0, d=spacing[0])) * 2*np.pi
+        k1 = np.fft.fftshift(np.fft.fftfreq(n1, d=spacing[1])) * 2*np.pi
+        sl0, sl1 = retained_slice(k0,kmax), retained_slice(k1,kmax)
+        k0,k1 = k0[sl0],k1[sl1]
+        coeff = np.empty((nt,len(k0),len(k1)),complex)
+    for t,frame in enumerate(snapshots(series)):
+        if not np.all(np.isfinite(frame)):
+            raise ValueError("Nonfinite magnetic field")
+        # FFT of the perpendicular average is exactly the k_perp=0 slice
+        # of the normalized 2D transform, without storing any spatial cube.
+        b1,b2 = frame[c1].mean(axis=perp_dim),frame[c2].mean(axis=perp_dim)
+        b1,b2 = b1-b1.mean(),b2-b2.mean()
+        plus[t] = np.fft.fftshift(np.fft.fft((b1+1j*b2)/b0))/npar
+        minus[t] = np.fft.fftshift(np.fft.fft((b1-1j*b2)/b0))/npar
+        if mirror:
+            bp=frame['xyz'.index(parallel_axis)]
+            coeff[t]=np.fft.fftshift(np.fft.fft2((bp-bp.mean())/b0))[sl0,sl1]/(n0*n1)
+    result=None
+    if mirror:
+        power=np.abs(coeff)**2; avg=power[nt//2:].mean(axis=0)
+        K0,K1=np.meshgrid(k0,k1,indexing='ij')
+        kp,kt=(K0,K1) if par_dim==0 else (K1,K0)
+        theta=np.degrees(np.arctan2(abs(kt),abs(kp)))
+        allowed=(kp>0)&(theta>=45)&(theta<=85)&(np.hypot(kp,kt)<=kmax)
+        if not np.any(allowed):
+            raise ValueError("Box has no oblique mirror modes in requested k band")
+        peak=np.unravel_index(np.argmax(np.where(allowed,avg,-np.inf)),avg.shape)
+        result=dict(avg_power=avg,k0=k0,k1=k1,peak_idx=peak,
+                    k_par_peak=float(kp[peak]),k_perp_peak=float(kt[peak]),
+                    theta_kb_deg=float(theta[peak]),amplitude_t=coeff[:,peak[0],peak[1]])
+    return plus,minus,kpar,result
+
+
 # ── CLI ────────────────────────────────────────────────────────────────
 
 def _write_csv(path: Path, rows: list[dict]):
@@ -585,28 +632,18 @@ def main() -> int:
             "circularly polarized -- that is expected, not a duplicate/bug."
         )
 
-    series = load_bxyz_series(args.fields, args.plane, args.dx, args.dy, args.dz)
-    times_step = series["steps"]
-    times_omegaci = np.array([step_to_omegaci(step) for step in times_step], dtype=float)
-    times_norm = times_omegaci * MASS_RATIO if normalization == "electron" else times_omegaci
-
-    if args.t_start is not None or args.t_end is not None:
-        lo = args.t_start if args.t_start is not None else times_omegaci.min()
-        hi = args.t_end if args.t_end is not None else times_omegaci.max()
-        mask = (times_omegaci >= lo) & (times_omegaci <= hi)
-        if np.count_nonzero(mask) < 4:
-            raise ValueError("Requested [--t-start, --t-end] window contains fewer than four snapshots")
-    else:
-        mask = np.ones_like(times_omegaci, dtype=bool)
-
-    bx_t, by_t, bz_t = series["bx"][mask], series["by"][mask], series["bz"][mask]
-    times_norm_win = times_norm[mask]
+    from dispersion_analysis import load_series
+    fields, times_omegaci, series = load_series(
+        args.fields, args.plane, args.parallel_axis, 'total', args.dx, args.dy, args.dz,
+        step_to_omegaci, t_start=args.t_start, t_end=args.t_end)
+    times_norm_win = times_omegaci * MASS_RATIO if normalization == "electron" else times_omegaci
     spacing_di = series["spacing"]
-    spacing = tuple(s * DI for s in spacing_di) if normalization == "electron" else spacing_di
-
-    psi_plus, psi_minus = build_psi(bx_t, by_t, args.b0)
-    A_plus, k_par = spatial_fft_kpar0(psi_plus, spacing, series["axes"], args.parallel_axis)
-    A_minus, _ = spatial_fft_kpar0(psi_minus, spacing, series["axes"], args.parallel_axis)
+    run_mirror = args.mirror if args.mirror is not None else (INSTABILITY == "mirror")
+    A_plus, A_minus, k_par, mirror_result = stream_polarization(
+        fields, spacing_di, series["axes"], args.parallel_axis, args.b0,
+        mirror=run_mirror)
+    if normalization == "electron":
+        k_par = k_par / DI
 
     power_plus, omega = temporal_dispersion(A_plus, times_norm_win, nfft=args.temporal_fft_size, detrend=args.detrend)
     power_minus, _ = temporal_dispersion(A_minus, times_norm_win, nfft=args.temporal_fft_size, detrend=args.detrend)
@@ -657,10 +694,7 @@ def main() -> int:
             )
     _write_csv(outdir / "polarization_growth_rates.csv", growth_rows)
 
-    run_mirror = args.mirror if args.mirror is not None else (INSTABILITY == "mirror")
-    mirror_result = None
     if run_mirror:
-        mirror_result = mirror_bparallel_spectrum(bz_t, spacing_di, series["axes"], args.parallel_axis, args.b0)
         plot_mirror_bparallel(
             mirror_result["avg_power"], mirror_result["k0"], mirror_result["k1"], mirror_result["peak_idx"],
             outdir / f"mirror_bparallel_spectrum_{series['plane']}.png",
@@ -683,6 +717,7 @@ def main() -> int:
             "R2": mirror_fit["rvalue"] ** 2 if np.isfinite(mirror_fit["rvalue"]) else float("nan"),
             "fit_ok": int(
                 np.isfinite(mirror_fit["rvalue"]) and mirror_fit["rvalue"] ** 2 >= MIN_FIT_R2
+                and mirror_fit["gamma"] > 0
             ),
         }])
 
@@ -690,9 +725,11 @@ def main() -> int:
         "case": SIM_PROFILE, "instability": INSTABILITY, "distribution": distribution,
         "plane": series["plane"], "parallel_axis": args.parallel_axis,
         "normalization": normalization, "b0": args.b0,
+        "storage": "streaming", "spatial_window": "none",
+        "mirror_kmax_di": 2.0 if INSTABILITY == "mirror" else None,
         "n_snapshots_used": int(len(times_norm_win)),
-        "t_omegaci_range": [float(times_omegaci[mask].min()), float(times_omegaci[mask].max())],
-        "selected_modes_kdi": [float(k_par[m] / (DI if normalization == "electron" else 1.0)) for m in modes],
+        "t_omegaci_range": [float(times_omegaci.min()), float(times_omegaci.max())],
+        "selected_modes_kdi": [float(k_par[m] * (DI if normalization == "electron" else 1.0)) for m in modes],
         "polarization_convention_check": convention,
     }
     with (outdir / "polarization_fft_parameters.json").open("w") as handle:

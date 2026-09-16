@@ -17,8 +17,11 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
+import plot_style as ps
+
 from anisotropy_analysis import field_aligned_pressures
 from data_reader import PICDataReader
+from streaming_fields import SnapshotSeries
 from dispersion_analysis import compute_phase_velocity_density, extract_ridges
 from spectral_analysis import SpectralAnalyzer
 from psc_units import (
@@ -33,40 +36,24 @@ from psc_units import (
     step_to_omegaci,
 )
 
-plt.switch_backend("Agg")
-plt.rcParams.update({
-    "font.size": 15,
-    "axes.labelsize": 18,
-    "axes.titlesize": 19,
-    "xtick.labelsize": 15,
-    "ytick.labelsize": 15,
-    "legend.fontsize": 14,
-    "figure.titlesize": 20,
-})
+ps.apply()
 
-DARK_BG = "#0d1117"
-PANEL_BG = "#161b22"
-TEXT_CLR = "#e6edf3"
-GRID_CLR = "#30363d"
+# Names kept locally because they are used in annotations below.  Their values
+# come from the shared publication theme (white paper output by default).
+DARK_BG = ps.FIG_BG
+PANEL_BG = ps.PANEL_BG
+TEXT_CLR = ps.TEXT_CLR
+GRID_CLR = ps.GRID_CLR
 EPS = 1e-30
 
 
 def _style_axes(axis):
-    axis.set_facecolor(PANEL_BG)
-    axis.tick_params(
-        which="both", colors=TEXT_CLR, direction="in", top=True, right=True
-    )
-    axis.grid(True, color=GRID_CLR, alpha=0.22, linestyle=":")
-    for spine in axis.spines.values():
-        spine.set_edgecolor(GRID_CLR)
-    axis.xaxis.label.set_color(TEXT_CLR)
-    axis.yaxis.label.set_color(TEXT_CLR)
-    axis.title.set_color(TEXT_CLR)
+    ps.style_axes(axis)
 
 
 def _style_colorbar(colorbar):
     colorbar.ax.yaxis.label.set_color(TEXT_CLR)
-    colorbar.ax.tick_params(colors=TEXT_CLR)
+    colorbar.ax.tick_params(colors=TEXT_CLR, direction="in")
     for label in colorbar.ax.get_yticklabels():
         label.set_color(TEXT_CLR)
 
@@ -226,11 +213,11 @@ def load_temperature_series(
         outdir="/tmp/psc-temperature-anisotropy-dispersion",
     )
 
-    snapshots: list[np.ndarray] = []
-    stats: list[dict] = []
-    metadata = None
-    for index, step in enumerate(steps, start=1):
-        print(f"Processing step {step:6d} ({index}/{len(steps)})")
+    stats = [None] * len(steps)
+    index_by_step = {step:i for i,step in enumerate(steps)}
+    metadata = {}
+
+    def load_frame(step):
         fields = PICDataReader.read_multiple_fields_3d(
             field_files[step],
             "jeh-",
@@ -254,20 +241,21 @@ def load_temperature_series(
             slice_idx=plane_data["slice_idx"],
         )
         scalar = np.atleast_2d(_fill_invalid(scalar))
-        snapshots.append(scalar.astype(np.float32))
-        stats.append({
+        stats[index_by_step[step]] = {
             "step": step,
             "omega_ci_t": step_to_omegaci(step),
             "mean": quantity_data["mean"],
             "median": quantity_data["median"],
             "valid_cells": quantity_data["valid_cells"],
-        })
-        metadata = plane_data
+        }
+        for key in ("axes", "spacing", "plane", "normal_axis", "slice_idx"):
+            metadata[key] = plane_data[key]
+        return scalar[None, ...]
 
-    series = np.asarray(snapshots, dtype=np.float32)
+    series = SnapshotSeries(steps, load_frame)
     return {
         "series": series,
-        "times": np.asarray([row["omega_ci_t"] for row in stats], dtype=float),
+        "times": np.asarray([step_to_omegaci(step) for step in steps], dtype=float),
         "steps": np.asarray(steps, dtype=int),
         "stats": stats,
         "metadata": metadata,
@@ -302,7 +290,7 @@ def plot_phase_velocity_density(
         result["velocity_edges"],
         log_density.T,
         shading="auto",
-        cmap="turbo",
+        cmap=ps.CMAP_SEQUENTIAL,
         vmin=-6,
         vmax=0,
     )
@@ -351,8 +339,7 @@ def plot_phase_velocity_density(
     colorbar.set_label(r"$\log_{10}[P(v_{\rm ph}\mid\omega)/P_{\max}]$")
     _style_colorbar(colorbar)
     fig.tight_layout()
-    fig.savefig(output, dpi=220, facecolor=DARK_BG)
-    plt.close(fig)
+    ps.save(fig, output)
 
 
 def compute_folded_kspace_density(
@@ -426,7 +413,7 @@ def plot_kspace_density(
         result["kperp_edges"],
         log_power.T,
         shading="auto",
-        cmap="turbo",
+        cmap=ps.CMAP_SEQUENTIAL,
         vmin=-6,
         vmax=0,
     )
@@ -449,8 +436,7 @@ def plot_kspace_density(
     colorbar.set_label(r"$\log_{10}(P/P_{\max})$")
     _style_colorbar(colorbar)
     fig.tight_layout()
-    fig.savefig(output, dpi=220, facecolor=DARK_BG)
-    plt.close(fig)
+    ps.save(fig, output)
 
 
 def main() -> int:
@@ -519,7 +505,7 @@ def main() -> int:
     metadata = loaded["metadata"]
 
     result = compute_phase_velocity_density(
-        series[None, ...],
+        series,
         times,
         metadata["spacing"],
         metadata["axes"],
@@ -554,7 +540,7 @@ def main() -> int:
         kspace_index = int(matches[0])
 
     kspace = compute_folded_kspace_density(
-        series[kspace_index],
+        series.loader(int(loaded["steps"][kspace_index]))[0],
         metadata["spacing"],
         metadata["axes"],
         args.parallel_axis,
@@ -571,7 +557,7 @@ def main() -> int:
         float(times[kspace_index]),
     )
 
-    print(f"Processed {series.shape[0]} paired snapshots on plane {metadata['plane']}.")
+    print(f"Processed {series.shape[1]} paired snapshots on plane {metadata['plane']}.")
     print(f"Independent positive frequencies: {result['independent_positive_frequencies']}.")
     print(f"Saved phase-velocity density: {density_path}")
     print(f"Saved modal ridges: {ridges_path}")

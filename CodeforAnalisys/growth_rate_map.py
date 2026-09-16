@@ -11,11 +11,16 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from streaming_fields import SnapshotSeries, spatial_spectra, retained_slice
 
+import plot_style as ps
+
+ps.apply()
 plt.switch_backend("Agg")
 
 
@@ -70,7 +75,7 @@ def compute_growth_rate_map(
     into one blended growth rate. Pass ``fold_negative_k=True`` to restore
     that first-quadrant-only view.
     """
-    fields = np.asarray(field_series, dtype=float)
+    fields = field_series if isinstance(field_series, SnapshotSeries) else np.asarray(field_series)
     times = np.asarray(time_oci, dtype=float)
     if fields.ndim != 4:
         raise ValueError("field_series must be (components, time, axis0, axis1)")
@@ -84,24 +89,19 @@ def compute_growth_rate_map(
         raise ValueError("fit_frac must satisfy 0 <= lo < hi <= 1")
 
     _, nt, n0, n1 = fields.shape
-    fields = fields - np.mean(fields, axis=(2, 3), keepdims=True)
-
-    window = np.hanning(n0)[:, None] * np.hanning(n1)[None, :]
-    window_power = float(np.mean(window**2))
-    if window_power <= 0:
-        window = np.ones((n0, n1), dtype=float)
-        window_power = 1.0
-
+    if (not np.all(np.isfinite(times)) or np.any(np.diff(times) <= 0)
+            or len(spacing) != 2 or min(spacing) <= 0):
+        raise ValueError("Finite increasing times and positive spatial spacing required")
+    # Periodic simulation: avoid spreading the first box modes with Hann.
+    window = np.ones((n0, n1))
     k0 = np.fft.fftshift(np.fft.fftfreq(n0, d=spacing[0])) * 2.0 * np.pi
     k1 = np.fft.fftshift(np.fft.fftfreq(n1, d=spacing[1])) * 2.0 * np.pi
-
-    energy = np.zeros((nt, n0, n1), dtype=float)
-    for component in fields:
-        transformed = np.fft.fftshift(
-            np.fft.fft2(component * window[None, :, :], axes=(1, 2)),
-            axes=(1, 2),
-        )
-        energy += np.abs(transformed) ** 2 / (window_power * n0 * n1)
+    limits = (kpar_max, kperp_max) if axes[0] == parallel_axis else (kperp_max, kpar_max)
+    sl0, sl1 = retained_slice(k0, limits[0]), retained_slice(k1, limits[1])
+    spectra = spatial_spectra(fields, window, sl0, sl1)
+    energy = np.sum(np.abs(spectra)**2, axis=0) / (n0 * n1)
+    del spectra
+    k0, k1 = k0[sl0], k1[sl1]
 
     if axes[0] == parallel_axis:
         kpar_axis, kperp_axis = k0, k1
@@ -229,12 +229,15 @@ def plot_growth_rate_map(
     display = np.ma.array(gamma, mask=mask)
     gmax = float(np.nanmax(gamma[~mask])) if np.any(~mask) else 1.0
 
-    fig, axis = plt.subplots(figsize=(8.6, 7.2))
+    fig, axis = plt.subplots(figsize=(7.4, 6.2), layout="constrained")
+    ps.style_axes(axis)
     image = axis.pcolormesh(
-        kpar, kperp, display.T, shading=shading, cmap="inferno", vmin=0.0, vmax=gmax
+        kpar, kperp, display.T, shading=shading, cmap=ps.CMAP_SEQUENTIAL,
+        vmin=0.0, vmax=gmax, rasterized=True,
     )
-    colorbar = fig.colorbar(image, ax=axis)
+    colorbar = fig.colorbar(image, ax=axis, pad=0.02)
     colorbar.set_label(r"growth rate $\gamma\ [\Omega_{ci}]$")
+    colorbar.ax.tick_params(which="both", direction="in")
 
     if contour_count > 0 and np.any(~mask) and len(kpar) > 1 and len(kperp) > 1:
         levels = np.linspace(0.0, gmax, contour_count + 2)[1:-1]
@@ -244,9 +247,9 @@ def plot_growth_rate_map(
                 kperp,
                 display.T,
                 levels=levels,
-                colors="white",
-                linewidths=0.55,
-                alpha=0.45,
+                colors=ps.MUTED_CLR,
+                linewidths=0.6,
+                alpha=0.7,
             )
 
     if len(kpar) and len(kperp):
@@ -261,7 +264,7 @@ def plot_growth_rate_map(
                 axis.plot(
                     kk,
                     yy,
-                    color="cyan",
+                    color=ps.MUTED_CLR,
                     lw=0.9 if main_angle else 0.45,
                     ls=":",
                     alpha=0.65 if main_angle else 0.35,
@@ -272,7 +275,7 @@ def plot_growth_rate_map(
                     kpar_extent * 0.92,
                     yy_label * 0.92,
                     f"{angle} deg",
-                    color="cyan",
+                    color=ps.MUTED_CLR,
                     fontsize=8 if main_angle else 7,
                     alpha=0.85 if main_angle else 0.55,
                 )
@@ -293,7 +296,7 @@ def plot_growth_rate_map(
             kpar[peak_i],
             kperp[peak_j],
             "x",
-            color="lime",
+            color=ps.c("#00c000"),
             ms=14,
             mew=3,
             label=(
@@ -303,15 +306,12 @@ def plot_growth_rate_map(
                 fr"($\theta$={theta:.0f}$\degree$)"
             ),
         )
-        axis.legend(loc="upper right", fontsize=9)
+        ps.legend(axis, loc="upper right", fontsize=9)
 
     axis.set_xlabel(r"$k_\parallel\,d_i$")
     axis.set_ylabel(r"$k_\perp\,d_i$")
-    axis.set_title(fr"Growth-rate map $\gamma(k_\parallel,k_\perp)$ - {component}")
-    axis.grid(True, color="white", alpha=0.12, linestyle=":", linewidth=0.5)
-    fig.tight_layout()
-    fig.savefig(output, dpi=200)
-    plt.close(fig)
+    axis.set_title(fr"Growth-rate map $\gamma(k_\parallel,k_\perp)$ — {component}")
+    ps.save(fig, output)
 
 
 def print_diagnostics(result: dict, metadata: dict, component: str):
@@ -350,9 +350,10 @@ def write_csv(result: dict, path: Path):
     gamma = result["gamma"]
     rvalue = result["rvalue"]
     final_power = result["final_power"]
+    power_floor = float(np.nanmax(final_power)) * 1e-3
     with path.open("w", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["kpar_di", "kperp_di", "gamma_oci", "rvalue", "final_power"])
+        writer.writerow(["kpar_di", "kperp_di", "gamma_oci", "rvalue", "final_power", "growth_fit_ok"])
         for i in range(len(kpar)):
             for j in range(len(kperp)):
                 writer.writerow(
@@ -362,6 +363,9 @@ def write_csv(result: dict, path: Path):
                         f"{gamma[i, j]:.6e}",
                         f"{rvalue[i, j]:.4f}",
                         f"{final_power[i, j]:.6e}",
+                        int(np.isfinite(gamma[i,j]) and gamma[i,j]>0
+                            and rvalue[i,j]>=result["min_rvalue"]
+                            and final_power[i,j]>=power_floor),
                     ]
                 )
 
@@ -388,6 +392,8 @@ def main() -> int:
     parser.add_argument("--kpar-max", type=float, default=1.5)
     parser.add_argument("--kperp-max", type=float, default=1.5)
     parser.add_argument("--min-rvalue", type=float, default=0.7)
+    parser.add_argument("--t-start", type=float)
+    parser.add_argument("--t-end", type=float)
     parser.add_argument("--fit-lo", type=float, default=0.1)
     parser.add_argument("--fit-hi", type=float, default=0.6)
     parser.add_argument("--fold-negative-k", action="store_true",
@@ -419,6 +425,7 @@ def main() -> int:
         args.dy,
         args.dz,
         step_to_omegaci,
+        t_start=args.t_start, t_end=args.t_end,
     )
     result = compute_growth_rate_map(
         series,
@@ -446,6 +453,14 @@ def main() -> int:
         angle_step=args.angle_step,
     )
     write_csv(result, csv_path)
+    csv_path.with_suffix(".json").write_text(json.dumps({
+        "fit_window_omega_ci": result["fit_window"],
+        "time_range_omega_ci": [float(times[0]),float(times[-1])],
+        "includes_initial_snapshot": bool(times[0]==0),
+        "spatial_window": "none", "storage": "streaming",
+        "selection": "candidate growth fits; verify phase and window sensitivity",
+        "diagnostics": result["diagnostics"],
+    },indent=2))
     print(f"Saved growth-rate map: {png}")
     print(f"Saved data: {csv_path}")
     return 0

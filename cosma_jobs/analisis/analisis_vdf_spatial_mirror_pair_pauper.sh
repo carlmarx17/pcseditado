@@ -60,7 +60,7 @@ source "$REPO/src/cosma_adios2_env.sh"
 
 cd "$REPO/CodeforAnalisys"
 
-RESULTS_ROOT=../analysis_results
+RESULTS_ROOT="${RESULTS_ROOT:-../analysis_results/run_aware_v4}"
 LOGS=/cosma7/data/dp433/dc-mart18/logs
 mkdir -p "$LOGS"
 

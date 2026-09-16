@@ -25,6 +25,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from numpy.fft import fft2, fftshift
 
+import plot_style as ps
+
 try:
     from scipy.stats import linregress
 except ImportError:  # NumPy fallback keeps spectra available without SciPy.
@@ -45,27 +47,17 @@ from data_reader import PICDataReader
 from psc_units import DX_DI, DI, DOMAIN_DI, RHO_I, INSTABILITY, PROFILE_LABEL, step_to_omegaci
 
 warnings.filterwarnings("ignore")
-plt.switch_backend("Agg")
-plt.rcParams.update({
-    "font.size": 15,
-    "axes.labelsize": 18,
-    "axes.titlesize": 19,
-    "xtick.labelsize": 15,
-    "ytick.labelsize": 15,
-    "legend.fontsize": 14,
-    "figure.titlesize": 20,
-})
+ps.apply()
 
-# Same dark poster style used across anisotropy_analysis.py / physical_diagnostics.py,
-# so plots from every stage of the pipeline (mirror, firehose, whistler, any
-# strength) look like one system instead of one-off matplotlib defaults.
-DARK_BG = "#0d1117"
-PANEL_BG = "#161b22"
-TEXT_CLR = "#e6edf3"
-GRID_CLR = "#30363d"
-POSTER_TITLE = 19
-POSTER_TICK = 15
-POSTER_LEGEND = 14
+# Retain these local names for the labels below, while sourcing their values
+# from the shared paper/screen theme.
+DARK_BG = ps.FIG_BG
+PANEL_BG = ps.PANEL_BG
+TEXT_CLR = ps.TEXT_CLR
+GRID_CLR = ps.GRID_CLR
+POSTER_TITLE = plt.rcParams["axes.titlesize"]
+POSTER_TICK = plt.rcParams["xtick.labelsize"]
+POSTER_LEGEND = plt.rcParams["legend.fontsize"]
 
 # Which channel carries the instability's growth signature depends on which
 # case is active: mirror/oblique-firehose are compressive (parallel channel),
@@ -79,14 +71,7 @@ _CHANNEL_HINT = {
 
 
 def _style_axes(ax):
-    ax.set_facecolor(PANEL_BG)
-    ax.tick_params(colors=TEXT_CLR, direction="in", which="both", top=True, right=True, labelsize=POSTER_TICK)
-    ax.grid(True, color=GRID_CLR, alpha=0.25, linestyle=":")
-    for spine in ax.spines.values():
-        spine.set_edgecolor(GRID_CLR)
-    ax.xaxis.label.set_color(TEXT_CLR)
-    ax.yaxis.label.set_color(TEXT_CLR)
-    ax.title.set_color(TEXT_CLR)
+    ps.style_axes(ax)
 
 
 def _new_dark_fig(figsize):
@@ -267,9 +252,8 @@ class SpectralAnalyzer:
         raise ValueError(f"Unknown plane {plane}")
 
     def _window_2d(self, field: np.ndarray) -> np.ndarray:
-        win_y = np.hanning(field.shape[0])
-        win_x = np.hanning(field.shape[1])
-        return field * np.outer(win_y, win_x)
+        # The full simulation box is periodic; preserve its discrete modes.
+        return field
 
     def _component_fluctuations(self, bx: np.ndarray, by: np.ndarray, bz: np.ndarray) -> dict:
         bx_fluct = bx - np.mean(bx)
@@ -289,7 +273,7 @@ class SpectralAnalyzer:
     def _compute_fft_psd(self, field: np.ndarray) -> np.ndarray:
         nx, ny = field.shape
         field_k = self._compute_fft_complex(field)
-        window_power = np.sum(np.outer(np.hanning(nx), np.hanning(ny)) ** 2)
+        window_power = float(nx * ny)
         if window_power == 0:
             window_power = float(nx * ny)
         return np.abs(field_k) ** 2 / (window_power * nx * ny)
@@ -706,7 +690,9 @@ class SpectralAnalyzer:
         # bottom six decades keeps the growing region visible.
         peak = float(np.max(energy)) if np.any(np.isfinite(energy)) and np.max(energy) > 0 else 1.0
         log_rel = np.log10(np.clip(energy / peak, 1e-6, None))
-        mesh = ax.pcolormesh(times, k_centers, log_rel, shading="auto", cmap="inferno", vmin=-6, vmax=0)
+        mesh = ax.pcolormesh(times, k_centers, log_rel, shading="auto",
+                             cmap=ps.CMAP_SEQUENTIAL, vmin=-6, vmax=0,
+                             rasterized=True)
         cb = fig.colorbar(mesh, ax=ax)
         cb.set_label(r"$\log_{10}[E(k,t)/E_{\max}]$", color=TEXT_CLR)
         cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
@@ -716,8 +702,7 @@ class SpectralAnalyzer:
         ax.set_ylabel(r"$k\,d_i$")
         ax.set_title(f"E(k,t) — {component} ({_CHANNEL_HINT[component]}, {PROFILE_LABEL}, {plane})", fontsize=POSTER_TITLE)
         out_file = self.outdir / f"energy_kt_{component}_{plane}.png"
-        fig.savefig(out_file, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
-        plt.close(fig)
+        ps.save(fig, out_file)
         print(f"Saved E(k,t) map: {out_file}")
 
     def plot_growth_curve(self, times: np.ndarray, energy_k: np.ndarray, k: float, component: str, plane: str):
@@ -740,7 +725,7 @@ class SpectralAnalyzer:
                 transform=ax.transAxes, ha="center", va="center", color=TEXT_CLR, fontsize=13,
             )
         else:
-            ax.semilogy(times[valid], amplitude[valid], "o", color="#58a6ff", markersize=5, label="measured")
+            ax.semilogy(times[valid], amplitude[valid], "o", color=ps.c("#58a6ff"), markersize=5, label="measured")
             if np.isfinite(fit["gamma"]):
                 lo, hi = fit["fit_time_range"]
                 ax.axvspan(lo, hi, color=GRID_CLR, alpha=0.4, label="fit window")
@@ -756,8 +741,7 @@ class SpectralAnalyzer:
         if ax.get_legend_handles_labels()[0]:
             ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
         out_file = self.outdir / f"growth_curve_{component}_{plane}.png"
-        fig.savefig(out_file, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
-        plt.close(fig)
+        ps.save(fig, out_file)
         print(f"Saved growth curve: {out_file}")
 
     def plot_growth_rate_vs_k(self, growth_rows: list[dict], plane: str, significance_threshold: float = 1e-3):
@@ -781,16 +765,16 @@ class SpectralAnalyzer:
 
         fig, ax = _new_dark_fig((9, 6))
         ax.axhline(0.0, color=GRID_CLR, lw=1.2)
-        ax.plot(k[sig_perp], gamma_perp[sig_perp], "o-", markersize=4, color="#58a6ff",
+        ax.plot(k[sig_perp], gamma_perp[sig_perp], "o-", markersize=4, color=ps.c("#58a6ff"),
                 label=fr"$\gamma_\perp(k)$ ({_CHANNEL_HINT['perp']})")
-        ax.plot(k[sig_par], gamma_par[sig_par], "s-", markersize=4, color="#f0883e",
+        ax.plot(k[sig_par], gamma_par[sig_par], "s-", markersize=4, color=ps.c("#f0883e"),
                 label=fr"$\gamma_\parallel(k)$ ({_CHANNEL_HINT['parallel']})")
         if np.any(~sig_perp):
             ax.plot(k[~sig_perp], gamma_perp[~sig_perp], "o", markersize=4,
-                    color="#58a6ff", alpha=0.25, markeredgecolor="none")
+                    color=ps.c("#58a6ff"), alpha=0.25, markeredgecolor="none")
         if np.any(~sig_par):
             ax.plot(k[~sig_par], gamma_par[~sig_par], "s", markersize=4,
-                    color="#f0883e", alpha=0.25, markeredgecolor="none")
+                    color=ps.c("#f0883e"), alpha=0.25, markeredgecolor="none")
         if np.any(~sig_perp) or np.any(~sig_par):
             ax.plot([], [], "x", color=TEXT_CLR, alpha=0.4,
                     label=f"below {significance_threshold:.0e}$\\times$peak energy (noise floor)")
@@ -798,22 +782,20 @@ class SpectralAnalyzer:
         ax.set_xlabel(r"$k\,d_i$")
         ax.set_ylabel(r"$\gamma\ [\Omega_{ci}]$")
         ax.set_title(f"Mode-resolved growth rate — {PROFILE_LABEL} ({plane})", fontsize=POSTER_TITLE)
-        ax.legend(fontsize=POSTER_LEGEND, facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
+        ps.legend(ax, fontsize=POSTER_LEGEND)
         out_file = self.outdir / f"growth_rate_vs_k_{plane}.png"
-        fig.savefig(out_file, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
-        plt.close(fig)
+        ps.save(fig, out_file)
         print(f"Saved growth rate plot: {out_file}")
 
     def plot_compressibility(self, times: np.ndarray, compressibility: np.ndarray, plane: str):
         fig, ax = _new_dark_fig((9, 5.2))
-        ax.plot(times, compressibility, lw=2.2, color="#f85149")
+        ax.plot(times, compressibility, lw=2.2, color=ps.c("#f85149"))
         ax.set_ylim(0.0, 1.0)
         ax.set_xlabel(r"$\Omega_{ci} t$")
         ax.set_ylabel(r"$\delta B_\parallel^2 / (\delta B_\parallel^2+\delta B_\perp^2)$")
         ax.set_title(f"Magnetic compressibility — {PROFILE_LABEL} ({plane})", fontsize=POSTER_TITLE)
         out_file = self.outdir / f"compressibility_vs_time_{plane}.png"
-        fig.savefig(out_file, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
-        plt.close(fig)
+        ps.save(fig, out_file)
         print(f"Saved compressibility plot: {out_file}")
 
     def plot_helicity_vs_k(self, growth_rows: list[dict], plane: str):
@@ -825,7 +807,7 @@ class SpectralAnalyzer:
         ax.set_xlim(float(np.min(k)), float(np.max(k)))
         ax.axhline(0.0, color=GRID_CLR, lw=1.2)
         if np.any(finite):
-            ax.plot(k[finite], sigma_m[finite], "o-", markersize=4, color="#3fb950")
+            ax.plot(k[finite], sigma_m[finite], "o-", markersize=4, color=ps.c("#3fb950"))
         else:
             ax.text(0.5, 0.5, "no measurable helicity (zero power in both transverse components)",
                     transform=ax.transAxes, ha="center", va="center", color=TEXT_CLR, fontsize=13)
@@ -835,8 +817,7 @@ class SpectralAnalyzer:
         ax.set_ylabel(r"$\sigma_m(k)$")
         ax.set_title(f"Reduced magnetic helicity — {PROFILE_LABEL} ({plane})", fontsize=POSTER_TITLE)
         out_file = self.outdir / f"helicity_vs_k_{plane}.png"
-        fig.savefig(out_file, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
-        plt.close(fig)
+        ps.save(fig, out_file)
         print(f"Saved helicity plot: {out_file}")
 
 

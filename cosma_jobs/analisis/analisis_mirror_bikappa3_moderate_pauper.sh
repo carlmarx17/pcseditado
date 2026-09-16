@@ -64,7 +64,7 @@ cd "$REPO/CodeforAnalisys"
 # --- UNICO cambio de fondo respecto al script de maxwellian ---
 DATA_DIR=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/psc_mirror_bikappa3_moderate_11618877
 CASE=mirror_bikappa3_moderate
-RESULTS_ROOT=../analysis_results
+RESULTS_ROOT="${RESULTS_ROOT:-../analysis_results/run_aware_v4}"
 
 mkdir -p /cosma7/data/dp433/dc-mart18/logs
 
@@ -108,7 +108,8 @@ fi
 # =====================================================================
 # 2) Las 8 etapas independientes de "common", una por nodo, en paralelo
 # =====================================================================
-STAGES=(brazil fields particles spectral diamagnetic heatflux validate physics)
+STAGES=(brazil fields particles spectral diamagnetic heatflux validate physics energy-if-present)
+if [[ "$CASE" == mirror_* || "$CASE" == M_* ]]; then STAGES+=(mirror); fi
 declare -A PIDS
 
 for stage in "${STAGES[@]}"; do

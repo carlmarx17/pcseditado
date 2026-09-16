@@ -18,6 +18,9 @@ OUTPUT_DIR ?= $(RESULTS_ROOT)/$(RUN_NAME)
 
 B0_REF ?= 0.08
 PSC_PROFILE ?= $(CASE)
+export PSC_ANALYSIS_DATA_DIR = $(abspath $(DATA_DIR))
+# Optional JSON with runtime dt_code/nicell and geometry overrides.
+export PSC_ANALYSIS_CONFIG
 PARTICLE_BASENAME ?= $(if $(CASE),prt_$(CASE),)
 
 FIELD_PATTERN = $(DATA_DIR)/pfd.*_p*.h5
@@ -59,6 +62,7 @@ SNAPSHOT_EVERY ?= 100000
 GIF_EVERY ?= 10000
 FIELDS_GIF ?= 1
 DISPERSION_MODE ?= generic
+DISPERSION_COMPONENT ?= total
 DISPERSION_THETA_MAX ?=
 DISPERSION_THETA_MIN ?=
 DISPERSION_KMAX_DI ?=
@@ -69,6 +73,8 @@ DISPERSION_TEMPORAL_WINDOW ?=
 DISPERSION_T_START ?=
 DISPERSION_T_END ?=
 GROWTH_COMPONENT ?= parallel
+GROWTH_T_START ?= $(DISPERSION_T_START)
+GROWTH_T_END ?= $(DISPERSION_T_END)
 GROWTH_KPAR_MAX ?= 1.5
 GROWTH_KPERP_MAX ?= 1.5
 GROWTH_DISPLAY_KPAR_MAX ?=
@@ -93,14 +99,15 @@ export PSC_FIG_THEME ?= paper
 	theory theory-self-test prt-region vdf-spatial \
 	theory-liouville theory-liouville-x theory-liouville-sweep \
 	liouville-self-test kappa-eff-self-test \
-	check-fields check-moments check-particles check-case check-resolution show-inputs
+	check-fields check-moments check-particles check-case check-resolution \
+	check-initial-conditions show-inputs
 
 all: analysis
 
-common: brazil fields particles spectral diamagnetic heatflux validate physics
+common: brazil fields particles spectral diamagnetic heatflux validate physics energy-if-present
 
 analysis: manifest common
-	@if printf '%s' "$(CASE)" | grep -q '^M_'; then \
+	@if printf '%s' "$(CASE)" | grep -Eq '^(M_|mirror_)'; then \
 		$(MAKE) mirror DATA_DIR="$(DATA_DIR)" CASE="$(CASE)" \
 			RESULTS_ROOT="$(RESULTS_ROOT)"; \
 	fi
@@ -108,7 +115,7 @@ analysis: manifest common
 F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM W_S_bM W_M_bM W_W_bM:
 	$(MAKE) analysis DATA_DIR="$(DATA_DIR)" CASE="$@" RESULTS_ROOT="$(RESULTS_ROOT)"
 
-manifest: check-case
+manifest: check-case check-initial-conditions
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) write_analysis_manifest.py \
 		--data-dir "$(DATA_DIR)" --output-dir "$(OUTPUT_DIR)" --case "$(CASE)"
 
@@ -164,6 +171,15 @@ check-resolution: check-case
 	@PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) check_resolution.py \
 		--data-dir "$(DATA_DIR)" --case "$(CASE)"
 
+# Compares the T_par/T_perp/n/B0 measured at the earliest snapshot against
+# what PSC_PROFILE declares for CASE. Catches pointing an analysis at the
+# wrong run directory, or at a CASE whose profile has drifted from the .cxx
+# that produced the data; runs once, before the manifest, not per stage.
+check-initial-conditions: check-case
+	@PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) check_initial_conditions.py \
+		--particles "$(PARTICLE_PATTERN)" --fields "$(FIELD_PATTERN)" \
+		--moments "$(MOMENT_PATTERN)" --case "$(CASE)"
+
 brazil: check-case check-fields check-moments check-resolution
 	@echo "Generating anisotropy evolution and Brazil trajectory"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) anisotropy_analysis.py \
@@ -197,15 +213,18 @@ spectral: check-case check-fields check-resolution
 	$(MAKE) dispersion DATA_DIR="$(DATA_DIR)" CASE="$(CASE)" \
 		RESULTS_ROOT="$(RESULTS_ROOT)"
 	$(MAKE) growth-map DATA_DIR="$(DATA_DIR)" CASE="$(CASE)" \
-		RESULTS_ROOT="$(RESULTS_ROOT)"
+		RESULTS_ROOT="$(RESULTS_ROOT)" GROWTH_COMPONENT=parallel
+	$(MAKE) growth-map DATA_DIR="$(DATA_DIR)" CASE="$(CASE)" \
+		RESULTS_ROOT="$(RESULTS_ROOT)" GROWTH_COMPONENT=perp
 	$(MAKE) polarization DATA_DIR="$(DATA_DIR)" CASE="$(CASE)" \
 		RESULTS_ROOT="$(RESULTS_ROOT)" THEORY_CSV="$(THEORY_CSV)"
 
 dispersion: check-case check-fields check-resolution
-	@echo "Generating frequency--phase-velocity mode-density plot"
+	@echo "Measuring spatial modes, growth and frequency; generating dispersion diagrams"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) dispersion_analysis.py \
 		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)" \
 		--mode "$(DISPERSION_MODE)" \
+		--component "$(DISPERSION_COMPONENT)" \
 		$(if $(DISPERSION_THETA_MAX),--theta-max-deg "$(DISPERSION_THETA_MAX)",) \
 		$(if $(DISPERSION_THETA_MIN),--theta-min-deg "$(DISPERSION_THETA_MIN)",) \
 		$(if $(DISPERSION_KMAX_DI),--kmax-di "$(DISPERSION_KMAX_DI)",) \
@@ -221,6 +240,8 @@ growth-map: check-case check-fields check-resolution
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) growth_rate_map.py \
 		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)" \
 		--component "$(GROWTH_COMPONENT)" \
+		$(if $(GROWTH_T_START),--t-start "$(GROWTH_T_START)",) \
+		$(if $(GROWTH_T_END),--t-end "$(GROWTH_T_END)",) \
 		--kpar-max "$(GROWTH_KPAR_MAX)" --kperp-max "$(GROWTH_KPERP_MAX)" \
 		$(if $(GROWTH_DISPLAY_KPAR_MAX),--display-kpar-max "$(GROWTH_DISPLAY_KPAR_MAX)",) \
 		--display-kperp-max "$(GROWTH_DISPLAY_KPERP_MAX)" \
@@ -241,7 +262,9 @@ polarization: check-case check-fields check-resolution
 	@echo "Generating polarized omega-k dispersion maps and mode-growth curves"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) polarization_dispersion.py \
 		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)" \
-		$(if $(THEORY_CSV),--theory-csv "$(THEORY_CSV)",) $(POLARIZATION_FLAGS)
+		$(if $(THEORY_CSV),--theory-csv "$(THEORY_CSV)",) \
+		$(if $(DISPERSION_T_START),--t-start "$(DISPERSION_T_START)",) \
+		$(if $(DISPERSION_T_END),--t-end "$(DISPERSION_T_END)",) $(POLARIZATION_FLAGS)
 
 validate: check-case check-particles
 	@echo "Validating moments against $(FIRST_PARTICLE)"
@@ -276,7 +299,12 @@ theory: check-case
 theory-self-test:
 	$(PYTHON) linear_theory.py --self-test
 
-.PHONY: energy
+.PHONY: energy energy-if-present
+energy-if-present: check-case
+	@if test -n "$(wildcard $(DATA_DIR)/diag*.asc)"; then \
+		$(MAKE) energy; \
+	else echo "[MISSING] No diag*.asc: global energy conservation cannot be evaluated"; fi
+
 energy: check-case
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) energy_conservation.py \
 		$(DATA_DIR)/diag*.asc --outdir "$(PHYSICS_OUT)"

@@ -3,6 +3,51 @@
 Fecha: 2026-09-09. Revision del codigo, configuraciones, informe LaTeX y fuentes
 primarias. No se ha realizado una revision bibliografica exhaustiva.
 
+## Seguimiento (2026-09-16)
+
+Re-verificacion linea por linea del codigo (C++ y Python) y de los tests
+frente a esta auditoria. Lo que sigue es el estado real, no una promesa:
+
+**Cerrado y verificado en codigo** (existe, tiene test, el test pasa):
+`DiagEnergies` encendido (`PSC_ENERGIES_EVERY=500` por defecto) y su consumidor
+`energy_conservation.py` (4 tests); escala Kappa `sqrt((kappa-1.5)/kappa)` en
+`linear_theory.py`; `solve()` ya no devuelve la ultima iteracion sin residuo
+chico; `load_theory()` separa por polarizacion y rechaza k duplicado;
+`compare_physical_cases.py` filtra por `fit_ok`; `b_crit`/`a_max` distinguidos
+y autoconsistentes en `liouville_kappa.py` (21 self-checks); error relativista
+u-vs-v cuantificado por `particle_kinematics_validity()`; geometria por
+corrida resuelta y validada contra el snapshot real (`run_geometry.py`, 10
+tests) en vez de asumida de un solo perfil global; resolucion grid-vs-perfil
+verificada (`check_resolution.py`); identificacion modal sin inferir el
+nombre de la inestabilidad, con manejo explicito de Nyquist, sidelobes de
+ventana y degrowth (`dispersion_modes.py`, 25 tests); evolucion de kappa
+cruzada con la fase lineal medida (`kappa_evolution.py`); verificacion de que
+el estado a t=0 medido coincide con lo que declara `CASE`
+(`check_initial_conditions.py`, nuevo en esta revision, 4 tests, wireado en
+`make manifest`).
+
+**Seguia sin hacerse y se corrigio en esta revision:** no existia ningun
+chequeo automatico de que los datos en `DATA_DIR` correspondan al `CASE`
+declarado mas alla de la geometria (P0 "Reproducir inicializacion"). Se anadio
+`check_initial_conditions.py`: lee el primer snapshot de particulas, campos y
+momentos, mide T_par/T_perp por especie, B0 y n, y falla si no coinciden con
+`psc_units.py` (tolerancia 15% en temperaturas por ruido de muestreo finito
+a t=0, 5% en B0 por ser condicion inicial determinista). Wireado como
+prerrequisito de `manifest`.
+
+**Sigue abierto, sin cambios:** absolutamente ninguna de las correcciones de
+arriba se ha probado contra una corrida real. Los dos `diag.asc` que existen
+en esta copia (`./diag.asc` y `corridas_locales/mi_prueba/diag.asc`) estan
+vacios y con fecha anterior al fix de energia (junio y julio, el fix es del
+9 de septiembre) — ni siquiera una corrida local de prueba ha pasado por el
+diagnostico nuevo. Tampoco hay estudio de convergencia (dx/dt/ppc por
+separado), barrido de tamano de caja, ni ramas oblicuas de teoria lineal
+(ALPS sigue sin instalarse). El estado fisico de las simulaciones — ¿conserva
+energia?, ¿que modo crecio?, ¿converge? — sigue sin respuesta porque nada de
+esto corrio aun sobre datos reales. Ver el detalle marcado `[CERRADO
+2026-09-16]` en cada seccion de abajo para lo que ya no bloquea, y lo que
+sigue bloqueando.
+
 ## Dictamen y alcance
 
 La infraestructura cubre anisotropia, campos, espectros, crecimiento modal,
@@ -56,18 +101,20 @@ proxy parcial. Su variacion NO es el error energetico de la simulacion.
 Una tendencia electronica lineal e isotropa no permite decidir si el origen es
 fisico o numerico; sustraerla tampoco valida la corrida.
 
-Usar el diagnostico global existente `DiagEnergies`: integra los campos y
-suma m*(gamma-1) con pesos de ambas especies y reduccion MPI. Su activacion
-se controla con `PSC_ENERGIES_EVERY`; el valor por defecto en
-`psc_anisotropy_case.hxx` es 0. Configurarlo con cadencia suficiente en las
-nuevas corridas y conservar `diag.asc` por segmento de restart: el constructor
-abre el archivo en modo escritura y puede reemplazar el segmento anterior.
-El `diag.asc` de la raiz de esta copia esta vacio.
-
-Reportar E_E, E_B completo, E_i, E_e, E_total y su cambio sin detrending.
-Revisar tambien el efecto del corrector Marder, activo cada 100 pasos, y los
-residuos de Gauss, continuidad y div B. En dominio periodico no hay una entrada
-externa de energia que pueda suponerse para justificar una deriva.
+**[CERRADO 2026-09-16, sin validar con datos]** `DiagEnergies` ya esta
+encendido (`PSC_ENERGIES_EVERY=500` por defecto en `psc_anisotropy_case.hxx`
+y en los scripts de `cosma_jobs/simulacion/`), `preserve_energy_diagnostic.sh`
+conserva `diag.asc` entre restarts, y `energy_conservation.py` lo lee sin
+detrending y reporta E_E, E_B, E_i, E_e, E_total y el cambio relativo (4 tests
+en `test_energy_conservation.py`, todos pasan). El viejo proxy de
+`physical_diagnostics.py` quedo reetiquetado honestamente como `E_proxy` /
+`is_conservation_diagnostic: False`, ya no se presenta como conservacion.
+Pendiente: revisar el efecto del corrector Marder y los residuos de Gauss,
+continuidad y div B — eso no esta cubierto por `DiagEnergies`. Y sobre todo:
+**ningun `diag.asc` real existe todavia.** Los dos que hay en esta copia
+(`./diag.asc`, `corridas_locales/mi_prueba/diag.asc`) estan vacios y son de
+antes del fix. No hay un solo numero real de conservacion global medido con
+el diagnostico correcto — ni de una corrida local de prueba, ni de COSMA.
 
 Para 20 di / 576, mi=200, B0=0.08, beta_e_parallel=1:
 
@@ -89,29 +136,27 @@ que sustituya esa comprobacion. Los perfiles whistler tienen beta_e diferente.
 ### 2. Teoria lineal: aun no validada para la comparacion completa
 
 `linear_theory.py` solo resuelve propagacion paralela. No proporciona mirror
-ni firehose oblicuo. Su self-test pasa tres comprobaciones basicas; la del
-firehose da beta_parallel-beta_perp=1.963 frente al limite 2, con tolerancia
-finita. Esto no valida todas las ramas ni la parte Kappa.
+ni firehose oblicuo — **esto sigue abierto**, ver ALPS mas abajo.
 
-El cargador Kappa usa una mezcla de gaussianas con varianza T/m fijada. Con
-la definicion de Z_kappa del solver, la escala de su argumento debe derivarse
-de esa misma distribucion: theta_parallel^2=(2*kappa-3)*T_parallel/(kappa*m).
-Actualmente `ParallelDispersion` usa sqrt(beta_parallel) tambien para Kappa,
-sin el factor sqrt((kappa-1.5)/kappa). La susceptibilidad completa debe
-contrastarse con una referencia independiente para la misma convencion de T.
-La distincion entre distribuciones bi-Kappa y product-bi-Kappa tambien importa.
-[Lazar et al. (2011)](https://academic.oup.com/mnras/article/410/1/663/1038700).
+**[CERRADO 2026-09-16]** `ParallelDispersion` ya aplica
+`sqrt((kappa-1.5)/kappa)` a `theta_parallel` para la parte Kappa (linea 145 de
+`linear_theory.py`), en vez de reusar `sqrt(beta_parallel)` sin ese factor. La
+distincion bi-Kappa vs product-bi-Kappa
+[Lazar et al. (2011)](https://academic.oup.com/mnras/article/410/1/663/1038700)
+sigue sin verificarse contra una referencia independiente.
 
-Ademas, `solve()` puede devolver la ultima iteracion al agotar el bucle sin
-comprobar que el residuo sea pequeno. `load_theory()` en
-`polarization_dispersion.py` ignora la columna de polarizacion; el generador
-puede escribir dos ramas para el mismo k. No interpolar ese CSV como una curva
-unica. Guardar rama, residuo, convergencia y continuidad modal antes de comparar.
+**[CERRADO 2026-09-16]** `solve()` ahora devuelve NaN si el residuo no baja de
+`residual_tol`, no la ultima iteracion del bucle agotado (`self.last_solve`
+registra `converged`, `residual`, `iterations`). `load_theory()` en
+`polarization_dispersion.py` ya separa por columna `polarization` y rechaza k
+duplicado dentro de una misma rama en vez de interpolar dos ramas como una
+curva unica.
 
 Para los modos oblicuos, una opcion publicada es ALPS, que acepta VDF
-girotropicas arbitrarias y angulos de propagacion generales. Evaluar su uso con
-los parametros y VDF realmente inicializados; no se ha instalado ni ejecutado
-en esta revision. [Documentacion de ALPS](https://danielver02.github.io/ALPS/).
+girotropicas arbitrarias y angulos de propagacion generales. **Sigue sin
+instalarse ni ejecutarse.** Evaluar su uso con los parametros y VDF realmente
+inicializados antes de afirmar nada sobre mirror/firehose oblicuo en el paper.
+[Documentacion de ALPS](https://danielver02.github.io/ALPS/).
 
 ### 3. Identificacion de modos y crecimiento
 
@@ -125,8 +170,16 @@ Los analisis de gamma por modo y pruebas sinteticas ya existen. Falta demostrar
 su validez en produccion: ventana lineal previa a la relajacion apreciable,
 potencia sobre el ruido, incertidumbres y sensibilidad al intervalo de ajuste.
 Para potencia P, gamma=(1/2)*d(log P)/dt. El ajuste de una RMS global o de un
-anillo mezcla modos. `compare_physical_cases.py` ademas lee el gamma global sin
-comprobar `fit_ok`; excluir ajustes rechazados antes de usar esa comparacion.
+anillo mezcla modos.
+
+**[CERRADO 2026-09-16]** `compare_physical_cases.py` ya filtra por `fit_ok`
+antes de usar gamma (`gamma_raw`/`gamma_fit_ok` quedan separados en la tabla).
+`growth_rate_map.py` ahora acepta `--component parallel|perp` y
+`--t-start/--t-end` para acotar la ventana lineal; el Makefile corre ambas
+componentes. `dispersion_modes.py` (25 tests) maneja explicitamente Nyquist,
+sidelobes de ventana, degrowth y no infiere el nombre de la inestabilidad —
+son exactamente los puntos que senala el parrafo siguiente. Todo esto sigue
+**sin correr contra una corrida de produccion real** (ver Seguimiento arriba).
 
 En L=20 di el primer k es 2*pi/L=0.31416/di. Un pico en esa celda puede estar
 limitado por la caja. En L=40 di es 0.15708/di. Comparar a dx constante.
@@ -145,8 +198,16 @@ El escritor HDF5 guarda `px,py,pz = prt.u()`, es decir, momento por unidad
 de masa, gamma*v; no velocidad exacta ni momento m*v. El deposito de PSC usa
 M_ab=<m*u_a*v_b>, con v=u/sqrt(1+u^2). Varios analisis, incluido el integrado,
 tratan u como v y restan p_a*p_b/(n*m), que es una aproximacion no relativista.
-Cuantificar su error para cada especie y para las colas; si importa, reconstruir
-las magnitudes con la misma convencion relativista y marco de referencia.
+
+**[CERRADO 2026-09-16, parcial]** `particle_kinematics_validity()` en
+`physical_diagnostics.py` ya cuantifica ese error por especie: compara la
+energia no relativista aproximada contra `u^2/(gamma+1)` exacto, la presion
+diagonal `m*<u*v>` central contra `m*<u*u>`, y la fraccion de particulas con
+`|u|>c`. Esta enganchada en el pipeline principal. Lo que sigue faltando es
+usar ese numero: si el error resulta significativo para alguna especie o cola,
+reconstruir esas magnitudes con la convencion relativista correcta en vez de
+solo reportar el error — no se ha hecho, y no se sabra si hace falta hasta
+correr esto contra datos reales.
 
 Las temperaturas de particulas integradas siguen referidas a B0 y a una deriva
 media de la ventana; los mapas de momentos corregidos usan B local y deriva
@@ -165,35 +226,43 @@ sensibilidad al rango de velocidades e incertidumbre entre realizaciones.
 
 ### 5. Liouville y kappa local: hipotesis, no resultado demostrado
 
-`liouville_kappa.py` y `vdf_spatial.py` tenian cambios del usuario y no se han
-modificado. El modelo supone energia y momento magnetico conservados y una
-conexion de particulas pasantes con una VDF de referencia. Deben medirse
-estacionariedad, E_parallel/potencial, rho/L_B y evolucion de mu en trayectorias
-para aplicar esa interpretacion a estructuras concretas.
+El modelo supone energia y momento magnetico conservados y una conexion de
+particulas pasantes con una VDF de referencia. Deben medirse estacionariedad,
+E_parallel/potencial, rho/L_B y evolucion de mu en trayectorias para aplicar
+esa interpretacion a estructuras concretas. **Esto sigue sin hacerse:** PSC no
+esta guardando trayectorias de particulas individuales entre pasos (solo
+snapshots), asi que "evolucion de mu en trayectorias" no se puede medir con
+la salida actual sin instrumentar ese tracking primero.
 
 La conservacion del exponente en la expresion de la VDF pasante no garantiza
 que el estimador kappa_eff de una VDF recortada, mezclada o parcialmente atrapada
 permanezca constante. Comparar datos y modelo con el mismo muestreo y estimador.
 Los cierres empty/own/flat son posibilidades del modelo; su orden temporal
-necesita evidencia independiente. La positividad de theta_perp_eff al extender
-la expresion a todo el espacio de velocidades no es automaticamente una cota
-universal de profundidad de estructuras PIC. Ademas, algunas docstrings
-confunden b_crit=1-1/A0 con a_max=1/A0, donde a=1-b.
+necesita evidencia independiente.
+
+**[CERRADO 2026-09-16]** `b_crit=1-1/A0` y `a_max=1/A0` ya estan diferenciados
+de forma consistente en todo `liouville_kappa.py` (antes habia docstrings que
+los confundian). El self-test (`--self-test`, 21 comprobaciones) verifica
+explicitamente `a_max` consistente con `b_crit`, que `theta_perp_eff^2` es
+finito por encima de `b_crit` e indefinido por debajo, y que la extension
+`own` no esta definida para `a > a_max`. Pasa completo. Esto valida la
+consistencia interna del modelo, no la hipotesis fisica de arriba — esa
+segunda parte sigue siendo una hipotesis sin datos reales que la prueben.
 
 ## Analisis que faltan, en orden de prioridad
 
-| Prioridad | Trabajo | Evidencia minima que debe entregar | Datos |
-|---|---|---|---|
-| P0 | Reproducir inicializacion | Tabla medida de n, B0, Tpar/Tperp, beta y VDF de ambas especies; dt real y region prt | Campos, momentos, particulas iniciales y log |
-| P0 | Conservacion global | E_E+E_B+E_i+E_e y deriva sin restas; residuos de campo | diag.asc completo o diagnostico de todas las particulas |
-| P0 | Convergencia | Cambios de gamma, saturacion, A final y calentamiento al variar dx, dt y PPC separadamente | Corridas de control |
-| P0 | Dominio y estadistica | Caja mayor a dx fijo; dispersion entre semillas | Corridas adicionales o existentes equivalentes |
-| P0 | Identificacion y teoria | Misma rama PIC/teoria en k, omega, gamma, polarizacion; error del ajuste | Series de campo y solver validado |
-| P0 | Maxwelliana vs Kappa | Misma beta fisica, A, B0, masas, malla, caja y electrones; diferencias con incertidumbre | Pares equivalentes |
-| P1 | Saturacion y estructuras | Balance de presiones, n-|B|, profundidad, escala y duracion de estructuras | Campos y momentos sincronizados |
-| P1 | VDF local y atrapamiento | Pasantes/atrapadas, A local, kappa_eff y sensibilidad a seleccion/rango | Particulas con posiciones; trayectorias si se afirma mecanismo |
-| P1 | Intercambio de energia | J_s dot E, cambios de energia por especie y efectos numericos | Campos, corrientes y energia global |
-| P2 | Transporte y generalizacion | Tercer momento local, otro mi/me o 3D segun la afirmacion | Nuevos diagnosticos/corridas si procede |
+| Prioridad | Trabajo | Evidencia minima que debe entregar | Datos | Estado 2026-09-16 |
+|---|---|---|---|---|
+| P0 | Reproducir inicializacion | Tabla medida de n, B0, Tpar/Tperp, beta y VDF de ambas especies; dt real y region prt | Campos, momentos, particulas iniciales y log | Chequeo automatico construido (`check_initial_conditions.py`); **no corrido contra ninguna corrida real** |
+| P0 | Conservacion global | E_E+E_B+E_i+E_e y deriva sin restas; residuos de campo | diag.asc completo o diagnostico de todas las particulas | Diagnostico e instrumentacion listos y probados con datos sinteticos; **cero `diag.asc` reales existen** |
+| P0 | Convergencia | Cambios de gamma, saturacion, A final y calentamiento al variar dx, dt y PPC separadamente | Corridas de control | Sin empezar, requiere corridas dedicadas en COSMA |
+| P0 | Dominio y estadistica | Caja mayor a dx fijo; dispersion entre semillas | Corridas adicionales o existentes equivalentes | Sin empezar, requiere corridas dedicadas en COSMA |
+| P0 | Identificacion y teoria | Misma rama PIC/teoria en k, omega, gamma, polarizacion; error del ajuste | Series de campo y solver validado | Herramientas construidas y probadas (`dispersion_modes.py`, `linear_theory.py`); **no corridas contra produccion**; rama oblicua (ALPS) sin instalar |
+| P0 | Maxwelliana vs Kappa | Misma beta fisica, A, B0, masas, malla, caja y electrones; diferencias con incertidumbre | Pares equivalentes | Pares definidos abajo; no confirmado que se hayan re-corrido con las correcciones de unidades/umbral de esta auditoria |
+| P1 | Saturacion y estructuras | Balance de presiones, n-|B|, profundidad, escala y duracion de estructuras | Campos y momentos sincronizados | Sin empezar |
+| P1 | VDF local y atrapamiento | Pasantes/atrapadas, A local, kappa_eff y sensibilidad a seleccion/rango | Particulas con posiciones; trayectorias si se afirma mecanismo | Modelo internamente consistente (`liouville_kappa.py`, 21/21 self-tests); tracking de trayectorias no instrumentado, hipotesis fisica sin probar |
+| P1 | Intercambio de energia | J_s dot E, cambios de energia por especie y efectos numericos | Campos, corrientes y energia global | Sin empezar |
+| P2 | Transporte y generalizacion | Tercer momento local, otro mi/me o 3D segun la afirmacion | Nuevos diagnosticos/corridas si procede | Sin empezar |
 
 P0 bloquea las afirmaciones principales. P1 es necesario si el mecanismo
 propuesto es atrapamiento o modificacion local de la VDF. P2 depende del alcance:
@@ -241,17 +310,33 @@ requiera cambiar el exponente intrinseco. Esa conclusion necesita controles.
 
 ## Verificacion y regeneracion
 
-Pasaron 13 pruebas de normalizacion, simetria del flujo, proyeccion rotada,
-presupuesto parcial, FFT, velocidad de fase y crecimiento oblicuo sintetico.
-Tambien pasaron las tres comprobaciones internas de `linear_theory.py`, con
-las limitaciones indicadas arriba. Se uso `python3` del sistema porque la
-`.venv` local no tiene scipy. Esto valida cambios de codigo, no las corridas.
+**Actualizado 2026-09-16.** `python3 -m unittest discover -p "test_*.py"` desde
+`CodeforAnalisys` corre 37 tests (incluye energia, geometria por corrida,
+condiciones iniciales, consistencia fisica, teoria lineal y comparacion de
+teorias) y los 37 pasan. Ademas, `test_dispersion_modes.py` tiene 25 pruebas
+en estilo pytest que `unittest discover` no recoge (mezcla de convenciones en
+la suite, pendiente de unificar); correrlas con
+`python3 -m pytest test_dispersion_modes.py` — tambien pasan las 25. El
+self-test de `liouville_kappa.py --self-test` pasa sus 21 comprobaciones.
+Esto valida consistencia interna del codigo con datos sinteticos. **No valida
+ninguna corrida real** — ver Seguimiento al inicio de este documento.
 
 Desde `CodeforAnalisys`:
 
 ```bash
-MPLCONFIGDIR=/tmp/psc-matplotlib python3 -m unittest -v test_physical_consistency.py test_spectral_analysis.py test_dispersion_analysis.py test_temperature_anisotropy_dispersion.py test_growth_rate_map.py
+MPLCONFIGDIR=/tmp/psc-matplotlib python3 -m unittest discover -p "test_*.py" -v
+MPLCONFIGDIR=/tmp/psc-matplotlib python3 -m pytest test_dispersion_modes.py -q
 ```
+
+**Antes de gastar tiempo de computo de COSMA:** validar el camino completo con
+una corrida local corta (unos cientos de pasos alcanza). Ahora mismo los dos
+`diag.asc` que existen en el repo (`./diag.asc`,
+`corridas_locales/mi_prueba/diag.asc`) estan vacios — ni siquiera eso se ha
+probado. El orden razonable es: (1) corrida local corta con
+`PSC_ENERGIES_EVERY` bajo, (2) `make manifest` (ya corre
+`check_initial_conditions.py`) y `make energy` sobre esa corrida para
+confirmar que el camino entero produce numeros sensatos, (3) recien entonces
+lanzar produccion en COSMA con confianza en la instrumentacion.
 
 Cuando esten accesibles los datos de produccion, regenerar en un directorio
 nuevo con CASE exacto y los targets `manifest`, `brazil`, `physics`, `spectral`

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from data_reader import PICDataReader
 from psc_units import (
-    B0, DOMAIN_DI, DRIVEN_SPECIES, INSTABILITY, MASS_RATIO, N_GRID_Y,
+    RUN_PARAMETER_SOURCES, NMAX, B0, DOMAIN_DI, DRIVEN_SPECIES, INSTABILITY, MASS_RATIO, N_GRID_Y,
     N_GRID_Z, PARTICLE_BASENAME, PROFILE_LABEL, SIM_PROFILE,
     VA, VA_OVER_C, DT_CODE, OMEGA_CI, DI,
     N0, NICELL, KAPPA, BETA_I_PAR, BETA_E_PAR,
@@ -43,12 +43,13 @@ def main() -> None:
     particles = particle_series.get(expected_series, {})
     common_steps = sorted(set(fields) & set(moments))
     detected_grid = None
-    if moments:
-        first_moment = moments[min(moments)]
+    if moments or fields:
+        first_moment = moments[min(moments)] if moments else fields[min(fields)]
+        prefix, dataset = ("all_1st", "rho_i/p0/3d") if moments else ("jeh-", "hx_fc/p0/3d")
         fields_at_start = PICDataReader.read_multiple_fields_3d(
-            first_moment, "all_1st", ["rho_i/p0/3d"]
+            first_moment, prefix, [dataset]
         )
-        detected_grid = [int(size) for size in fields_at_start["rho_i/p0/3d"].shape if size > 1]
+        detected_grid = [int(size) for size in fields_at_start[dataset].shape if size > 1]
         if detected_grid != [N_GRID_Y, N_GRID_Z]:
             raise SystemExit(
                 f"Grid/profile mismatch for CASE={args.case}: profile expects "
@@ -76,14 +77,20 @@ def main() -> None:
             "particle_files": len(particles),
             "paired_field_moment_snapshots": len(common_steps),
             "grid_from_hdf5": detected_grid,
+            "unpaired_field_steps": sorted(set(fields)-set(moments)),
+            "unpaired_moment_steps": sorted(set(moments)-set(fields)),
+            "includes_initial_fields": 0 in fields,
+            "includes_initial_particles": 0 in particles,
+            "nominal_final_step": NMAX,
+            "reaches_nominal_final_step": bool(common_steps and common_steps[-1] >= NMAX),
             "first_paired_step": common_steps[0] if common_steps else None,
             "last_paired_step": common_steps[-1] if common_steps else None,
             "first_particle_step": min(particles) if particles else None,
             "last_particle_step": max(particles) if particles else None,
         },
         "physics": {
-            "analysis_conventions_version": 3,
-            "parameter_source": "analysis profile; verify against runtime log and initial moments",
+            "analysis_conventions_version": 4,
+            "parameter_source": RUN_PARAMETER_SOURCES,
             "mass_ratio": MASS_RATIO,
             "n0": N0,
             "beta_i_parallel": BETA_I_PAR,

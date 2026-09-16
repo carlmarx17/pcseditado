@@ -577,7 +577,8 @@ if SIM_PROFILE not in _PROFILES:
         f"Perfiles válidos: {list(_PROFILES.keys())}"
     )
 
-_active = _PROFILES[SIM_PROFILE]
+from run_geometry import resolve_run
+_active, RUN_PARAMETER_SOURCES = resolve_run(_PROFILES[SIM_PROFILE])
 PROFILE_LABEL = _active["label"]
 INSTABILITY = _active["instability"]
 DRIVEN_SPECIES = _active["driven_species"]
@@ -678,7 +679,7 @@ MU0 = 1.0
 # dt del código: dt = CFL * courant_length(domain)
 # courant_length(2D) = dx / sqrt(2),  dx = domain_de / N_grid
 _dx_code = DOMAIN_DE / N_GRID_Y
-DT_CODE = 0.95 * _dx_code / np.sqrt(2.0)
+DT_CODE = float(_active.get("dt_code", 0.95 * _dx_code / np.sqrt(2.0)))
 FIELD_FILE_PATTERN = "pfd.*.h5"
 MOMENT_FILE_PATTERN = "pfd_moments.*.h5"
 PARTICLE_BASENAME = _active["particle_basename"]
@@ -689,11 +690,11 @@ PARTICLE_FILE_PATTERN = f"{PARTICLE_BASENAME}.*.h5"
 
 def cells_to_di(x_cells):
     """Convierte posición de celdas a longitudes inerciales iónicas (dᵢ)."""
-    return x_cells / DI
+    return np.asarray(x_cells) * DX_DI
 
 def di_to_cells(x_di):
     """Convierte longitudes inerciales iónicas a celdas."""
-    return x_di * DI
+    return np.asarray(x_di) / DX_DI
 
 def time_to_omegaci(t_code):
     """Convierte tiempo de código a unidades de Ωcᵢ⁻¹  (tiempo giromagnético iónico)."""
@@ -758,8 +759,8 @@ def print_units_summary():
     print(f"    vA          = {VA:.4f}      [código]   = {VA_OVER_C:.4f} c")
     print()
     print("  Distancias inerciales:")
-    print(f"    dᵢ  = c/ωₚᵢ = {DI:.4f}  celdas/dᵢ  =>  1 dᵢ = {DI:.2f} celdas")
-    print(f"    dₑ  = c/ωₚₑ = {DE:.4f}  celdas/dₑ  =>  1 dₑ = {DE:.2f} celda")
+    print(f"    dᵢ  = c/ωₚᵢ = {DI:.4f}  unidades de código; 1 dᵢ = {1/DX_DI:.2f} celdas")
+    print(f"    dₑ  = c/ωₚₑ = {DE:.4f}  unidades de código")
     print(f"    Dominio físico: {DOMAIN_DI:.0f} dᵢ × {DOMAIN_DI:.0f} dᵢ  "
           f"= {DOMAIN_DE:.0f} dₑ × {DOMAIN_DE:.0f} dₑ")
     print(f"    Grilla: {N_GRID_Y} × {N_GRID_Z} celdas  "
@@ -771,7 +772,7 @@ def print_units_summary():
     print(f"    Tₑ‖  = {TE_PAR:.6f}   βₑ‖ = {BETA_E_PAR_COMPUTED:.2f}")
     print()
     print("  Frecuencias de ciclotrón:")
-    print(f"    Ωcᵢ = {OMEGA_CI:.6f}  [rad/t_código]   =>  1 Ωcᵢ⁻¹ = {1/OMEGA_CI:.1f} pasos")
+    print(f"    Ωcᵢ = {OMEGA_CI:.6f}  [rad/t_código]   =>  1 Ωcᵢ⁻¹ = {1/(OMEGA_CI*DT_CODE):.1f} pasos")
     print(f"    Ωcₑ = {OMEGA_CE:.6f}  [rad/t_código]")
     print(f"    Ωcₑ / Ωcᵢ = {OMEGA_CE/OMEGA_CI:.1f}  (= mi/me, correcto)")
     print()

@@ -80,6 +80,82 @@ To generate only that diagram:
 make dispersion DATA_DIR=/path/to/run CASE=F_S_bM_local
 ```
 
+### Detecting and characterizing the dominant magnetic mode
+
+`make dispersion` now analyses all three magnetic components by default
+(`DISPERSION_COMPONENT=total`). It writes `dispersion_modes_<plane>_total`
+as PNG/PDF, JSON and CSV alongside the native omega-k map and the auxiliary
+phase-velocity projection. Start with the **mode summary**, not the smoothed
+velocity projection. Existing files with `_perp_` names are older or explicitly
+transverse-only analyses; they are not replaced by the new `_total_` outputs.
+`dispersion_modes_<plane>_total_fit.png`/PDF shows the measured amplitude and
+unwrapped phase against the exponential and constant-frequency fits, including
+their acceptance status. The JSON records the input files, profile and options.
+
+The summary measures discrete `(k_parallel, k_perp)` pairs before perpendicular
+reduction, display smoothing or de-growth. It reports the strongest spatial
+peak, its share of retained time-averaged magnetic power, angle to the specified
+background-field axis, signed frequency, growth fit, magnetic compressibility
+and transverse polarization. Conjugate Fourier pairs are counted once. Power
+ranking refers to the selected interval and retained k band; it is distinct
+from ranking by growth rate. A smaller, coherent peak does not silently replace
+an incoherent power maximum as the dominant mode.
+
+Frequency uses `B = Re[b exp(i k.x - i omega*t)]`, with canonical
+`k_parallel >= 0`; positive/negative omega means propagation along/against the
+parallel axis. The native signed omega-k plot instead keeps omega >= 0 and
+both signs of k. Frequencies are in the simulation frame; no flow/Doppler
+correction is made. `sigma_b_transverse = 2 Im(b1 conj(b2))/(|b1|²+|b2|²)`
+uses a right-handed basis about the parallel axis; its sign is reported without
+assigning an EMIC/whistler/firehose species label. Such identification also
+needs plasma parameters, a frame convention and comparison to theory.
+
+The phase and log-amplitude fits assume a single complex exponential at each
+spatial peak. Acceptance requires phase coherence >= 0.85, log-amplitude
+residual standard deviation < 0.35, at least six contiguous nonzero snapshots
+and separation from temporal Nyquist. These are diagnostic thresholds, not
+statistical confidence levels. The growth fit is usable only when R² >= 0.8,
+the interval spans >= 0.25 fitted e-foldings and the two half-interval slopes
+agree within 50% of the full slope. Exact zero initial amplitudes are excluded
+from logarithmic fits. Beating, growth followed by saturation, or a changing
+phase can therefore remain unconfirmed even when magnetic power is strong.
+
+`omega_resolution_over_omega_ci = 2*pi/T` comes from the actual usable time
+span; padding the FFT does not improve it. Frequency below that resolution is
+reported as unresolved, including aperiodic candidates. The default linear
+frequency axis includes omega=0. The ridge CSV measures local frequency peaks
+at native k bins without smoothing between wavenumbers; secondary peaks must
+exceed the predicted taper sidelobe power by a factor of four. Peak ranks are local
+to each k and do not establish branch identity. No-output/no-signal cases
+produce an empty table and an explicit JSON status.
+
+Use a time interval within one physical phase and a justified wavenumber band,
+for example for the documented local run:
+
+```bash
+make dispersion DATA_DIR=../corridas_locales/mi_prueba CASE=F_S_bM_local \
+  DISPERSION_COMPONENT=total DISPERSION_KMAX_DI=2 \
+  DISPERSION_T_START=0.27 RESULTS_ROOT=../analysis_results/dispersion_review
+```
+
+`DISPERSION_KMAX_DI` caps the magnitude `sqrt(k_parallel²+k_perp²)*d_i`.
+`DISPERSION_T_START` and `DISPERSION_T_END` are in `Omega_ci*t`, not steps.
+An optional mode preset restricts the search to its angular/k band; it is a
+prior choice, not evidence that the corresponding instability was detected.
+Select `DISPERSION_MODE=generic` for an unrestricted angular search.
+
+Synthetic regressions cover isolated waves, both propagation directions,
+oblique and purely perpendicular growth, circular polarization, multiple
+frequencies, noise, zero initial fluctuations, saturation and FFT padding:
+
+```bash
+python -m pytest -q test_dispersion_analysis.py test_dispersion_synthetic.py test_dispersion_modes.py
+```
+
+The transform convention follows the [NumPy DFT definition](https://numpy.org/doc/stable/reference/routines.fft.html#implementation-details):
+spatial `fft` is paired with temporal `ifft` (with normalization restored),
+so a wave `cos(k.x-omega*t)` has its positive-frequency peak at positive k.
+
 To generate only the \(\gamma(k_\parallel,k_\perp)\) map:
 
 ```bash
