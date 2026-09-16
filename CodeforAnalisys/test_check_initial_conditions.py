@@ -37,10 +37,11 @@ class CheckInitialConditionsTests(unittest.TestCase):
         return str(Path(directory) / "pfd.*_p*.h5")
 
     def moment_file(self, directory, n0, n=4):
+        # rho_<suffix> is charge density: rho_i=+n0 (zi=1), rho_e=-n0 (ze=-1).
         path = Path(directory) / "pfd_moments.000000_p000000.h5"
         with h5py.File(path, "w") as f:
             f.create_dataset("all_1st-0/rho_i/p0/3d", data=np.full((n, n, 1), n0))
-            f.create_dataset("all_1st-0/rho_e/p0/3d", data=np.full((n, n, 1), n0))
+            f.create_dataset("all_1st-0/rho_e/p0/3d", data=np.full((n, n, 1), -n0))
         return str(Path(directory) / "pfd_moments.*_p*.h5")
 
     def declared(self, ti_par=0.01, ti_perp=0.02, te_par=1e-4, te_perp=2e-4, b0=0.08, n0=1.0):

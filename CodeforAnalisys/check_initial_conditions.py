@@ -47,8 +47,9 @@ def measured_temperatures(q, m, px, py, pz, w, species: str) -> dict | None:
 
 
 def measured_density(moment_path: str, suffix: str) -> float:
+    """rho_<suffix> is charge density q*n (rho_i > 0, rho_e < 0 for zi=1), not n."""
     data = PICDataReader.read_multiple_fields_3d(moment_path, "all_1st", [f"rho_{suffix}/p0/3d"])
-    return float(np.mean(np.asarray(data[f"rho_{suffix}/p0/3d"], dtype=float)))
+    return float(np.mean(np.abs(np.asarray(data[f"rho_{suffix}/p0/3d"], dtype=float))))
 
 
 def measured_b0(field_path: str) -> float:
