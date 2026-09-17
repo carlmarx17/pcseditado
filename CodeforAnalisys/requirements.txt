@@ -3,3 +3,4 @@ h5py
 adios2>=2.10
 matplotlib
 scipy
+imageio
