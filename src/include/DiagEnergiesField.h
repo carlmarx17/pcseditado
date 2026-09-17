@@ -27,8 +27,9 @@ public:
     double fac = grid.domain.dx[0] * grid.domain.dx[1] * grid.domain.dx[2];
     for (int p = 0; p < grid.n_patches(); p++) {
       auto bnd = mflds.ibn();
-      auto flds = h_gt_mflds.view(_s(-bnd[0], bnd[0]), _s(-bnd[1], bnd[1]),
-                                  _s(-bnd[2], bnd[2]), _all, p);
+      auto flds = h_gt_mflds.view(_s(bnd[0], bnd[0] + grid.ldims[0]),
+                                  _s(bnd[1], bnd[1] + grid.ldims[1]),
+                                  _s(bnd[2], bnd[2] + grid.ldims[2]), _all, p);
       // FIXME, this doesn't handle non-periodic b.c. right
       grid.Foreach_3d(0, 0, [&](int i, int j, int k) {
         EH2[0] += sqr(flds(i, j, k, EX)) * fac;
