@@ -97,8 +97,10 @@ Criterion: `A_e > 1 + 0.21 / beta_e_parallel^0.6`
 |---|---|---|---:|---:|---:|---:|---:|
 | `psc_mirror_bikappa3` | `psc_mirror_bikappa3.cxx` | 3 | 5.0 | 3.0 | 1.0 | 1.0 | 576×576 |
 | `psc_mirror_bikappa5` | `psc_mirror_bikappa5.cxx` | 5 | 5.0 | 3.0 | 1.0 | 1.0 | 576×576 |
+| `psc_mirror_bikappa5_moderate` | `psc_mirror_bikappa5_moderate.cxx` | 5 | 5.0 | 2.0 | 1.0 | 1.0 | 576×576 |
 | `psc_firehose_bikappa3` | `psc_firehose_bikappa3.cxx` | 3 | 10.0 | 0.1 | 1.0 | 1.0 | 576×576 |
 | `psc_firehose_bikappa5` | `psc_firehose_bikappa5.cxx` | 5 | 10.0 | 0.1 | 1.0 | 1.0 | 576×576 |
+| `psc_firehose_bikappa5_bigbox40` | `psc_firehose_bikappa5_bigbox40.cxx` | 5 | 10.0 | 0.1 | 1.0 | 1.0 | 1152×1152 (40 d_i) |
 
 ## Outputs
 

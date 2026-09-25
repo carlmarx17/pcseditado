@@ -40,6 +40,7 @@ add_psc_executable(psc_mirror_bikappa3)
 # Mismo Ai/beta que psc_mirror_bimaxwellian_moderate, para comparar
 # Bi-Maxwelliana vs Bi-Kappa a igualdad de anisotropia.
 add_psc_executable(psc_mirror_bikappa3_moderate)
+add_psc_executable(psc_mirror_bikappa5_moderate)
 add_psc_executable(psc_mirror_bikappa5)
 add_psc_executable(psc_firehose_bikappa3)
 add_psc_executable(psc_firehose_bikappa5)
@@ -52,6 +53,8 @@ add_psc_executable(psc_firehose_bikappa3_bigbox40)
 # Gemelo Bi-Maxwelliano de psc_firehose_bikappa3_bigbox40 (mismo
 # beta_i_par=10 y Ai=0.1): el par controlado para aislar el efecto de kappa.
 add_psc_executable(psc_firehose_bimaxwellian_strong_bigbox40)
+# Tercer miembro de la serie firehose strong 40 d_i (kappa=5).
+add_psc_executable(psc_firehose_bikappa5_bigbox40)
 
 add_psc_executable(psc_reconnection)
 # Reconexion con parametros igualados a los casos de anisotropia

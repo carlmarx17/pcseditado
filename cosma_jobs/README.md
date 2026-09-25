@@ -20,6 +20,33 @@ Repository root on COSMA: `/cosma7/data/dp433/dc-mart18/pcseditado`
 | `sim_firehose_bimaxwellian_moderate_40di.sh` | Moderate bi-Maxwellian firehose, big box | **40 d_i** | ngrid 1152 |
 | `sim_firehose_bikappa3_40di.sh` | Bi-Kappa-3 firehose, big box | **40 d_i** | ngrid 1152 |
 | `sim_firehose_bimaxwellian_strong_40di.sh` | Strong bi-Maxwellian firehose, big box — the **controlled twin** of the bi-Kappa-3 run | **40 d_i** | ngrid 1152 |
+| `sim_firehose_bikappa5_40di.sh` | Bi-Kappa-5 firehose, big box — third member of the strong firehose series | **40 d_i** | ngrid 1152 |
+| `sim_mirror_bikappa5_moderate.sh` | Moderate bi-Kappa-5 mirror — third member of the moderate mirror series | 20 d_i | ngrid 576 |
+
+### Batch that closes the kappa comparison
+
+With these three runs each series has the full bi-Maxwellian / κ=5 / κ=3
+set, and the members differ **only** in the distribution:
+
+| Series | bi-Maxwellian | κ=5 | κ=3 |
+|---|---|---|---|
+| Mirror moderate, 20 d_i (β_i∥=5, A_i=2) | done | **`sim_mirror_bikappa5_moderate.sh`** | done |
+| Firehose strong, 40 d_i (β_i∥=10, A_i=0.1) | **`sim_firehose_bimaxwellian_strong_40di.sh`** | **`sim_firehose_bikappa5_40di.sh`** | done |
+
+Build the three executables once, then submit (from the repository root on COSMA):
+
+```bash
+BUILD_DIR="$PWD/build" BUILD_JOBS=4 \
+  PSC_TARGETS="psc_mirror_bikappa5_moderate psc_firehose_bikappa5_bigbox40 psc_firehose_bimaxwellian_strong_bigbox40" \
+  src/cosma_build_psc_adios2.sh
+
+sbatch cosma_jobs/simulacion/sim_mirror_bikappa5_moderate.sh
+sbatch cosma_jobs/simulacion/sim_firehose_bimaxwellian_strong_40di.sh
+sbatch cosma_jobs/simulacion/sim_firehose_bikappa5_40di.sh
+```
+
+Note the job id each submission prints: it becomes the `RUN_TAG` needed to
+resume from a checkpoint if 48 h are not enough.
 
 ### `analisis/` — Python pipeline over finished runs
 
