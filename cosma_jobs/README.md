@@ -22,6 +22,12 @@ Repository root on COSMA: `/cosma7/data/dp433/dc-mart18/pcseditado`
 | `sim_firehose_bimaxwellian_strong_40di.sh` | Strong bi-Maxwellian firehose, big box — the **controlled twin** of the bi-Kappa-3 run | **40 d_i** | ngrid 1152 |
 | `sim_firehose_bikappa5_40di.sh` | Bi-Kappa-5 firehose, big box — third member of the strong firehose series | **40 d_i** | ngrid 1152 |
 | `sim_mirror_bikappa5_moderate.sh` | Moderate bi-Kappa-5 mirror — third member of the moderate mirror series | 20 d_i | ngrid 576 |
+| `sim_whistler_bimaxwellian_{strong,moderate,weak}.sh` | Bi-Maxwellian whistler (Ae = 3.0 / 2.0 / 1.5), 72 h limit | 20 d_i | ngrid 576 |
+
+All simulation scripts set `PSC_CHECKPOINT_EVERY=150000`. Checkpoints are only used
+to restart a run; running a case without one of these scripts falls back to the
+header default (`PSC_CHECKPOINT_EVERY_DEFAULT = 5000`), which writes 240 checkpoints
+per run.
 
 ### Batch that closes the kappa comparison
 
