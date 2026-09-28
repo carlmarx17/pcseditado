@@ -91,11 +91,13 @@ Omega_ce for strong/moderate/weak, from `linear_theory.py`). The source
 files keep the shared header defaults, but the whistler **production
 jobs** refine the numerics for the whole family by environment override
 (`PSC_NGRID=1152`, `PSC_NICELL=2000`, `PSC_NP_Y/Z=48`), shorten the run
-to the electron scales (`PSC_NMAX=300000` = 19.8 Omega_ci^-1) and set
-the output cadence the whistler branch needs (`PSC_FIELDS_EVERY=100` ->
-field-output Nyquist 2.38 Omega_ce; `PSC_PARTICLES_EVERY=20000`,
-`PSC_ENERGIES_EVERY=20`, `PSC_CHECKPOINT_EVERY=150000`): the ion-scale
-defaults alias the whistler branch and run ~24× past saturation. The
+each run only until its anisotropy has relaxed (`PSC_NMAX` = 40 000 /
+140 000 / 300 000 for strong / moderate / weak, identical between
+distribution twins) and set the output cadence the whistler branch needs
+(`PSC_FIELDS_EVERY=100` -> field-output Nyquist 2.38 Omega_ce;
+`PSC_ENERGIES_EVERY=20`; particle and checkpoint cadence per regime):
+the ion-scale defaults alias the whistler branch and run far past
+saturation. The
 grid column below is the production grid. Full parameter study,
 literature comparison, resource budget and the remaining open decision:
 `WHISTLER_PARAMETROS.md`.

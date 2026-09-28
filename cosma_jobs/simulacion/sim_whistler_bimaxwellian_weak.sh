@@ -19,24 +19,24 @@
 #  Con ngrid 1152 el CFL baja dt a 0.165 wpe^-1 (75.8 pasos por
 #  Omega_ce^-1), asi que las cadencias en PASOS se duplican para
 #  mantener la misma cadencia FISICA:
-#    - nmax 300000 = 3958 Omega_ce^-1 = 19.8 Omega_ci^-1: >=3x el
-#      crecimiento del caso debil (gamma_w = 0.0075 Omega_ce) con cola
-#      de relajacion.
+#    - nmax 300000 = 3958 Omega_ce^-1 = 19.8 Omega_ci^-1. EXCEPCION al
+#      criterio t_fin ~ 8 x t_10 de la familia: aqui daria ~800k pasos
+#      (t_10 = 1330 Omega_ce^-1, gamma = 0.0075 Omega_ce). Pero el caso
+#      debil esta cerca del umbral (A_e = 1.5 vs marginal ~1.32) y
+#      relaja poco, asi que se corre ~3 x t_10 y se EXTIENDE desde el
+#      checkpoint final solo si A_e(t) sigue bajando.
 #    - fields cada 100 pasos = 1.32 Omega_ce^-1 -> Nyquist 2.38
-#      Omega_ce (el default del header ALIASA toda la rama whistler,
-#      omega_r = 0.25-0.5 Omega_ce). 3000 snapshots (~560 GB
-#      campos+momentos por corrida).
+#      Omega_ce (el default del header ALIASA toda la rama whistler).
+#      3000 snapshots (~560 GB campos+momentos).
 #    - particles cada 20000 = 264 Omega_ce^-1 -> 15 dumps de VDF
 #      (~8 GB c/u, ~120 GB por corrida).
 #    - energies cada 20 = 0.26 Omega_ce^-1 (gamma global gratis).
-#    - checkpoint cada 150000 -> 2 por corrida (~340 GB c/u; borrar al
-#      terminar con cosma_jobs/utils o cleanup_restart_outputs.sh).
+#    - checkpoint cada 150000 + el final -> 2 por corrida (~340 GB c/u).
 #  Presupuesto (calibrado con las corridas ionicas de 48 h en 1024
-#  ranks): 2.0x los pushes de una ionica -> ~43 h en 2304 ranks
-#  (~118k core-h por corrida). RAM agregada ~250 GB (~3 GB/nodo).
-#  IMPORTANTE (paridad): estos tres scripts whistler deben compartir
-#  estos valores; los futuros gemelos bi-kappa whistler los reutilizan
-#  tal cual.
+#  ranks): ~43 h en 2304 ranks (~118k core-h por corrida).
+#  IMPORTANTE (paridad): los futuros gemelos bi-kappa weak reutilizan
+#  estos valores tal cual. La duracion difiere A PROPOSITO entre
+#  regimenes (strong 40k, moderate 140k, weak 300k).
 #
 #  Antes de enviar, compilar el ejecutable (una sola vez):
 #    cd /cosma7/data/dp433/dc-mart18/pcseditado
@@ -91,7 +91,8 @@ PSC_NICELL="${PSC_NICELL:-2000}"
 PSC_NP_Y="${PSC_NP_Y:-48}"
 PSC_NP_Z="${PSC_NP_Z:-48}"
 # Duracion y cadencias de escala electronica (ver cabecera y
-# src/WHISTLER_PARAMETROS.md). Identicas en los tres casos whistler.
+# src/WHISTLER_PARAMETROS.md). La duracion es propia de cada regimen
+# (solo hasta la relajacion); identica entre gemelos de distribucion.
 PSC_NMAX="${PSC_NMAX:-300000}"
 PSC_FIELDS_EVERY="${PSC_FIELDS_EVERY:-100}"
 PSC_PARTICLES_EVERY="${PSC_PARTICLES_EVERY:-20000}"

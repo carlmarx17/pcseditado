@@ -19,24 +19,24 @@
 #  Con ngrid 1152 el CFL baja dt a 0.165 wpe^-1 (75.8 pasos por
 #  Omega_ce^-1), asi que las cadencias en PASOS se duplican para
 #  mantener la misma cadencia FISICA:
-#    - nmax 300000 = 3958 Omega_ce^-1 = 19.8 Omega_ci^-1: >=3x el
-#      crecimiento del caso debil (gamma_w = 0.0075 Omega_ce) con cola
-#      de relajacion.
+#    - nmax 140000 = 1847 Omega_ce^-1 = 9.2 Omega_ci^-1: SOLO hasta
+#      la relajacion. Criterio comun a la familia: t_fin ~ 8 x t_10,
+#      con t_10 = 10/gamma_max del gemelo mas lento del regimen
+#      (bi-kappa 3: gamma = 0.044 Omega_ce -> t_10 = 228 Omega_ce^-1).
+#      Si A_e(t) sigue bajando al final, se EXTIENDE desde el checkpoint
+#      final (PSC siempre escribe uno al terminar).
 #    - fields cada 100 pasos = 1.32 Omega_ce^-1 -> Nyquist 2.38
-#      Omega_ce (el default del header ALIASA toda la rama whistler,
-#      omega_r = 0.25-0.5 Omega_ce). 3000 snapshots (~560 GB
-#      campos+momentos por corrida).
-#    - particles cada 20000 = 264 Omega_ce^-1 -> 15 dumps de VDF
-#      (~8 GB c/u, ~120 GB por corrida).
+#      Omega_ce (el default del header ALIASA toda la rama whistler).
+#      1400 snapshots (~260 GB campos+momentos).
+#    - particles cada 10000 = 132 Omega_ce^-1 -> 15 dumps de VDF
+#      (~8 GB c/u, ~115 GB por corrida).
 #    - energies cada 20 = 0.26 Omega_ce^-1 (gamma global gratis).
-#    - checkpoint cada 150000 -> 2 por corrida (~340 GB c/u; borrar al
-#      terminar con cosma_jobs/utils o cleanup_restart_outputs.sh).
+#    - checkpoint cada 70000 + el final -> 2 por corrida (~340 GB c/u).
 #  Presupuesto (calibrado con las corridas ionicas de 48 h en 1024
-#  ranks): 2.0x los pushes de una ionica -> ~43 h en 2304 ranks
-#  (~118k core-h por corrida). RAM agregada ~250 GB (~3 GB/nodo).
-#  IMPORTANTE (paridad): estos tres scripts whistler deben compartir
-#  estos valores; los futuros gemelos bi-kappa whistler los reutilizan
-#  tal cual.
+#  ranks): ~20 h en 2304 ranks (~55k core-h por corrida).
+#  IMPORTANTE (paridad): los futuros gemelos bi-kappa moderate
+#  reutilizan estos valores tal cual. La duracion difiere A PROPOSITO
+#  entre regimenes (strong 40k, moderate 140k, weak 300k).
 #
 #  Antes de enviar, compilar el ejecutable (una sola vez):
 #    cd /cosma7/data/dp433/dc-mart18/pcseditado
@@ -47,7 +47,7 @@
 #  Envio (desde la raiz del repo en COSMA):
 #    sbatch cosma_jobs/simulacion/sim_whistler_bimaxwellian_moderate.sh
 #
-#  REANUDAR si las 72 h no alcanzan (NO reenviar sin esto: un reenvio
+#  REANUDAR si las 36 h no alcanzan (NO reenviar sin esto: un reenvio
 #  pelado empieza otra corrida desde t=0 en una carpeta nueva):
 #    sbatch --export=ALL,RUN_TAG=<tag-de-la-corrida>,PSC_RESTART=/ruta/checkpoint_<step>.bp \
 #      cosma_jobs/simulacion/sim_whistler_bimaxwellian_moderate.sh
@@ -59,7 +59,7 @@
 #SBATCH --nodes=83
 #SBATCH --ntasks-per-node=28
 #SBATCH --ntasks=2304
-#SBATCH --time=72:00:00
+#SBATCH --time=36:00:00
 #SBATCH --output=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.out
 #SBATCH --error=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
@@ -91,12 +91,13 @@ PSC_NICELL="${PSC_NICELL:-2000}"
 PSC_NP_Y="${PSC_NP_Y:-48}"
 PSC_NP_Z="${PSC_NP_Z:-48}"
 # Duracion y cadencias de escala electronica (ver cabecera y
-# src/WHISTLER_PARAMETROS.md). Identicas en los tres casos whistler.
-PSC_NMAX="${PSC_NMAX:-300000}"
+# src/WHISTLER_PARAMETROS.md). La duracion es propia de cada regimen
+# (solo hasta la relajacion); identica entre gemelos de distribucion.
+PSC_NMAX="${PSC_NMAX:-140000}"
 PSC_FIELDS_EVERY="${PSC_FIELDS_EVERY:-100}"
-PSC_PARTICLES_EVERY="${PSC_PARTICLES_EVERY:-20000}"
+PSC_PARTICLES_EVERY="${PSC_PARTICLES_EVERY:-10000}"
 PSC_ENERGIES_EVERY="${PSC_ENERGIES_EVERY:-20}"
-PSC_CHECKPOINT_EVERY="${PSC_CHECKPOINT_EVERY:-150000}"
+PSC_CHECKPOINT_EVERY="${PSC_CHECKPOINT_EVERY:-70000}"
 PSC_LAUNCHER="${PSC_LAUNCHER:-mpirun}"
 export PSC_NGRID PSC_NICELL PSC_NP_Y PSC_NP_Z PSC_NMAX PSC_FIELDS_EVERY \
        PSC_PARTICLES_EVERY PSC_ENERGIES_EVERY PSC_CHECKPOINT_EVERY PSC_LAUNCHER

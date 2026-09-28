@@ -100,18 +100,44 @@ cross-resolution and must be made in physical units only.
 With ngrid 1152 the CFL timestep halves automatically:
 `Δt = 0.165 ω_pe⁻¹` ⇒ **75.8 steps per Ω_ce⁻¹**, 15 160 per Ω_ci⁻¹, so
 all step-denominated cadences double to keep the same *physical* cadence.
-Set identically in the three `cosma_jobs/simulacion/sim_whistler_*.sh`:
+Grid, ppc and output cadence are identical in all `cosma_jobs/simulacion/sim_whistler_*.sh`;
+the run length is set per regime (next subsection):
 
 | Variable | Value | In physical units | Why |
 |---|---:|---|---|
 | `PSC_NGRID` | 1 152 | Δx = 0.245 d_e; Δx/λ_De = 6.1 | Resolves the unstable band with 18–31 cells/λ and ~3 cells per ρ_e; matches the finer end of the 2D literature (§2). |
 | `PSC_NICELL` | 2 000 | 5.3×10⁹ particles | Lower noise floor for the weak case (γ = 0.0075 Ω_ce) and cleaner κ_eff estimates. |
 | `PSC_NP_Y/Z` | 48×48 | 2 304 ranks, 24×24-cell patches | Same decomposition as the bigbox40 jobs. |
-| `PSC_NMAX` | 300 000 | 3 958 Ω_ce⁻¹ = 19.8 Ω_ci⁻¹ | ≥ 3× the weak case's growth-to-saturation (1 330 Ω_ce⁻¹) with a relaxation tail. Literature runs are 150–450 Ω_ce⁻¹. |
 | `PSC_FIELDS_EVERY` | 100 | Δt_out = 1.32 Ω_ce⁻¹ ⇒ ω_Ny = 2.38 Ω_ce | Minimum that resolves the whole branch (ω_r ≤ 0.5 Ω_ce) with ≥ 4× margin *and* keeps ≥ 4 samples per e-fold for the strong-case γ(k) fits. |
 | `PSC_ENERGIES_EVERY` | 20 | 0.26 Ω_ce⁻¹ | Global γ from the δB² series (one reduce; ~15 000 ASCII lines). |
-| `PSC_PARTICLES_EVERY` | 20 000 | 264 Ω_ce⁻¹ | 15 VDF snapshots across growth + relaxation — the minimum honest sampling for A_e(t) and κ_eff(t); each dump is ~8 GB at this grid/ppc. |
-| `PSC_CHECKPOINT_EVERY` | 150 000 | ½ of the run | 2 checkpoints (~340 GB each): enough to resume a 72 h window; delete after the run. |
+
+### Run length: only until relaxation
+
+Each regime runs **only until the anisotropy has relaxed**, no further.
+Rule for the family: `t_end ≈ 8 × t_10`, with `t_10 = 10/γ_max` of the
+*slowest* distribution twin of that regime (§1). That covers growth from
+the particle noise, saturation, and the relaxation of A_e towards the
+marginal state (A_e ≈ 1.32 at β_e∥ = 0.5), and is at or above the
+150–450 Ω_ce⁻¹ in which the literature resolves the whole evolution (§2).
+PSC always writes a checkpoint when the run ends (`checkpointing_.final`
+in `include/psc.hxx`), so a run whose A_e(t) is still falling at the end
+is **extended from that checkpoint** instead of every run being paid
+long in advance.
+
+| Regime | slowest twin t_10 [Ω_ce⁻¹] | `PSC_NMAX` | t_end [Ω_ce⁻¹] | t_end [Ω_ci⁻¹] | `PSC_PARTICLES_EVERY` (VDF dumps) | `PSC_CHECKPOINT_EVERY` | walltime |
+|---|---:|---:|---:|---:|---|---:|---:|
+| strong (bi-Max, κ5, κ3) | 69 (κ=3) | **40 000** | 528 | 2.6 | 2 500 = 33 Ω_ce⁻¹ (~17) | 20 000 + final | 12 h |
+| moderate | 228 (κ=3) | **140 000** | 1 847 | 9.2 | 10 000 = 132 Ω_ce⁻¹ (15) | 70 000 + final | 36 h |
+| weak | 1 330 (bi-Max) | **300 000** | 3 958 | 19.8 | 20 000 = 264 Ω_ce⁻¹ (15) | 150 000 + final | 72 h |
+
+The weak case is the one exception to the 8× rule (it would need ~800 000
+steps): it sits close to threshold (A_e = 1.5 vs ~1.32 marginal) and has
+little anisotropy to relax, so it runs ~3 × t_10 and is extended only if
+A_e(t) is still falling. Distribution twins of a regime share every
+value in the table; regimes differ in length **on purpose**.
+
+Stopping criterion to decide an extension: the domain-averaged A_e(t)
+from the moments changes by less than ~2% over the last 100 Ω_ce⁻¹.
 
 Time conversions for the analysis of these runs: 1 Ω_ce⁻¹ = 75.8 steps;
 1 Ω_ci⁻¹ = 200 Ω_ce⁻¹ = 15 160 steps; ω/Ω_ci = (ω/Ω_ce)·200 and
@@ -122,48 +148,44 @@ apply these rescalings; use `DISPERSION_MODE=whistler`).
 distribution twins `psc_whistler_bimaxwellian_strong`,
 `psc_whistler_bikappa5_strong`, `psc_whistler_bikappa3_strong` (identical
 β/A defines; only `PSC_USE_KAPPA`/`PSC_KAPPA` differ), all with the §4
-configuration. Their growth rates are within 20% of each other (§1), so
-one configuration serves the three. Moderate and weak wait for these
+configuration and the strong run length (40 000 steps). Their growth
+rates are within 20% of each other (§1), so one configuration serves the
+three. Moderate and weak wait for these
 results. Build/submit commands: `cosma_jobs/README.md`.
 
-## 5. Resource and storage budget (per run, ×3 for the campaign)
+## 5. Resource and storage budget
 
 Calibrated against the observed ~48 h of a standard ionic run
 (576², 1000 ppc, 1.2M steps on 1024 ranks ⇒ R ≈ 4.5×10⁶
 particle-pushes/s/core, matching §4 of `ESCALADO_INESTABILIDADES.md`):
 
-- **Work**: 5.31×10⁹ particles × 3×10⁵ steps = 1.59×10¹⁵ pushes =
-  **exactly 2.0× one ionic run**.
-- **Wallclock**: ~96 h on 1024 ranks (needs 2 restarts) or **~43 h on
-  2 304 ranks / 83 nodes** (adopted; fits one 72 h window with margin for
-  the ±2× uncertainty in R). ~118 000 core-h per run, ~354 000 for the
-  three cases.
-- **RAM**: 170–340 GB aggregate for particles ⇒ ~3 GB per node on 83
-  nodes — far below the node memory; not a constraint.
-- **Files and volume per run**:
+- **RAM**: 5.31×10⁹ particles ⇒ 170–340 GB aggregate ⇒ ~3–4 GB per node
+  on 83 nodes (COSMA7 nodes have 512 GB) — never the constraint. The node
+  count is set by wallclock, not memory.
+- **Work per run** scales with nmax: 5.31×10⁹ particles × nmax steps;
+  300 000 steps = 2.0× one ionic run.
 
-| Output | Files | Size | Total |
-|---|---:|---|---:|
-| `pfd.*` (fields, every 100 steps) | 3 000 | 48 MB | 143 GB |
-| `pfd_moments.*` | 3 000 | 138 MB | 414 GB |
-| `prt_*` (central 20% window) | 15 | ~8 GB | ~120 GB |
-| checkpoints (transient) | 2 | ~340 GB | ~680 GB, deleted after the run |
-| energies ASCII | 1 | ~1 MB | — |
-| **Durable total** | **~6 016** | | **~0.7 TB** (×3 runs ≈ 2.1 TB) |
+| Regime | Wallclock (2 304 ranks) | core-h per run | `pfd` + `pfd_moments` | `prt_*` | Durable per run |
+|---|---:|---:|---|---|---:|
+| strong | ~5.7 h | ~16 000 | 400 + 400 files, ~74 GB | ~17 × 8 GB ≈ 130 GB | **~0.2 TB** |
+| moderate | ~20 h | ~55 000 | 1 400 + 1 400, ~260 GB | 15 × 8 GB ≈ 115 GB | ~0.38 TB |
+| weak | ~43 h | ~118 000 | 3 000 + 3 000, ~560 GB | 15 × 8 GB ≈ 120 GB | ~0.7 TB |
 
-The moments are 74% of the durable volume because the header ties their
-cadence to `fields_every`; if 2.1 TB is too much for the COSMA quota, the
-options are a coarser `PSC_FIELDS_EVERY` (degrades the strong-case γ(k)
-sampling before it degrades the ω–k diagram) or post-run thinning of
-`pfd_moments` to every other snapshot.
+The first batch (strong series: bi-Max, κ5, κ3) is **~47 000 core-h and
+~0.6 TB durable** in total, instead of the ~354 000 core-h and ~2.1 TB
+it would have cost at a uniform 300 000 steps. Each run also writes two
+transient checkpoints of ~340 GB (mid-run + final): delete the mid-run
+one when the run ends and keep the final one until the relaxation is
+confirmed. The moments are ~74% of the field-side volume because the
+header ties their cadence to `fields_every`.
 
 ## 6. Remaining open decision
 
 **Isotropic control run** (A_e = 1, everything else identical to §4) to
 measure the pure grid-heating + noise baseline (recommendation §6.2 of
 `ESCALADO_INESTABILIDADES.md`). This is a new case file, i.e. a
-case-matrix addition, and is still pending. At Δx/λ_De = 6.1 and 19.8
-Ω_ci⁻¹ of run time the expected heating is far smaller than at the old
+case-matrix addition, and is still pending. At Δx/λ_De = 6.1 and at
+most 19.8 Ω_ci⁻¹ of run time the expected heating is far smaller than at the old
 12.3, which lowers the urgency but does not replace the measurement.
 
 ## References

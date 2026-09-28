@@ -22,10 +22,10 @@ Repository root on COSMA: `/cosma7/data/dp433/dc-mart18/pcseditado`
 | `sim_firehose_bimaxwellian_strong_40di.sh` | Strong bi-Maxwellian firehose, big box — the **controlled twin** of the bi-Kappa-3 run | **40 d_i** | ngrid 1152 |
 | `sim_firehose_bikappa5_40di.sh` | Bi-Kappa-5 firehose, big box — third member of the strong firehose series | **40 d_i** | ngrid 1152 |
 | `sim_mirror_bikappa5_moderate.sh` | Moderate bi-Kappa-5 mirror — third member of the moderate mirror series | 20 d_i | ngrid 576 |
-| `sim_whistler_bimaxwellian_{strong,moderate,weak}.sh` | Bi-Maxwellian whistler (Ae = 3.0 / 2.0 / 1.5); electron-scale cadence, ~43 h expected on 83 nodes | 20 d_i | **ngrid 1152**, 2000 ppc |
+| `sim_whistler_bimaxwellian_{strong,moderate,weak}.sh` | Bi-Maxwellian whistler (Ae = 3.0 / 2.0 / 1.5); electron-scale cadence, each only until relaxation (~6 / ~20 / ~43 h on 83 nodes) | 20 d_i | **ngrid 1152**, 2000 ppc |
 | `sim_whistler_bikappa{3,5}_strong.sh` | Bi-Kappa whistler strong (κ = 3 / 5) — distribution twins of the bi-Maxwellian strong | 20 d_i | **ngrid 1152**, 2000 ppc |
 
-All simulation scripts set `PSC_CHECKPOINT_EVERY=150000`. Checkpoints are only used
+The ion-scale simulation scripts set `PSC_CHECKPOINT_EVERY=150000` (whistler scripts use a per-regime value, see `src/WHISTLER_PARAMETROS.md`). Checkpoints are only used
 to restart a run; running a case without one of these scripts falls back to the
 header default (`PSC_CHECKPOINT_EVERY_DEFAULT = 5000`), which writes 240 checkpoints
 per run.
@@ -60,9 +60,12 @@ resume from a checkpoint if 48 h are not enough.
 The three **strong** whistler runs — bi-Maxwellian, κ=5 and κ=3, differing
 **only** in the distribution (β_e∥ = 0.5, A_e = 3.0 in all three) — go out
 first; moderate and weak wait for these results. Numerics and budget:
-`src/WHISTLER_PARAMETROS.md` (per run: 83 nodes × 28, ~43 h expected inside
-the 72 h limit, ~4 GB RAM/node, ~0.7 TB durable output; checkpoint at step
-150 000 to resume if needed).
+`src/WHISTLER_PARAMETROS.md`. Each strong run goes **only until the
+relaxation**: 40 000 steps = 528 Ω_ce⁻¹, 83 nodes × 28, ~6 h expected
+inside a 12 h limit, ~4 GB RAM/node, ~0.2 TB durable output (~47 000
+core-h for the three). PSC writes a checkpoint at step 20 000 and a final
+one at 40 000; if A_e(t) is still falling at the end, extend from the
+final checkpoint (below) with a larger `PSC_NMAX`.
 
 Build the three executables once, then submit (from the repository root on
 COSMA):
@@ -81,7 +84,16 @@ To resume a run whose 72 h ran out (do **not** resubmit bare — that starts
 a fresh run in a new folder):
 
 ```bash
-sbatch --export=ALL,RUN_TAG=<tag>,PSC_RESTART=<run_dir>/checkpoint_150000.bp \
+sbatch --export=ALL,RUN_TAG=<tag>,PSC_RESTART=<run_dir>/checkpoint_20000.bp \
+  cosma_jobs/simulacion/sim_whistler_bimaxwellian_strong.sh
+```
+
+To extend a finished strong run whose A_e(t) had not yet relaxed (e.g.
+another 20 000 steps), restart from its final checkpoint with a larger
+`PSC_NMAX` — `nmax` counts absolute steps, not additional ones:
+
+```bash
+sbatch --export=ALL,RUN_TAG=<tag>,PSC_NMAX=60000,PSC_RESTART=<run_dir>/checkpoint_40000.bp \
   cosma_jobs/simulacion/sim_whistler_bimaxwellian_strong.sh
 ```
 

@@ -179,8 +179,9 @@ _PROFILES = {
     },
     # Los tres perfiles whistler describen la configuracion de PRODUCCION:
     # los jobs (cosma_jobs/simulacion/sim_whistler_*.sh) refinan grilla y
-    # ppc por variables de entorno (PSC_NGRID=1152, PSC_NICELL=2000,
-    # PSC_NMAX=300000) sobre los defaults 576/1000/1.2M del header.
+    # ppc por variables de entorno (PSC_NGRID=1152, PSC_NICELL=2000) sobre
+    # los defaults 576/1000 del header, y cada regimen corre solo hasta su
+    # relajacion (PSC_NMAX strong 40k, moderate 140k, weak 300k).
     # Justificacion: src/WHISTLER_PARAMETROS.md. Una corrida whistler
     # antigua a 576^2 (si existiera) se analiza con PSC_ANALYSIS_CONFIG.
     "whistler_bimaxwellian_strong": {
@@ -194,7 +195,7 @@ _PROFILES = {
         "kappa": None,
         "domain_di": 20.0,
         "ngrid": 1152,
-        "nmax": 300_000,
+        "nmax": 40_000,
         "nicell": 2000,
         "particle_basename": "prt_whistler_bimaxwellian_strong",
         "instability": "whistler",
@@ -211,7 +212,7 @@ _PROFILES = {
         "kappa": None,
         "domain_di": 20.0,
         "ngrid": 1152,
-        "nmax": 300_000,
+        "nmax": 140_000,
         "nicell": 2000,
         "particle_basename": "prt_whistler_bimaxwellian_moderate",
         "instability": "whistler",
@@ -245,7 +246,7 @@ _PROFILES = {
         "kappa": 3.0,
         "domain_di": 20.0,
         "ngrid": 1152,
-        "nmax": 300_000,
+        "nmax": 40_000,
         "nicell": 2000,
         "particle_basename": "prt_whistler_bikappa3_strong",
         "instability": "whistler",
@@ -262,7 +263,7 @@ _PROFILES = {
         "kappa": 5.0,
         "domain_di": 20.0,
         "ngrid": 1152,
-        "nmax": 300_000,
+        "nmax": 40_000,
         "nicell": 2000,
         "particle_basename": "prt_whistler_bikappa5_strong",
         "instability": "whistler",
