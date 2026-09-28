@@ -26,6 +26,7 @@ by `make theory-self-test`) with the exact case parameters
 | moderate (bi-Max) | 2.0 | 0.054 | 0.71 | 0.39 | 0.40 – ~1.0 | 186 |
 | weak (bi-Max) | 1.5 | 0.0075 | 0.59 | 0.28 | 0.39 – 0.70 | 1 330 |
 | strong (bi-kappa κ=3) | 3.0 | 0.144 | 0.83 | 0.49 | — | 69 |
+| strong (bi-kappa κ=5) | 3.0 | 0.160 | 0.83 | 0.49 | — | 62 |
 | moderate (bi-kappa κ=3) | 2.0 | 0.044 | 0.70 | 0.37 | — | 228 |
 | weak (bi-kappa κ=3) | 1.5 | 0.0084 | 0.55 | 0.25 | — | 1 190 |
 
@@ -116,6 +117,14 @@ Time conversions for the analysis of these runs: 1 Ω_ce⁻¹ = 75.8 steps;
 1 Ω_ci⁻¹ = 200 Ω_ce⁻¹ = 15 160 steps; ω/Ω_ci = (ω/Ω_ce)·200 and
 k d_i = k d_e · 14.14 (the electron presets of `dispersion_analysis.py`
 apply these rescalings; use `DISPERSION_MODE=whistler`).
+
+**Campaign order.** The first batch is the **strong series** — the
+distribution twins `psc_whistler_bimaxwellian_strong`,
+`psc_whistler_bikappa5_strong`, `psc_whistler_bikappa3_strong` (identical
+β/A defines; only `PSC_USE_KAPPA`/`PSC_KAPPA` differ), all with the §4
+configuration. Their growth rates are within 20% of each other (§1), so
+one configuration serves the three. Moderate and weak wait for these
+results. Build/submit commands: `cosma_jobs/README.md`.
 
 ## 5. Resource and storage budget (per run, ×3 for the campaign)
 

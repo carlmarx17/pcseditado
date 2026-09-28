@@ -22,7 +22,8 @@ Repository root on COSMA: `/cosma7/data/dp433/dc-mart18/pcseditado`
 | `sim_firehose_bimaxwellian_strong_40di.sh` | Strong bi-Maxwellian firehose, big box — the **controlled twin** of the bi-Kappa-3 run | **40 d_i** | ngrid 1152 |
 | `sim_firehose_bikappa5_40di.sh` | Bi-Kappa-5 firehose, big box — third member of the strong firehose series | **40 d_i** | ngrid 1152 |
 | `sim_mirror_bikappa5_moderate.sh` | Moderate bi-Kappa-5 mirror — third member of the moderate mirror series | 20 d_i | ngrid 576 |
-| `sim_whistler_bimaxwellian_{strong,moderate,weak}.sh` | Bi-Maxwellian whistler (Ae = 3.0 / 2.0 / 1.5), 72 h limit | 20 d_i | ngrid 576 |
+| `sim_whistler_bimaxwellian_{strong,moderate,weak}.sh` | Bi-Maxwellian whistler (Ae = 3.0 / 2.0 / 1.5); electron-scale cadence, ~43 h expected on 83 nodes | 20 d_i | **ngrid 1152**, 2000 ppc |
+| `sim_whistler_bikappa{3,5}_strong.sh` | Bi-Kappa whistler strong (κ = 3 / 5) — distribution twins of the bi-Maxwellian strong | 20 d_i | **ngrid 1152**, 2000 ppc |
 
 All simulation scripts set `PSC_CHECKPOINT_EVERY=150000`. Checkpoints are only used
 to restart a run; running a case without one of these scripts falls back to the
@@ -53,6 +54,39 @@ sbatch cosma_jobs/simulacion/sim_firehose_bikappa5_40di.sh
 
 Note the job id each submission prints: it becomes the `RUN_TAG` needed to
 resume from a checkpoint if 48 h are not enough.
+
+### Whistler strong series (first whistler batch)
+
+The three **strong** whistler runs — bi-Maxwellian, κ=5 and κ=3, differing
+**only** in the distribution (β_e∥ = 0.5, A_e = 3.0 in all three) — go out
+first; moderate and weak wait for these results. Numerics and budget:
+`src/WHISTLER_PARAMETROS.md` (per run: 83 nodes × 28, ~43 h expected inside
+the 72 h limit, ~4 GB RAM/node, ~0.7 TB durable output; checkpoint at step
+150 000 to resume if needed).
+
+Build the three executables once, then submit (from the repository root on
+COSMA):
+
+```bash
+BUILD_DIR="$PWD/build" BUILD_JOBS=4 \
+  PSC_TARGETS="psc_whistler_bimaxwellian_strong psc_whistler_bikappa3_strong psc_whistler_bikappa5_strong" \
+  src/cosma_build_psc_adios2.sh
+
+sbatch cosma_jobs/simulacion/sim_whistler_bimaxwellian_strong.sh
+sbatch cosma_jobs/simulacion/sim_whistler_bikappa3_strong.sh
+sbatch cosma_jobs/simulacion/sim_whistler_bikappa5_strong.sh
+```
+
+To resume a run whose 72 h ran out (do **not** resubmit bare — that starts
+a fresh run in a new folder):
+
+```bash
+sbatch --export=ALL,RUN_TAG=<tag>,PSC_RESTART=<run_dir>/checkpoint_150000.bp \
+  cosma_jobs/simulacion/sim_whistler_bimaxwellian_strong.sh
+```
+
+After each run finishes, delete its `checkpoint_*.bp` (~340 GB each) once
+the analysis manifests are written.
 
 ### `analisis/` — Python pipeline over finished runs
 

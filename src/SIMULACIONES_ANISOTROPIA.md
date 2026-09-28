@@ -110,6 +110,8 @@ literature comparison, resource budget and the remaining open decision:
 
 | Executable | File | κ | beta_i_par | A_i | beta_e_par | A_e | Grid |
 |---|---|---|---:|---:|---:|---:|---:|
+| `psc_whistler_bikappa3_strong` | `psc_whistler_bikappa3_strong.cxx` | 3 | 1.0 | 1.0 | 0.5 | 3.0 | 1152×1152 |
+| `psc_whistler_bikappa5_strong` | `psc_whistler_bikappa5_strong.cxx` | 5 | 1.0 | 1.0 | 0.5 | 3.0 | 1152×1152 |
 | `psc_mirror_bikappa3` | `psc_mirror_bikappa3.cxx` | 3 | 5.0 | 3.0 | 1.0 | 1.0 | 576×576 |
 | `psc_mirror_bikappa5` | `psc_mirror_bikappa5.cxx` | 5 | 5.0 | 3.0 | 1.0 | 1.0 | 576×576 |
 | `psc_mirror_bikappa5_moderate` | `psc_mirror_bikappa5_moderate.cxx` | 5 | 5.0 | 2.0 | 1.0 | 1.0 | 576×576 |
