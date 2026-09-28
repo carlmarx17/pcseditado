@@ -29,6 +29,11 @@ REGIME = [
 ]
 DISTRIBUTION = ["PSC_USE_KAPPA", "PSC_KAPPA"]
 BOX = ["PSC_DOMAIN_DI"]
+# Variante de razon de masas: PSC_MASS_RATIO se fija al compilar (no por
+# entorno), asi que un estudio con otro mi/me exige un ejecutable aparte.
+# Solo se permite en casos *_mr<N> del setup A, con valor N.
+MASS = ["PSC_MASS_RATIO"]
+MASS_VARIANT_RE = re.compile(r"_mr(\d+)$")
 WHITELIST = set(IDENTITY + REGIME + DISTRIBUTION + BOX)
 
 # Defines que solo deben vivir en el header compartido.
@@ -198,6 +203,15 @@ class Case:
         """Label sin el sufijo de caja, para emparejar gemelos bigbox."""
         return re.sub(r"_bigbox\d+$", "", self.label)
 
+    def mass_variant(self):
+        """N de un sufijo _mr<N> (variante de razon de masas), o None."""
+        m = MASS_VARIANT_RE.search(self.label)
+        return int(m.group(1)) if m else None
+
+    def mass_base_label(self):
+        """Label sin el sufijo _mr<N>, para emparejar gemelos de masa."""
+        return MASS_VARIANT_RE.sub("", self.label)
+
 
 class Report:
     def __init__(self):
@@ -249,6 +263,19 @@ def check_structure(case: Case, rep: Report) -> None:
         )
 
     for key in case.defines:
+        if key in MASS:
+            n = case.mass_variant()
+            if case.setup == "A" and n is not None and \
+                    num(case.defines[key]) == float(n):
+                continue
+            rep.add(
+                "Define estructural fuera del header",
+                case.name,
+                f"{key} solo puede ir en una variante *_mr<N> del setup de "
+                f"anisotropia uniforme y con el valor N del nombre; en "
+                f"cualquier otro caso pertenece a {own_header}",
+            )
+            continue
         if key in WHITELIST:
             if key == "PSC_DOMAIN_DI" and case.setup == "B":
                 rep.add(
@@ -400,9 +427,9 @@ def check_regime_siblings(cases: list[Case], rep: Report) -> None:
     for c in cases:
         fam, dist, reg = c.family(), c.distribution_key(), c.regime()
         if fam and dist and reg and "bigbox" not in c.label:
-            groups[(c.setup, fam, dist)].append(c)
+            groups[(c.setup, fam, dist, c.mass_variant() or 0)].append(c)
 
-    for (setup, fam, dist), members in sorted(groups.items()):
+    for (setup, fam, dist, _mr), members in sorted(groups.items()):
         if len(members) < 2:
             continue
         ref = members[0]
@@ -428,11 +455,12 @@ def check_distribution_twins(cases: list[Case], rep: Report) -> None:
         fam, reg = c.family(), c.regime()
         if fam and reg:
             box = c.defines.get("PSC_DOMAIN_DI", "20.0")
-            groups[(c.setup, fam, reg, box)].append(c)
+            mr = c.defines.get("PSC_MASS_RATIO", "-")
+            groups[(c.setup, fam, reg, box, mr)].append(c)
         elif c.is_isotropic_control:
-            groups[(c.setup, "isotropic", "control", "-")].append(c)
+            groups[(c.setup, "isotropic", "control", "-", "-")].append(c)
 
-    for (setup, fam, reg, box), members in sorted(groups.items()):
+    for (setup, fam, reg, box, mr), members in sorted(groups.items()):
         dists = {c.distribution_key() for c in members}
         if len(members) < 2 or len(dists) < 2:
             continue
@@ -487,6 +515,42 @@ def check_box_twins(cases: list[Case], rep: Report) -> None:
                     f"difiere de {base.name} en {key} "
                     f"({a.get(key)!r} vs {b.get(key)!r}); la unica diferencia "
                     f"permitida es PSC_DOMAIN_DI",
+                )
+
+
+def check_mass_twins(cases: list[Case], rep: Report) -> None:
+    """*_mr<N> debe ser identico a su base salvo PSC_MASS_RATIO = N."""
+    by_label = {c.label: c for c in cases}
+    for c in cases:
+        n = c.mass_variant()
+        if n is None:
+            continue
+        base = by_label.get(c.mass_base_label())
+        if base is None:
+            rep.add(
+                "Paridad de gemelos de masa",
+                c.name,
+                f"no existe el caso base psc_{c.mass_base_label()}.cxx contra "
+                f"el cual comparar la variante de razon de masas",
+            )
+            continue
+        if num(c.defines.get("PSC_MASS_RATIO", "")) != float(n):
+            rep.add(
+                "Paridad de gemelos de masa",
+                c.name,
+                f"el nombre dice mr{n} pero PSC_MASS_RATIO es "
+                f"{c.defines.get('PSC_MASS_RATIO')!r}",
+            )
+        a = {k: v for k, v in c.defines.items() if k not in IDENTITY + MASS}
+        b = {k: v for k, v in base.defines.items() if k not in IDENTITY + MASS}
+        for key in sorted(set(a) | set(b)):
+            if a.get(key) != b.get(key):
+                rep.add(
+                    "Paridad de gemelos de masa",
+                    c.name,
+                    f"difiere de {base.name} en {key} "
+                    f"({a.get(key)!r} vs {b.get(key)!r}); la unica diferencia "
+                    f"permitida es PSC_MASS_RATIO",
                 )
 
 
@@ -652,6 +716,7 @@ def main(argv: list[str]) -> int:
     check_regime_siblings(cases, rep)
     check_distribution_twins(cases, rep)
     check_box_twins(cases, rep)
+    check_mass_twins(cases, rep)
     check_harris_invariants(cases, rep)
     check_cross_anchor(cases, rep)
     check_isotropic_controls(cases, rep)

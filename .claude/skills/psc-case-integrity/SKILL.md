@@ -118,17 +118,20 @@ Distribución (opcionales, van juntos o no van):
 | `PSC_USE_KAPPA` | `1` en casos bi-Kappa; ausente (default `0`) en bi-Maxwellianos |
 | `PSC_KAPPA` | índice κ; solo tiene sentido con `PSC_USE_KAPPA 1` |
 
-Excepción documentada, solo en setup A:
+Excepciones documentadas, solo en setup A:
 
 | Define | Cuándo |
 |---|---|
 | `PSC_DOMAIN_DI` | **solo** en variantes `*_bigbox40`, con valor `40.0` |
+| `PSC_MASS_RATIO` | **solo** en variantes `*_mr<N>`, con valor `N` (hoy: `*_mr800`, serie whistler strong) |
 
-`PSC_DOMAIN_DI` es la única excepción porque el tamaño de caja no es
-overrideable por variable de entorno (ver el `#ifndef` en el header), así que un
-estudio de convergencia de caja exige un ejecutable aparte. Es un experimento
-deliberado sobre el tamaño del dominio, no una divergencia accidental — y por
-eso la variante bigbox debe ser *idéntica en todo lo demás* a su caso base.
+`PSC_DOMAIN_DI` y `PSC_MASS_RATIO` son las únicas excepciones porque ninguno
+es overrideable por variable de entorno (ver los `#ifndef` en el header), así
+que un estudio de convergencia de caja o de razón de masas exige un ejecutable
+aparte. Son experimentos deliberados sobre el dominio o sobre la separación de
+escalas, no divergencias accidentales — y por eso cada variante (`bigbox40`,
+`mr800`) debe ser *idéntica en todo lo demás* a su caso base. El verificador
+lo exige (grupos "gemelos de caja" y "gemelos de masa").
 
 **Cualquier otro `#define` en un `.cxx` de caso es una alerta.** En particular
 `PSC_NGRID_DEFAULT`, `PSC_NICELL_DEFAULT`, `PSC_MASS_RATIO`, `PSC_VA_OVER_C`,

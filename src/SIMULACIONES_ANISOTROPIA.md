@@ -85,16 +85,47 @@ Criterion: `beta_i_parallel * (1 - A_i) > 2`
 Electrons with excess perpendicular temperature. Isotropic ions.
 Criterion: `A_e > 1 + 0.21 / beta_e_parallel^0.6`
 
+The whistler is the only **electron-scale** instability of the matrix
+(gamma_max = 0.175 / 0.054 / 0.0075 Omega_ce and omega_r = 0.25–0.5
+Omega_ce for strong/moderate/weak, from `linear_theory.py`). The source
+files keep the shared header defaults, but the whistler **production
+jobs** refine the numerics for the whole family by environment override
+(`PSC_NGRID=1152`, `PSC_NICELL=2000`, `PSC_NP_Y/Z=48`), shorten the run
+each run only until its anisotropy has relaxed (`PSC_NMAX` = 40 000 /
+140 000 / 300 000 for strong / moderate / weak, identical between
+distribution twins) and set the output cadence the whistler branch needs
+(`PSC_FIELDS_EVERY=100` -> field-output Nyquist 2.38 Omega_ce;
+`PSC_ENERGIES_EVERY=20`; particle and checkpoint cadence per regime):
+the ion-scale defaults alias the whistler branch and run far past
+saturation. The
+grid column below is the production grid. Full parameter study,
+literature comparison, resource budget and the remaining open decision:
+`WHISTLER_PARAMETROS.md`.
+
 | Executable | File | Regime | beta_i_par | A_i | beta_e_par | A_e | Grid |
 |---|---|---|---:|---:|---:|---:|---:|
-| `psc_whistler_bimaxwellian_strong` | `psc_whistler_bimaxwellian_strong.cxx` | Strong | 1.0 | 1.0 | 0.5 | 3.0 | 576×576 |
-| `psc_whistler_bimaxwellian_moderate` | `psc_whistler_bimaxwellian_moderate.cxx` | Moderate | 1.0 | 1.0 | 0.5 | 2.0 | 576×576 |
-| `psc_whistler_bimaxwellian_weak` | `psc_whistler_bimaxwellian_weak.cxx` | Weak | 1.0 | 1.0 | 0.5 | 1.5 | 576×576 |
+| `psc_whistler_bimaxwellian_strong` | `psc_whistler_bimaxwellian_strong.cxx` | Strong | 1.0 | 1.0 | 0.5 | 3.0 | 1152×1152 |
+| `psc_whistler_bimaxwellian_moderate` | `psc_whistler_bimaxwellian_moderate.cxx` | Moderate | 1.0 | 1.0 | 0.5 | 2.0 | 1152×1152 |
+| `psc_whistler_bimaxwellian_weak` | `psc_whistler_bimaxwellian_weak.cxx` | Weak | 1.0 | 1.0 | 0.5 | 1.5 | 1152×1152 |
+
+**Mass-ratio variant (mi/me = 800).** Same physics and electron-scale
+resolution (Δx = 0.245 d_e) with the realistic-leaning mass ratio; the
+20 d_i box becomes 566 d_e, hence the 2304² grid. `PSC_MASS_RATIO` is
+compile-time, so these are separate executables (like `*_bigbox40` for the
+box); each is identical to its mi/me = 200 base except that define.
+
+| Executable | File | κ | beta_i_par | A_i | beta_e_par | A_e | mi/me | Grid |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| `psc_whistler_bimaxwellian_strong_mr800` | `psc_whistler_bimaxwellian_strong_mr800.cxx` | ∞ | 1.0 | 1.0 | 0.5 | 3.0 | 800 | 2304×2304 |
+| `psc_whistler_bikappa3_strong_mr800` | `psc_whistler_bikappa3_strong_mr800.cxx` | 3 | 1.0 | 1.0 | 0.5 | 3.0 | 800 | 2304×2304 |
+| `psc_whistler_bikappa5_strong_mr800` | `psc_whistler_bikappa5_strong_mr800.cxx` | 5 | 1.0 | 1.0 | 0.5 | 3.0 | 800 | 2304×2304 |
 
 ## Bi-Kappa
 
 | Executable | File | κ | beta_i_par | A_i | beta_e_par | A_e | Grid |
 |---|---|---|---:|---:|---:|---:|---:|
+| `psc_whistler_bikappa3_strong` | `psc_whistler_bikappa3_strong.cxx` | 3 | 1.0 | 1.0 | 0.5 | 3.0 | 1152×1152 |
+| `psc_whistler_bikappa5_strong` | `psc_whistler_bikappa5_strong.cxx` | 5 | 1.0 | 1.0 | 0.5 | 3.0 | 1152×1152 |
 | `psc_mirror_bikappa3` | `psc_mirror_bikappa3.cxx` | 3 | 5.0 | 3.0 | 1.0 | 1.0 | 576×576 |
 | `psc_mirror_bikappa5` | `psc_mirror_bikappa5.cxx` | 5 | 5.0 | 3.0 | 1.0 | 1.0 | 576×576 |
 | `psc_mirror_bikappa5_moderate` | `psc_mirror_bikappa5_moderate.cxx` | 5 | 5.0 | 2.0 | 1.0 | 1.0 | 576×576 |

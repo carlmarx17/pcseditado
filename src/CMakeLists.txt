@@ -46,6 +46,17 @@ add_psc_executable(psc_whistler_bikappa3_moderate)
 add_psc_executable(psc_mirror_bikappa5)
 add_psc_executable(psc_firehose_bikappa3)
 add_psc_executable(psc_firehose_bikappa5)
+# Gemelos de distribucion de psc_whistler_bimaxwellian_strong (mismos
+# beta_e_par=0.5, Ae=3.0): serie whistler strong bi-Max / k=5 / k=3.
+# Los jobs whistler refinan grilla/ppc por entorno (WHISTLER_PARAMETROS.md).
+add_psc_executable(psc_whistler_bikappa3_strong)
+add_psc_executable(psc_whistler_bikappa5_strong)
+# Variante mi/me=800 de la serie whistler strong (PSC_MASS_RATIO es
+# compile-time, como PSC_DOMAIN_DI en bigbox40): identica a su base salvo
+# la razon de masas. Ver src/WHISTLER_PARAMETROS.md.
+add_psc_executable(psc_whistler_bimaxwellian_strong_mr800)
+add_psc_executable(psc_whistler_bikappa3_strong_mr800)
+add_psc_executable(psc_whistler_bikappa5_strong_mr800)
 
 # --- Firehose caja grande (40 d_i, misma fisica, ngrid=576) ---
 # El tamano de caja es compile-time (#define PSC_DOMAIN_DI), no env,

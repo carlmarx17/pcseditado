@@ -362,6 +362,13 @@ CodeforAnalisys/
 ├── validate_moments.py       ← VALIDATION (reads prt.*.h5)
 │   └── Checks that measured moments = initialization parameters
 │
+├── reconnection_analysis.py  ← RECONNECTION RUNS (reads pfd + prt)
+│   ├── Geometry read from the snapshots (rectangular boxes supported);
+│   │   profiles for psc_reconnection / psc_reconnection_comparable
+│   ├── <|B|>(t) in the prt window and in the perturbed sheet,
+│   │   reconnected-flux proxy, overview panels
+│   └── kappa_eff(t) via kappa_eff.py + B–kappa correlation (CSV/JSON/PNG)
+│
 ├── plot_vdf_3d.py            ← 3D VDF (reads prt.*.h5)
 │   └── 3D surface f(vx, vy, vz)
 │

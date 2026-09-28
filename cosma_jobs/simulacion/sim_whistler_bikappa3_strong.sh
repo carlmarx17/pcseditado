@@ -1,9 +1,10 @@
 #!/bin/bash
 #
 # =====================================================================
-#  Job SLURM: psc_whistler_bimaxwellian_moderate — COSMA7-rp
+#  Job SLURM: psc_whistler_bikappa3_strong — COSMA7-rp
 #
-#  Whistler Moderate Bi-Maxwelliano: beta_e_par=0.5, Ae=Te_perp/Te_par=2.0,
+#  Whistler Strong Bi-Kappa 3 (kappa=3.0, gemelo de distribucion del
+#  bi-Maxwelliano strong): beta_e_par=0.5, Ae=Te_perp/Te_par=3.0,
 #  beta_i_par=1.0, Ai=1.0, mass_ratio=200. Caja de 20 d_i como toda la
 #  matriz, pero con grilla y ppc REFINADOS solo para la familia whistler
 #  (decision registrada en src/WHISTLER_PARAMETROS.md): ngrid 1152
@@ -19,47 +20,59 @@
 #  Con ngrid 1152 el CFL baja dt a 0.165 wpe^-1 (75.8 pasos por
 #  Omega_ce^-1), asi que las cadencias en PASOS se duplican para
 #  mantener la misma cadencia FISICA:
-#    - nmax 140000 = 1847 Omega_ce^-1 = 9.2 Omega_ci^-1: SOLO hasta
-#      la relajacion. Criterio comun a la familia: t_fin ~ 8 x t_10,
-#      con t_10 = 10/gamma_max del gemelo mas lento del regimen
-#      (bi-kappa 3: gamma = 0.044 Omega_ce -> t_10 = 228 Omega_ce^-1).
+#    - nmax 40000 = 528 Omega_ce^-1 = 2.6 Omega_ci^-1: SOLO hasta la
+#      relajacion. Criterio comun a la familia: t_fin ~ 8 x t_10, con
+#      t_10 = 10/gamma_max del gemelo mas lento del regimen (bi-kappa 3:
+#      gamma = 0.144 Omega_ce -> t_10 = 69 Omega_ce^-1). Cubre
+#      crecimiento desde el ruido, saturacion y relajacion de A_e hacia
+#      el umbral marginal (~1.32); la literatura resuelve toda la
+#      evolucion en 150-450 Omega_ce^-1 (src/WHISTLER_PARAMETROS.md).
 #      Si A_e(t) sigue bajando al final, se EXTIENDE desde el checkpoint
-#      final (PSC siempre escribe uno al terminar).
+#      final (PSC siempre escribe uno al terminar) en vez de haber
+#      corrido de mas por adelantado.
 #    - fields cada 100 pasos = 1.32 Omega_ce^-1 -> Nyquist 2.38
-#      Omega_ce (el default del header ALIASA toda la rama whistler).
-#      1400 snapshots (~260 GB campos+momentos).
-#    - particles cada 10000 = 132 Omega_ce^-1 -> 15 dumps de VDF
-#      (~8 GB c/u, ~115 GB por corrida).
+#      Omega_ce (el default del header ALIASA toda la rama whistler,
+#      omega_r = 0.25-0.5 Omega_ce); 4.3 muestras por e-fold del caso
+#      mas rapido. 400 snapshots (~74 GB campos+momentos).
+#    - particles cada 2500 = 33 Omega_ce^-1 -> ~17 dumps de VDF para
+#      A_e(t) y kappa_eff(t) (~8 GB c/u, ~130 GB por corrida).
 #    - energies cada 20 = 0.26 Omega_ce^-1 (gamma global gratis).
-#    - checkpoint cada 70000 + el final -> 2 por corrida (~160 GB c/u).
+#    - checkpoint SOLO el final (PSC_CHECKPOINT_EVERY = nmax): la
+#      corrida dura ~6 h en una ventana de 12 h, asi que un intermedio
+#      no aporta y costaria ~160 GB de una cuota de grupo casi llena.
+#      El final (~160 GB) sirve para extender; conservarlo hasta
+#      confirmar que la relajacion esta completa. Si el job muere a
+#      medio camino, se relanza desde t=0 (~6 h).
 #  Presupuesto (calibrado con las corridas ionicas de 48 h en 1024
-#  ranks): ~20 h en 2304 ranks (~55k core-h por corrida).
-#  IMPORTANTE (paridad): los futuros gemelos bi-kappa moderate
-#  reutilizan estos valores tal cual. La duracion difiere A PROPOSITO
-#  entre regimenes (strong 40k, moderate 140k, weak 300k).
+#  ranks): ~5.7 h en 2304 ranks (~16k core-h por corrida, ~47k la
+#  serie strong). RAM ~3-4 GB/nodo.
+#  IMPORTANTE (paridad): los tres gemelos de distribucion strong
+#  (bi-Maxwelliano, kappa=3, kappa=5) comparten TODOS estos valores.
+#  La duracion difiere A PROPOSITO entre regimenes (strong 40k,
+#  moderate 140k, weak 300k): cada uno corre solo hasta su relajacion.
 #
 #  Antes de enviar, compilar el ejecutable (una sola vez):
 #    cd /cosma7/data/dp433/dc-mart18/pcseditado
 #    BUILD_DIR="$PWD/build" BUILD_JOBS=4 \
-#      PSC_TARGETS=psc_whistler_bimaxwellian_moderate \
+#      PSC_TARGETS=psc_whistler_bikappa3_strong \
 #      src/cosma_build_psc_adios2.sh
 #
 #  Envio (desde la raiz del repo en COSMA):
-#    sbatch cosma_jobs/simulacion/sim_whistler_bimaxwellian_moderate.sh
+#    sbatch cosma_jobs/simulacion/sim_whistler_bikappa3_strong.sh
 #
-#  REANUDAR si las 36 h no alcanzan (NO reenviar sin esto: un reenvio
+#  REANUDAR si las 12 h no alcanzan (NO reenviar sin esto: un reenvio
 #  pelado empieza otra corrida desde t=0 en una carpeta nueva):
 #    sbatch --export=ALL,RUN_TAG=<tag-de-la-corrida>,PSC_RESTART=/ruta/checkpoint_<step>.bp \
-#      cosma_jobs/simulacion/sim_whistler_bimaxwellian_moderate.sh
+#      cosma_jobs/simulacion/sim_whistler_bikappa3_strong.sh
 # =====================================================================
 
-#SBATCH --job-name=psc_whistler_bimaxwellian_moderate
+#SBATCH --job-name=psc_whistler_bikappa3_strong
 #SBATCH --partition=cosma7-rp
 #SBATCH --account=dp433
 #SBATCH --nodes=83
 #SBATCH --ntasks-per-node=28
 #SBATCH --ntasks=2304
-#SBATCH --time=36:00:00
+#SBATCH --time=12:00:00
 #SBATCH --output=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.out
 #SBATCH --error=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
@@ -71,7 +84,7 @@ BASE=/cosma7/data/dp433/dc-mart18
 REPO="$BASE/pcseditado"
 BUILD_DIR="${BUILD_DIR:-$REPO/build}"
 RUN_ROOT="$BASE/anisotropy_adios2"
-PSC_TARGET=psc_whistler_bimaxwellian_moderate
+PSC_TARGET=psc_whistler_bikappa3_strong
 
 # =====================================================================
 #  Carpeta de la corrida: se identifica por RUN_TAG, no por
@@ -93,11 +106,11 @@ PSC_NP_Z="${PSC_NP_Z:-48}"
 # Duracion y cadencias de escala electronica (ver cabecera y
 # src/WHISTLER_PARAMETROS.md). La duracion es propia de cada regimen
 # (solo hasta la relajacion); identica entre gemelos de distribucion.
-PSC_NMAX="${PSC_NMAX:-140000}"
+PSC_NMAX="${PSC_NMAX:-40000}"
 PSC_FIELDS_EVERY="${PSC_FIELDS_EVERY:-100}"
-PSC_PARTICLES_EVERY="${PSC_PARTICLES_EVERY:-10000}"
+PSC_PARTICLES_EVERY="${PSC_PARTICLES_EVERY:-2500}"
 PSC_ENERGIES_EVERY="${PSC_ENERGIES_EVERY:-20}"
-PSC_CHECKPOINT_EVERY="${PSC_CHECKPOINT_EVERY:-70000}"
+PSC_CHECKPOINT_EVERY="${PSC_CHECKPOINT_EVERY:-40000}"
 PSC_LAUNCHER="${PSC_LAUNCHER:-mpirun}"
 export PSC_NGRID PSC_NICELL PSC_NP_Y PSC_NP_Z PSC_NMAX PSC_FIELDS_EVERY \
        PSC_PARTICLES_EVERY PSC_ENERGIES_EVERY PSC_CHECKPOINT_EVERY PSC_LAUNCHER

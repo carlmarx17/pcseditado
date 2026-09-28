@@ -1,65 +1,68 @@
 #!/bin/bash
 #
 # =====================================================================
-#  Job SLURM: psc_whistler_bimaxwellian_moderate — COSMA7-rp
+#  Job SLURM: psc_whistler_bimaxwellian_strong_mr800 — COSMA7-rp
 #
-#  Whistler Moderate Bi-Maxwelliano: beta_e_par=0.5, Ae=Te_perp/Te_par=2.0,
-#  beta_i_par=1.0, Ai=1.0, mass_ratio=200. Caja de 20 d_i como toda la
-#  matriz, pero con grilla y ppc REFINADOS solo para la familia whistler
-#  (decision registrada en src/WHISTLER_PARAMETROS.md): ngrid 1152
-#  (dx = 0.245 d_e, dx/lambda_De = 6.1), nicell 2000, np 48x48 = 2304
-#  ranks (misma descomposicion que los jobs bigbox40; parches 24x24).
+#  Whistler Strong Bi-Maxwelliano, VARIANTE mi/me = 800: beta_e_par=0.5,
+#  Ae=Te_perp/Te_par=3.0, beta_i_par=1.0, Ai=1.0. Identico a
+#  psc_whistler_bimaxwellian_strong salvo PSC_MASS_RATIO (compile-time, por
+#  eso es otro ejecutable). Justificacion: src/WHISTLER_PARAMETROS.md.
 #
-#  El whistler es la unica inestabilidad de escala ELECTRONICA de la
-#  matriz (crece en d_e y Omega_ce^-1), asi que la duracion y las
-#  cadencias de salida del header (pensadas para escalas ionicas) se
-#  pisan aqui por entorno; grilla, caja, ppc y dt quedan identicos al
-#  resto de la matriz. Justificacion completa (teoria lineal de los tres
-#  regimenes + literatura): src/WHISTLER_PARAMETROS.md. Resumen:
-#  Con ngrid 1152 el CFL baja dt a 0.165 wpe^-1 (75.8 pasos por
-#  Omega_ce^-1), asi que las cadencias en PASOS se duplican para
-#  mantener la misma cadencia FISICA:
-#    - nmax 140000 = 1847 Omega_ce^-1 = 9.2 Omega_ci^-1: SOLO hasta
-#      la relajacion. Criterio comun a la familia: t_fin ~ 8 x t_10,
-#      con t_10 = 10/gamma_max del gemelo mas lento del regimen
-#      (bi-kappa 3: gamma = 0.044 Omega_ce -> t_10 = 228 Omega_ce^-1).
+#  Que cambia con mi/me = 800 y que no:
+#    - d_i = 28.3 d_e (antes 14.1): la caja de 20 d_i mide 566 d_e, asi
+#      que para conservar la resolucion electronica (dx = 0.245 d_e,
+#      dx/lambda_De = 6.1) la grilla pasa a 2304^2. nicell 2000.
+#    - B0, betas, anisotropias, omega_pe/Omega_ce = 12.5 y dt (0.165
+#      wpe^-1, 75.8 pasos por Omega_ce^-1) NO cambian.
+#    - La fisica del whistler tampoco: teoria lineal con mi/me=800 da
+#      gamma = 0.175 / 0.161 / 0.145 Omega_ce (bi-Max / k5 / k3), igual
+#      que con 200 a <0.5%. Por eso nmax y cadencias en Omega_ce son las
+#      mismas; lo que cambia es la separacion de escalas: la corrida
+#      entera dura 0.66 Omega_ci^-1 (iones practicamente quietos).
+#
+#  Duracion y salidas:
+#    - nmax 40000 = 528 Omega_ce^-1: SOLO hasta la relajacion (criterio
+#      t_fin ~ 8 x t_10 del gemelo mas lento, k3: t_10 = 69 Omega_ce^-1).
 #      Si A_e(t) sigue bajando al final, se EXTIENDE desde el checkpoint
-#      final (PSC siempre escribe uno al terminar).
-#    - fields cada 100 pasos = 1.32 Omega_ce^-1 -> Nyquist 2.38
-#      Omega_ce (el default del header ALIASA toda la rama whistler).
-#      1400 snapshots (~260 GB campos+momentos).
-#    - particles cada 10000 = 132 Omega_ce^-1 -> 15 dumps de VDF
-#      (~8 GB c/u, ~115 GB por corrida).
-#    - energies cada 20 = 0.26 Omega_ce^-1 (gamma global gratis).
-#    - checkpoint cada 70000 + el final -> 2 por corrida (~160 GB c/u).
+#      final con un PSC_NMAX mayor.
+#    - fields cada 100 = 1.32 Omega_ce^-1 -> Nyquist 2.38 Omega_ce. 400
+#      snapshots pfd + 400 pfd_moments (~0.30 TB).
+#    - particles cada 5000 = 66 Omega_ce^-1 -> 9 dumps (pasos 0..40000,
+#      ~30 GB c/u, ~0.28 TB). Menos que con mi/me=200 por la cuota del
+#      grupo; A_e(t) denso sale de los momentos, los dumps dan kappa_eff.
+#    - energies cada 20 = 0.26 Omega_ce^-1.
+#    - checkpoint SOLO el final (PSC_CHECKPOINT_EVERY = nmax), ~0.64 TB
+#      (~30 B/particula medido en COSMA). Conservarlo hasta confirmar la
+#      relajacion; si el job muere a medio camino se relanza desde t=0.
 #  Presupuesto (calibrado con las corridas ionicas de 48 h en 1024
-#  ranks): ~20 h en 2304 ranks (~55k core-h por corrida).
-#  IMPORTANTE (paridad): los futuros gemelos bi-kappa moderate
-#  reutilizan estos valores tal cual. La duracion difiere A PROPOSITO
-#  entre regimenes (strong 40k, moderate 140k, weak 300k).
+#  ranks): 2.1e10 particulas x 40000 pasos -> ~23 h en 2304 ranks / 83
+#  nodos (~63k core-h por corrida, ~190k la serie). RAM ~0.7-1.4 TB en
+#  total, ~8-16 GB por nodo de 510 GB. Disco: ~0.58 TB durable +
+#  ~0.64 TB de checkpoint por corrida.
+#  IMPORTANTE (paridad): los tres gemelos mr800 (bi-Max, k3, k5)
+#  comparten TODOS estos valores.
 #
 #  Antes de enviar, compilar el ejecutable (una sola vez):
 #    cd /cosma7/data/dp433/dc-mart18/pcseditado
 #    BUILD_DIR="$PWD/build" BUILD_JOBS=4 \
-#      PSC_TARGETS=psc_whistler_bimaxwellian_moderate \
+#      PSC_TARGETS=psc_whistler_bimaxwellian_strong_mr800 \
 #      src/cosma_build_psc_adios2.sh
 #
 #  Envio (desde la raiz del repo en COSMA):
-#    sbatch cosma_jobs/simulacion/sim_whistler_bimaxwellian_moderate.sh
+#    sbatch cosma_jobs/simulacion/sim_whistler_bimaxwellian_strong_mr800.sh
 #
-#  REANUDAR si las 36 h no alcanzan (NO reenviar sin esto: un reenvio
-#  pelado empieza otra corrida desde t=0 en una carpeta nueva):
-#    sbatch --export=ALL,RUN_TAG=<tag-de-la-corrida>,PSC_RESTART=/ruta/checkpoint_<step>.bp \
-#      cosma_jobs/simulacion/sim_whistler_bimaxwellian_moderate.sh
+#  EXTENDER una corrida terminada (PSC_NMAX es el paso final ABSOLUTO):
+#    sbatch --export=ALL,RUN_TAG=<tag>,PSC_NMAX=60000,PSC_RESTART=<run_dir>/checkpoint_40000.bp \
+#      cosma_jobs/simulacion/sim_whistler_bimaxwellian_strong_mr800.sh
 # =====================================================================
 
-#SBATCH --job-name=psc_whistler_bimaxwellian_moderate
+#SBATCH --job-name=psc_whistler_bimaxwellian_strong_mr800
 #SBATCH --partition=cosma7-rp
 #SBATCH --account=dp433
 #SBATCH --nodes=83
 #SBATCH --ntasks-per-node=28
 #SBATCH --ntasks=2304
-#SBATCH --time=36:00:00
+#SBATCH --time=48:00:00
 #SBATCH --output=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.out
 #SBATCH --error=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
@@ -71,7 +74,7 @@ BASE=/cosma7/data/dp433/dc-mart18
 REPO="$BASE/pcseditado"
 BUILD_DIR="${BUILD_DIR:-$REPO/build}"
 RUN_ROOT="$BASE/anisotropy_adios2"
-PSC_TARGET=psc_whistler_bimaxwellian_moderate
+PSC_TARGET=psc_whistler_bimaxwellian_strong_mr800
 
 # =====================================================================
 #  Carpeta de la corrida: se identifica por RUN_TAG, no por
@@ -82,22 +85,21 @@ PSC_TARGET=psc_whistler_bimaxwellian_moderate
 RUN_TAG="${RUN_TAG:-$SLURM_JOB_ID}"
 RUN_DIR="$RUN_ROOT/${PSC_TARGET}_${RUN_TAG}"
 
-# Grilla y ppc refinados SOLO para la familia whistler (decision
-# registrada en src/WHISTLER_PARAMETROS.md; los defaults del header y
-# los .cxx siguen en 576/1000). Los tres whistler y sus futuros gemelos
-# bi-kappa deben compartir estos valores.
-PSC_NGRID="${PSC_NGRID:-1152}"
+# mi/me = 800: la caja de 20 d_i mide 566 d_e; 2304^2 conserva la
+# resolucion electronica de la familia whistler (dx = 0.245 d_e).
+# np 48x48 -> parches de 48x48 celdas. Identico en los tres gemelos mr800.
+PSC_NGRID="${PSC_NGRID:-2304}"
 PSC_NICELL="${PSC_NICELL:-2000}"
 PSC_NP_Y="${PSC_NP_Y:-48}"
 PSC_NP_Z="${PSC_NP_Z:-48}"
 # Duracion y cadencias de escala electronica (ver cabecera y
 # src/WHISTLER_PARAMETROS.md). La duracion es propia de cada regimen
 # (solo hasta la relajacion); identica entre gemelos de distribucion.
-PSC_NMAX="${PSC_NMAX:-140000}"
+PSC_NMAX="${PSC_NMAX:-40000}"
 PSC_FIELDS_EVERY="${PSC_FIELDS_EVERY:-100}"
-PSC_PARTICLES_EVERY="${PSC_PARTICLES_EVERY:-10000}"
+PSC_PARTICLES_EVERY="${PSC_PARTICLES_EVERY:-5000}"
 PSC_ENERGIES_EVERY="${PSC_ENERGIES_EVERY:-20}"
-PSC_CHECKPOINT_EVERY="${PSC_CHECKPOINT_EVERY:-70000}"
+PSC_CHECKPOINT_EVERY="${PSC_CHECKPOINT_EVERY:-40000}"
 PSC_LAUNCHER="${PSC_LAUNCHER:-mpirun}"
 export PSC_NGRID PSC_NICELL PSC_NP_Y PSC_NP_Z PSC_NMAX PSC_FIELDS_EVERY \
        PSC_PARTICLES_EVERY PSC_ENERGIES_EVERY PSC_CHECKPOINT_EVERY PSC_LAUNCHER
