@@ -36,9 +36,12 @@
 #    - particles cada 2500 = 33 Omega_ce^-1 -> ~17 dumps de VDF para
 #      A_e(t) y kappa_eff(t) (~8 GB c/u, ~130 GB por corrida).
 #    - energies cada 20 = 0.26 Omega_ce^-1 (gamma global gratis).
-#    - checkpoint cada 20000 + el final -> 2 por corrida (~340 GB c/u;
-#      borrar el intermedio al terminar, conservar el final hasta
-#      confirmar que la relajacion esta completa).
+#    - checkpoint SOLO el final (PSC_CHECKPOINT_EVERY = nmax): la
+#      corrida dura ~6 h en una ventana de 12 h, asi que un intermedio
+#      no aporta y costaria ~340 GB de una cuota de grupo casi llena.
+#      El final (~340 GB) sirve para extender; conservarlo hasta
+#      confirmar que la relajacion esta completa. Si el job muere a
+#      medio camino, se relanza desde t=0 (~6 h).
 #  Presupuesto (calibrado con las corridas ionicas de 48 h en 1024
 #  ranks): ~5.7 h en 2304 ranks (~16k core-h por corrida, ~47k la
 #  serie strong). RAM ~3-4 GB/nodo.
@@ -106,7 +109,7 @@ PSC_NMAX="${PSC_NMAX:-40000}"
 PSC_FIELDS_EVERY="${PSC_FIELDS_EVERY:-100}"
 PSC_PARTICLES_EVERY="${PSC_PARTICLES_EVERY:-2500}"
 PSC_ENERGIES_EVERY="${PSC_ENERGIES_EVERY:-20}"
-PSC_CHECKPOINT_EVERY="${PSC_CHECKPOINT_EVERY:-20000}"
+PSC_CHECKPOINT_EVERY="${PSC_CHECKPOINT_EVERY:-40000}"
 PSC_LAUNCHER="${PSC_LAUNCHER:-mpirun}"
 export PSC_NGRID PSC_NICELL PSC_NP_Y PSC_NP_Z PSC_NMAX PSC_FIELDS_EVERY \
        PSC_PARTICLES_EVERY PSC_ENERGIES_EVERY PSC_CHECKPOINT_EVERY PSC_LAUNCHER

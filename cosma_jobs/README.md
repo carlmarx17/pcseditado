@@ -63,9 +63,19 @@ first; moderate and weak wait for these results. Numerics and budget:
 `src/WHISTLER_PARAMETROS.md`. Each strong run goes **only until the
 relaxation**: 40 000 steps = 528 Ω_ce⁻¹, 83 nodes × 28, ~6 h expected
 inside a 12 h limit, ~4 GB RAM/node, ~0.2 TB durable output (~47 000
-core-h for the three). PSC writes a checkpoint at step 20 000 and a final
-one at 40 000; if A_e(t) is still falling at the end, extend from the
-final checkpoint (below) with a larger `PSC_NMAX`.
+core-h for the three). The strong runs write **only the final**
+checkpoint (`checkpoint_40000.bp`, ~340 GB) to spare the nearly full
+dp433 group quota; if a job dies mid-run it is simply resubmitted from
+t=0 (~6 h). If A_e(t) is still falling at the end, extend from the final
+checkpoint (below) with a larger `PSC_NMAX`.
+
+The three strong runs fit side by side across the two identical COSMA7
+partitions (`cosma7-rp`, `cosma7`; 83 nodes each). `--partition` on the
+command line overrides the script:
+
+```bash
+sbatch --partition=cosma7 cosma_jobs/simulacion/sim_whistler_bikappa5_strong.sh
+```
 
 Build the three executables once, then submit (from the repository root on
 COSMA):
@@ -78,14 +88,6 @@ BUILD_DIR="$PWD/build" BUILD_JOBS=4 \
 sbatch cosma_jobs/simulacion/sim_whistler_bimaxwellian_strong.sh
 sbatch cosma_jobs/simulacion/sim_whistler_bikappa3_strong.sh
 sbatch cosma_jobs/simulacion/sim_whistler_bikappa5_strong.sh
-```
-
-To resume a run whose 72 h ran out (do **not** resubmit bare — that starts
-a fresh run in a new folder):
-
-```bash
-sbatch --export=ALL,RUN_TAG=<tag>,PSC_RESTART=<run_dir>/checkpoint_20000.bp \
-  cosma_jobs/simulacion/sim_whistler_bimaxwellian_strong.sh
 ```
 
 To extend a finished strong run whose A_e(t) had not yet relaxed (e.g.

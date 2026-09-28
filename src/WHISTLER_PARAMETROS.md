@@ -126,7 +126,7 @@ long in advance.
 
 | Regime | slowest twin t_10 [Ω_ce⁻¹] | `PSC_NMAX` | t_end [Ω_ce⁻¹] | t_end [Ω_ci⁻¹] | `PSC_PARTICLES_EVERY` (VDF dumps) | `PSC_CHECKPOINT_EVERY` | walltime |
 |---|---:|---:|---:|---:|---|---:|---:|
-| strong (bi-Max, κ5, κ3) | 69 (κ=3) | **40 000** | 528 | 2.6 | 2 500 = 33 Ω_ce⁻¹ (~17) | 20 000 + final | 12 h |
+| strong (bi-Max, κ5, κ3) | 69 (κ=3) | **40 000** | 528 | 2.6 | 2 500 = 33 Ω_ce⁻¹ (~17) | final only (= nmax) | 12 h |
 | moderate | 228 (κ=3) | **140 000** | 1 847 | 9.2 | 10 000 = 132 Ω_ce⁻¹ (15) | 70 000 + final | 36 h |
 | weak | 1 330 (bi-Max) | **300 000** | 3 958 | 19.8 | 20 000 = 264 Ω_ce⁻¹ (15) | 150 000 + final | 72 h |
 
@@ -174,9 +174,12 @@ particle-pushes/s/core, matching §4 of `ESCALADO_INESTABILIDADES.md`):
 The first batch (strong series: bi-Max, κ5, κ3) is **~47 000 core-h and
 ~0.6 TB durable** in total, instead of the ~354 000 core-h and ~2.1 TB
 it would have cost at a uniform 300 000 steps. Each run also writes two
-transient checkpoints of ~340 GB (mid-run + final): delete the mid-run
-one when the run ends and keep the final one until the relaxation is
-confirmed. The moments are ~74% of the field-side volume because the
+transient checkpoints of ~340 GB (mid-run + final) — except the strong
+runs, which write only the final one: they take ~6 h inside a 12 h
+window, and the dp433 group quota on /cosma7 is nearly full (38.5 of
+40.2 TB soft quota when the first batch was prepared). Keep each final
+checkpoint until the relaxation is confirmed; delete intermediate
+checkpoints of finished runs, which the analysis never reads. The moments are ~74% of the field-side volume because the
 header ties their cadence to `fields_every`.
 
 ## 6. Remaining open decision
