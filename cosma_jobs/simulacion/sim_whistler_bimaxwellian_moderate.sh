@@ -132,6 +132,11 @@ cp "$BUILD_DIR/src/$PSC_TARGET" "$RUN_DIR/"
 cp "$REPO/adios2cfg.xml" "$RUN_DIR/"
 cd "$RUN_DIR"
 
+# PSC abre un mem-<rank>.log por cada rank MPI (include/psc.hxx) pero solo
+# escribe en el con CUDA: en CPU quedan miles de archivos vacios (uno por
+# rank). Se borran al salir, tambien si el job termina por walltime.
+trap 'find "$RUN_DIR" -maxdepth 1 -name "mem-*.log" -empty -delete 2>/dev/null || true' EXIT
+
 echo "target=$PSC_TARGET"
 echo "job=$SLURM_JOB_ID"
 echo "run_tag=$RUN_TAG   (reanuda con RUN_TAG=$RUN_TAG)"
