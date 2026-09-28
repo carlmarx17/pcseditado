@@ -108,6 +108,18 @@ literature comparison, resource budget and the remaining open decision:
 | `psc_whistler_bimaxwellian_moderate` | `psc_whistler_bimaxwellian_moderate.cxx` | Moderate | 1.0 | 1.0 | 0.5 | 2.0 | 1152×1152 |
 | `psc_whistler_bimaxwellian_weak` | `psc_whistler_bimaxwellian_weak.cxx` | Weak | 1.0 | 1.0 | 0.5 | 1.5 | 1152×1152 |
 
+**Mass-ratio variant (mi/me = 800).** Same physics and electron-scale
+resolution (Δx = 0.245 d_e) with the realistic-leaning mass ratio; the
+20 d_i box becomes 566 d_e, hence the 2304² grid. `PSC_MASS_RATIO` is
+compile-time, so these are separate executables (like `*_bigbox40` for the
+box); each is identical to its mi/me = 200 base except that define.
+
+| Executable | File | κ | beta_i_par | A_i | beta_e_par | A_e | mi/me | Grid |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| `psc_whistler_bimaxwellian_strong_mr800` | `psc_whistler_bimaxwellian_strong_mr800.cxx` | ∞ | 1.0 | 1.0 | 0.5 | 3.0 | 800 | 2304×2304 |
+| `psc_whistler_bikappa3_strong_mr800` | `psc_whistler_bikappa3_strong_mr800.cxx` | 3 | 1.0 | 1.0 | 0.5 | 3.0 | 800 | 2304×2304 |
+| `psc_whistler_bikappa5_strong_mr800` | `psc_whistler_bikappa5_strong_mr800.cxx` | 5 | 1.0 | 1.0 | 0.5 | 3.0 | 800 | 2304×2304 |
+
 ## Bi-Kappa
 
 | Executable | File | κ | beta_i_par | A_i | beta_e_par | A_e | Grid |

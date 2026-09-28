@@ -24,6 +24,7 @@ Repository root on COSMA: `/cosma7/data/dp433/dc-mart18/pcseditado`
 | `sim_mirror_bikappa5_moderate.sh` | Moderate bi-Kappa-5 mirror — third member of the moderate mirror series | 20 d_i | ngrid 576 |
 | `sim_whistler_bimaxwellian_{strong,moderate,weak}.sh` | Bi-Maxwellian whistler (Ae = 3.0 / 2.0 / 1.5); electron-scale cadence, each only until relaxation (~6 / ~20 / ~43 h on 83 nodes) | 20 d_i | **ngrid 1152**, 2000 ppc |
 | `sim_whistler_bikappa{3,5}_strong.sh` | Bi-Kappa whistler strong (κ = 3 / 5) — distribution twins of the bi-Maxwellian strong | 20 d_i | **ngrid 1152**, 2000 ppc |
+| `sim_whistler_{bimaxwellian,bikappa3,bikappa5}_strong_mr800.sh` | Whistler strong series with **mi/me = 800** (the batch to run); ~23 h on 83 nodes each | 20 d_i = 566 d_e | **ngrid 2304**, 2000 ppc |
 
 The ion-scale simulation scripts set `PSC_CHECKPOINT_EVERY=150000` (whistler scripts use a per-regime value, see `src/WHISTLER_PARAMETROS.md`). Checkpoints are only used
 to restart a run; running a case without one of these scripts falls back to the
@@ -55,11 +56,67 @@ sbatch cosma_jobs/simulacion/sim_firehose_bikappa5_40di.sh
 Note the job id each submission prints: it becomes the `RUN_TAG` needed to
 resume from a checkpoint if 48 h are not enough.
 
-### Whistler strong series (first whistler batch)
+### Whistler strong series with mi/me = 800 (batch to run)
 
-The three **strong** whistler runs — bi-Maxwellian, κ=5 and κ=3, differing
-**only** in the distribution (β_e∥ = 0.5, A_e = 3.0 in all three) — go out
-first; moderate and weak wait for these results. Numerics and budget:
+The whistler strong series runs with **mi/me = 800** (decision and full
+numbers: `src/WHISTLER_PARAMETROS.md` §6). The three runs are
+distribution twins (β_e∥ = 0.5, A_e = 3.0; bi-Maxwellian, κ=3, κ=5),
+each identical to its mi/me = 200 case except `PSC_MASS_RATIO`.
+
+Per run: 83 nodes × 28 (2 304 ranks), ~23 h expected inside a 48 h limit,
+~8–16 GB RAM per node, ~0.58 TB durable output plus a ~0.64 TB final
+checkpoint. The group quota does not fit all three at once, so they go
+**two at a time**.
+
+1. Free space first: delete the intermediate checkpoints of finished
+   runs (keep the last one of each), then check
+   `lfs quota -hg dp433 /cosma7`. It needs ≥ ~2.5 TB free.
+
+2. Update and build (from the repository root on COSMA):
+
+```bash
+cd /cosma7/data/dp433/dc-mart18/pcseditado
+git pull origin main
+BUILD_DIR="$PWD/build" BUILD_JOBS=4 \
+  PSC_TARGETS="psc_whistler_bimaxwellian_strong_mr800 psc_whistler_bikappa3_strong_mr800 psc_whistler_bikappa5_strong_mr800" \
+  src/cosma_build_psc_adios2.sh
+ls -l build/src/psc_whistler_*_strong_mr800
+mkdir -p /cosma7/data/dp433/dc-mart18/anisotropy_adios2
+```
+
+3. Submit the first two, one per partition:
+
+```bash
+sbatch cosma_jobs/simulacion/sim_whistler_bimaxwellian_strong_mr800.sh
+sbatch --partition=cosma7 cosma_jobs/simulacion/sim_whistler_bikappa3_strong_mr800.sh
+```
+
+   In each `.out` the header must print
+   `run = nmax 40000, ngrid 2304, nicell 2000, np 1x48x48`; if it shows
+   576/1000/1200000, `scancel` it: the overrides were not applied.
+
+4. When both have finished: if the domain-averaged A_e(t) changed by
+   less than ~2% over the last 100 Ω_ce⁻¹, the relaxation is complete —
+   delete their `checkpoint_40000.bp` (~0.64 TB each) and submit κ=5:
+
+```bash
+sbatch cosma_jobs/simulacion/sim_whistler_bikappa5_strong_mr800.sh
+```
+
+   If A_e(t) was still falling, extend instead (`PSC_NMAX` is the
+   absolute final step):
+
+```bash
+sbatch --export=ALL,RUN_TAG=<tag>,PSC_NMAX=60000,PSC_RESTART=<run_dir>/checkpoint_40000.bp \
+  cosma_jobs/simulacion/sim_whistler_<dist>_strong_mr800.sh
+```
+
+### Whistler strong series with mi/me = 200 (kept as reference)
+
+Superseded as the first batch by the mi/me = 800 series above; kept
+ready in case a mass-ratio comparison is wanted. The three **strong**
+whistler runs — bi-Maxwellian, κ=5 and κ=3, differing **only** in the
+distribution (β_e∥ = 0.5, A_e = 3.0 in all three). Numerics and budget:
 `src/WHISTLER_PARAMETROS.md`. Each strong run goes **only until the
 relaxation**: 40 000 steps = 528 Ω_ce⁻¹, 83 nodes × 28, ~6 h expected
 inside a 12 h limit, ~4 GB RAM/node, ~0.2 TB durable output (~47 000

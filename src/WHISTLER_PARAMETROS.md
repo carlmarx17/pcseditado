@@ -151,7 +151,8 @@ distribution twins `psc_whistler_bimaxwellian_strong`,
 configuration and the strong run length (40 000 steps). Their growth
 rates are within 20% of each other (§1), so one configuration serves the
 three. Moderate and weak wait for these
-results. Build/submit commands: `cosma_jobs/README.md`.
+results. The strong series itself is run with mi/me = 800 (§6).
+Build/submit commands: `cosma_jobs/README.md`.
 
 ## 5. Resource and storage budget
 
@@ -184,7 +185,69 @@ checkpoint until the relaxation is confirmed; delete intermediate
 checkpoints of finished runs, which the analysis never reads. The moments are ~74% of the field-side volume because the
 header ties their cadence to `fields_every`.
 
-## 6. Remaining open decision
+## 6. Mass-ratio variant: mi/me = 800 (strong series)
+
+**Decision (2026-09-28): the strong series is run with mi/me = 800**, as
+the variants `psc_whistler_{bimaxwellian,bikappa3,bikappa5}_strong_mr800`.
+`PSC_MASS_RATIO` is compile-time, so each variant is its own executable
+and is identical to its mi/me = 200 base except that define (enforced by
+the parity checker, "gemelos de masa", like `*_bigbox40` for the box).
+
+What changes and what does not:
+
+| Quantity | mi/me = 200 | mi/me = 800 |
+|---|---|---|
+| d_i | 14.1 d_e | 28.3 d_e |
+| Box (20 d_i) | 283 d_e | 566 d_e |
+| Grid (Δx = 0.245 d_e) | 1152² | **2304²** |
+| Particles (2000 ppc) | 5.3×10⁹ | **2.1×10¹⁰** |
+| B0, betas, A_e, ω_pe/Ω_ce = 12.5, Δx/λ_De = 6.1, dt | — | unchanged |
+| γ_max (bi-Max / κ5 / κ3) | 0.175 / 0.160 / 0.144 Ω_ce | 0.175 / 0.161 / 0.145 Ω_ce |
+| Run length (40 000 steps) | 528 Ω_ce⁻¹ = 2.6 Ω_ci⁻¹ | 528 Ω_ce⁻¹ = 0.66 Ω_ci⁻¹ |
+
+The linear growth rates at 800 agree with those at 200 to < 0.5%, so the
+whistler physics, the run length (only until relaxation) and every
+cadence expressed in Ω_ce carry over unchanged. What 800 buys is the
+scale separation: d_i/d_e = 28 and Ω_ce/Ω_ci = 800, with the ions
+effectively static over the whole run, closer to the space-plasma
+ordering the thesis compares against.
+
+Run configuration (the three `sim_whistler_*_strong_mr800.sh`, identical
+to each other):
+
+| Variable | Value | Note |
+|---|---:|---|
+| `PSC_NGRID` | 2 304 | Δx = 0.245 d_e as in the mi/me = 200 whistler runs |
+| `PSC_NICELL` | 2 000 | |
+| `PSC_NP_Y/Z` | 48×48 | 2 304 ranks, 83 nodes, 48×48-cell patches |
+| `PSC_NMAX` | 40 000 | 528 Ω_ce⁻¹, only until relaxation (extend from the final checkpoint if needed) |
+| `PSC_FIELDS_EVERY` | 100 | 1.32 Ω_ce⁻¹, Nyquist 2.38 Ω_ce; 400 + 400 files |
+| `PSC_PARTICLES_EVERY` | 5 000 | 66 Ω_ce⁻¹ → 9 dumps (steps 0…40 000); halved vs mi/me = 200 for the disk budget; dense A_e(t) comes from the moments |
+| `PSC_ENERGIES_EVERY` | 20 | 0.26 Ω_ce⁻¹ |
+| `PSC_CHECKPOINT_EVERY` | 40 000 | final checkpoint only |
+| walltime | 48 h | ~23 h expected |
+
+Budget per run (calibrated on the observed 48 h ionic runs; checkpoint
+size from the measured ~30 B per particle):
+
+| | Value |
+|---|---|
+| Wallclock | ~23 h on 2 304 ranks / 83 nodes (~11.5 h on 165 nodes) |
+| core-h | ~63 000 per run, ~190 000 for the series |
+| RAM | 0.7–1.4 TB total, ~8–16 GB per 510 GB node |
+| Fields + moments | 400 + 400 files, ~0.30 TB |
+| Particles | 9 dumps × ~30 GB ≈ 0.28 TB |
+| Final checkpoint | ~0.64 TB (transient) |
+| **Durable / peak** | **~0.58 TB / ~1.22 TB** |
+
+Disk plan. After deleting the intermediate checkpoints of the finished
+runs (~1.1 TB), the dp433 group quota leaves ~2.8 TB. The three runs at
+once would peak at ~3.7 TB, so they go **two at a time**: bi-Maxwellian
+and κ=3 first (~2.4 TB peak, one on `cosma7-rp` and one on `cosma7`),
+then κ=5 once the first two have finished and their final checkpoints
+have been deleted after confirming relaxation.
+
+## 7. Remaining open decision
 
 **Isotropic control run** (A_e = 1, everything else identical to §4) to
 measure the pure grid-heating + noise baseline (recommendation §6.2 of
