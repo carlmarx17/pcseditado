@@ -3,8 +3,11 @@
 These scripts are kept for reference only. They are not part of the maintained
 thesis analysis pipeline in `Makefile`.
 
-- `reconnection_analysis.py`: targets a different reconnection workflow, not the
-  anisotropy instability cases documented here.
+- `reconnection_analysis.py`: superseded by the maintained
+  `../reconnection_analysis.py` (`make reconnection`), which discovers the run
+  geometry from the snapshots, uses the shared `plot_style`, and adds the
+  B–kappa correlation. This copy had the paths, `dt = 0.547` and the dark
+  theme hard-coded; kept only for reference.
 - `plot_vdf_3d.py` and `plot_moments_scatter_3d.py`: qualitative 3D particle
   visualizations. Use the maintained 2D VDF and tabulated diagnostics for
   thesis figures.

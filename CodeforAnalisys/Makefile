@@ -37,6 +37,7 @@ HEATFLUX_OUT = $(OUTPUT_DIR)/06_heat_flux
 MIRROR_OUT = $(OUTPUT_DIR)/07_mirror_structures
 VALIDATION_OUT = $(OUTPUT_DIR)/08_validation
 PHYSICS_OUT = $(OUTPUT_DIR)/09_physical_diagnostics
+RECONNECTION_OUT = $(OUTPUT_DIR)/10_reconnection
 COMPARE_CASES ?=
 COMPARE_OUT ?= $(RESULTS_ROOT)/comparison_physical
 THEORY_CSV ?=
@@ -98,7 +99,7 @@ export PSC_FIG_THEME ?= paper
 	polarization validate particles heatflux physics compare-physics clean help \
 	theory theory-self-test prt-region vdf-spatial \
 	theory-liouville theory-liouville-x theory-liouville-sweep \
-	liouville-self-test kappa-eff-self-test \
+	liouville-self-test kappa-eff-self-test reconnection \
 	check-fields check-moments check-particles check-case check-resolution \
 	check-initial-conditions show-inputs
 
@@ -351,6 +352,18 @@ liouville-self-test:
 kappa-eff-self-test:
 	$(PYTHON) kappa_eff.py --self-test
 
+# Reconnection runs (double Harris sheet) live outside the anisotropy case
+# matrix: their profiles come from reconnection_analysis.py, not psc_units,
+# and the boxes are rectangular. This target therefore skips check-case.
+# RECONNECTION_PROFILE: reconnection | reconnection_comparable.
+RECONNECTION_PROFILE ?= reconnection_comparable
+RECONNECTION_FLAGS ?=
+reconnection: check-fields
+	@echo "Generating reconnection diagnostics and the B-kappa correlation"
+	$(PYTHON) reconnection_analysis.py --data-dir "$(DATA_DIR)" \
+		--profile "$(RECONNECTION_PROFILE)" --outdir "$(RECONNECTION_OUT)" \
+		$(RECONNECTION_FLAGS)
+
 prt-region: check-case check-fields
 	@echo "Locating the prt window in the field-fluctuation maps"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) prt_region_field_cut.py \
@@ -396,5 +409,7 @@ help:
 	@echo "  make theory-liouville CASE=...                # closure profiles vs b (paper fig. 2)"
 	@echo "  make theory-liouville-x CASE=...              # the same closures vs x along B(x) = B0[1 - a sech^2(x/L)]"
 	@echo "  make theory-liouville-sweep CASE=...          # (kappa, A0, a) study; LIOUVILLE_KAPPA_LIST/A0_LIST/A_LIST, LIOUVILLE_NX"
+	@echo "  make reconnection DATA_DIR=... [RECONNECTION_PROFILE=reconnection_comparable]"
+	@echo "                                                # double-Harris diagnostics + <|B|> vs kappa_eff correlation"
 	@echo "Utility target: show-inputs"
 	@echo "Results default to ../analysis_results/<RUN_NAME>/"

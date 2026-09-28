@@ -217,6 +217,7 @@ Main subfolders:
 07_mirror_structures/ local |B| depressions for mirror
 08_validation/     pointwise validation against particles
 09_physical_diagnostics/ integrated diagnostics with the standard outputs
+10_reconnection/   double-Harris diagnostics and the B–kappa correlation
 ```
 
 Note that `analysis_results/` is **not** tracked in git — everything under it is
@@ -1169,6 +1170,53 @@ make liouville-self-test
 The self-test verifies the closed form against the raw Liouville mapping
 point-wise (the kappa-invariance theorem), the depth bound \(b > 1 - 1/A_0\),
 and that the closure signatures in \(\kappa_{\rm eff}\) behave as documented.
+
+## Reconnection runs: field evolution and the B–kappa correlation
+
+The double-Harris reconnection runs (`psc_reconnection`,
+`psc_reconnection_comparable`) are analysed by `reconnection_analysis.py`,
+which replaces the legacy script of the same name. Their boxes are
+rectangular and their parameters are not part of the anisotropy case matrix,
+so the script carries its own two profiles and reads the grid, the box and
+the output cadence back from the snapshots themselves; what was detected is
+recorded in `reconnection_summary.json`.
+
+```bash
+make reconnection DATA_DIR=/path/to/run RECONNECTION_PROFILE=reconnection_comparable
+```
+
+writes into `10_reconnection/`:
+
+- `reconnection_field_timeseries.csv` — per field snapshot,
+  \(\langle|B|\rangle/B_0\), \(\min|B|/B_0\) and \(\delta B_{\rm rms}/B_0\)
+  over two regions: the **prt output window** (the volume the particle
+  output actually samples) and a band of `±SHEET_HALF_WIDTH` (default
+  \(2\,d_i\)) around the **perturbed sheet** at \(y=+L_y/4\); plus
+  \(\max_z|B_y|/B_0\) on the sheet as a reconnected-flux / tearing proxy.
+- `reconnection_kappa_timeseries.csv` — per particle snapshot, the
+  effective kappa of the selected species from the truncated, whitened
+  estimator of `kappa_eff.py`, in the field-aligned frame of the
+  window-mean field of the matching field snapshot. Reported also as
+  \(1/\kappa\) (Maxwellian limit = 0, as in `kappa_evolution.py`).
+- `b_kappa_correlation.json`, `b_kappa_evolution.png`,
+  `b_kappa_scatter.png` — Pearson (on \(1/\kappa\)) and Spearman
+  correlations of \(\langle|B|\rangle(t)\) against \(\kappa_{\rm eff}(t)\)
+  at the particle cadence, for both regions, with a small lag scan when
+  enough snapshots exist.
+- `reconnection_overview.png`, `reconnected_flux.png` — \(B_z/B_0\) and
+  \(|B|/B_0\) maps with in-plane field lines at representative times, and
+  the flux-proxy evolution.
+
+Three caveats the outputs repeat on purpose: the prt window of
+`psc_reconnection_comparable` covers the **inflow region between the
+sheets**, not the X-point, so \(\kappa_{\rm eff}(t)\) characterises the
+plasma feeding the reconnection (moving the window is a simulation-case
+decision, not an analysis option); the correlation p-values assume
+independent samples while consecutive snapshots are autocorrelated; and a
+correlation between two series driven by the same instability clock is not
+causation. Pass options through `RECONNECTION_FLAGS`, e.g.
+`RECONNECTION_FLAGS='--species electron --kappa-boot 24 --dt-code 0.33'`.
+Regression tests: `python -m unittest test_reconnection_analysis`.
 
 ## Technical documentation
 
