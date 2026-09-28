@@ -84,47 +84,78 @@ design):
 
 ## 4. Run configuration adopted for the whistler jobs
 
-Set identically in the three `cosma_jobs/simulacion/sim_whistler_*.sh`
-(and to be reused verbatim by future bi-kappa whistler twins). These are
-**environment overrides only**: `src/` is untouched, grid/box/ppc/Δt stay
-identical to the whole anisotropy matrix, so cross-family comparability is
-preserved — only the sampling and the stopping time are adapted to the
-electron scales.
+**Decision (2026-09-28): the whistler family runs on a refined grid.**
+Halving Δx (576² → 1152²) and doubling ppc (1000 → 2000) was chosen to
+fix the two marginal entries of §3 (Δx/λ_De 12.3 → 6.1; 31 cells per
+λ_peak, 2.5–3.5 cells per ρ_e). This deliberately departs from the
+mirror/firehose numerics — it is a per-family refinement, uniform across
+the three whistler cases and their future bi-kappa twins, applied by
+**environment overrides only** in the job scripts (the `.cxx` files and
+the shared header keep the matrix defaults; the `psc_units` whistler
+profiles describe the production values). Whistler↔whistler comparisons
+stay exactly parallel; whistler↔mirror/firehose comparisons are now
+cross-resolution and must be made in physical units only.
+
+With ngrid 1152 the CFL timestep halves automatically:
+`Δt = 0.165 ω_pe⁻¹` ⇒ **75.8 steps per Ω_ce⁻¹**, 15 160 per Ω_ci⁻¹, so
+all step-denominated cadences double to keep the same *physical* cadence.
+Set identically in the three `cosma_jobs/simulacion/sim_whistler_*.sh`:
 
 | Variable | Value | In physical units | Why |
 |---|---:|---|---|
-| `PSC_NMAX` | 150 000 | 3 958 Ω_ce⁻¹ = 19.8 Ω_ci⁻¹ | ≥ 3× the weak case's growth-to-saturation (1 330 Ω_ce⁻¹), leaving a ≥ 2 600 Ω_ce⁻¹ relaxation tail; 8× cheaper (~5 h on 1024 ranks) and 8× less accumulated grid heating than the 1.2M default. Literature runs are 150–450 Ω_ce⁻¹. |
-| `PSC_FIELDS_EVERY` | 50 | Δt_out = 1.32 Ω_ce⁻¹ ⇒ ω_Ny = 2.38 Ω_ce | Resolves the whole whistler branch (ω_r ≤ 0.5 Ω_ce) with margin ≥ 4×. Per-mode γ(k) sampling: 4.3 / 14 / 100 samples per e-fold (strong/moderate/weak); ~3 000 snapshots (~130 GB fields+moments). Halve to 25 only if the strong-case γ(k) fits come out noisy. |
-| `PSC_ENERGIES_EVERY` | 10 | 0.26 Ω_ce⁻¹ | Global γ comes from the δB² series essentially for free (one reduce); 22 samples per e-fold even for the strong case. |
-| `PSC_PARTICLES_EVERY` | 5 000 | 132 Ω_ce⁻¹ | 30 VDF snapshots (~1 GB each, central 20% window): resolves the A_e(t) and κ_eff(t) relaxation instead of the 15 sparse dumps of the default. |
-| `PSC_CHECKPOINT_EVERY` | 50 000 | ⅓ of the run | The old 150 000 exceeds the new nmax (zero mid-run checkpoints). |
+| `PSC_NGRID` | 1 152 | Δx = 0.245 d_e; Δx/λ_De = 6.1 | Resolves the unstable band with 18–31 cells/λ and ~3 cells per ρ_e; matches the finer end of the 2D literature (§2). |
+| `PSC_NICELL` | 2 000 | 5.3×10⁹ particles | Lower noise floor for the weak case (γ = 0.0075 Ω_ce) and cleaner κ_eff estimates. |
+| `PSC_NP_Y/Z` | 48×48 | 2 304 ranks, 24×24-cell patches | Same decomposition as the bigbox40 jobs. |
+| `PSC_NMAX` | 300 000 | 3 958 Ω_ce⁻¹ = 19.8 Ω_ci⁻¹ | ≥ 3× the weak case's growth-to-saturation (1 330 Ω_ce⁻¹) with a relaxation tail. Literature runs are 150–450 Ω_ce⁻¹. |
+| `PSC_FIELDS_EVERY` | 100 | Δt_out = 1.32 Ω_ce⁻¹ ⇒ ω_Ny = 2.38 Ω_ce | Minimum that resolves the whole branch (ω_r ≤ 0.5 Ω_ce) with ≥ 4× margin *and* keeps ≥ 4 samples per e-fold for the strong-case γ(k) fits. |
+| `PSC_ENERGIES_EVERY` | 20 | 0.26 Ω_ce⁻¹ | Global γ from the δB² series (one reduce; ~15 000 ASCII lines). |
+| `PSC_PARTICLES_EVERY` | 20 000 | 264 Ω_ce⁻¹ | 15 VDF snapshots across growth + relaxation — the minimum honest sampling for A_e(t) and κ_eff(t); each dump is ~8 GB at this grid/ppc. |
+| `PSC_CHECKPOINT_EVERY` | 150 000 | ½ of the run | 2 checkpoints (~340 GB each): enough to resume a 72 h window; delete after the run. |
 
-Everything else (`PSC_NGRID = 576`, `PSC_NICELL = 1000`, `np = 32×32`)
-stays at the matrix values.
-
-Time conversions for the analysis of these runs: 1 Ω_ce⁻¹ = 37.9 steps;
-1 Ω_ci⁻¹ = 200 Ω_ce⁻¹ = 7 580 steps; ω/Ω_ci = (ω/Ω_ce)·200 and
+Time conversions for the analysis of these runs: 1 Ω_ce⁻¹ = 75.8 steps;
+1 Ω_ci⁻¹ = 200 Ω_ce⁻¹ = 15 160 steps; ω/Ω_ci = (ω/Ω_ce)·200 and
 k d_i = k d_e · 14.14 (the electron presets of `dispersion_analysis.py`
 apply these rescalings; use `DISPERSION_MODE=whistler`).
 
-## 5. Open decisions (not applied — they break matrix parity)
+## 5. Resource and storage budget (per run, ×3 for the campaign)
 
-Both options below change the numerics of the whistler family away from
-the mirror/firehose matrix and therefore need an explicit decision (see
-`.claude/skills/psc-case-integrity/SKILL.md`):
+Calibrated against the observed ~48 h of a standard ionic run
+(576², 1000 ppc, 1.2M steps on 1024 ranks ⇒ R ≈ 4.5×10⁶
+particle-pushes/s/core, matching §4 of `ESCALADO_INESTABILIDADES.md`):
 
-1. **Finer grid.** `PSC_NGRID = 1152` in the whistler jobs would give
-   Δx = 0.245 d_e (Δx/λ_De = 6.1, 31 cells per λ_peak) at ~8× the cost
-   (4× cells, 2× steps for the same physical time — Δt halves with Δx).
-   It also makes the whistler runs numerically different from their own
-   `psc_units` profiles and from the rest of the matrix.
-2. **Isotropic control run** (A_e = 1, everything else identical) to
-   measure the pure grid-heating baseline at Δx/λ_De = 12.3
-   (recommendation §6.2 of `ESCALADO_INESTABILIDADES.md`). This is a new
-   case file, i.e. a case-matrix addition.
+- **Work**: 5.31×10⁹ particles × 3×10⁵ steps = 1.59×10¹⁵ pushes =
+  **exactly 2.0× one ionic run**.
+- **Wallclock**: ~96 h on 1024 ranks (needs 2 restarts) or **~43 h on
+  2 304 ranks / 83 nodes** (adopted; fits one 72 h window with margin for
+  the ±2× uncertainty in R). ~118 000 core-h per run, ~354 000 for the
+  three cases.
+- **RAM**: 170–340 GB aggregate for particles ⇒ ~3 GB per node on 83
+  nodes — far below the node memory; not a constraint.
+- **Files and volume per run**:
 
-Until decided, the adopted position is: run the matrix grid (576²), keep
-runs short (§4), and treat the isotropic-control question as pending.
+| Output | Files | Size | Total |
+|---|---:|---|---:|
+| `pfd.*` (fields, every 100 steps) | 3 000 | 48 MB | 143 GB |
+| `pfd_moments.*` | 3 000 | 138 MB | 414 GB |
+| `prt_*` (central 20% window) | 15 | ~8 GB | ~120 GB |
+| checkpoints (transient) | 2 | ~340 GB | ~680 GB, deleted after the run |
+| energies ASCII | 1 | ~1 MB | — |
+| **Durable total** | **~6 016** | | **~0.7 TB** (×3 runs ≈ 2.1 TB) |
+
+The moments are 74% of the durable volume because the header ties their
+cadence to `fields_every`; if 2.1 TB is too much for the COSMA quota, the
+options are a coarser `PSC_FIELDS_EVERY` (degrades the strong-case γ(k)
+sampling before it degrades the ω–k diagram) or post-run thinning of
+`pfd_moments` to every other snapshot.
+
+## 6. Remaining open decision
+
+**Isotropic control run** (A_e = 1, everything else identical to §4) to
+measure the pure grid-heating + noise baseline (recommendation §6.2 of
+`ESCALADO_INESTABILIDADES.md`). This is a new case file, i.e. a
+case-matrix addition, and is still pending. At Δx/λ_De = 6.1 and 19.8
+Ω_ci⁻¹ of run time the expected heating is far smaller than at the old
+12.3, which lowers the urgency but does not replace the measurement.
 
 ## References
 

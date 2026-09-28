@@ -177,6 +177,12 @@ _PROFILES = {
         "instability": "firehose",
         "driven_species": "ion",
     },
+    # Los tres perfiles whistler describen la configuracion de PRODUCCION:
+    # los jobs (cosma_jobs/simulacion/sim_whistler_*.sh) refinan grilla y
+    # ppc por variables de entorno (PSC_NGRID=1152, PSC_NICELL=2000,
+    # PSC_NMAX=300000) sobre los defaults 576/1000/1.2M del header.
+    # Justificacion: src/WHISTLER_PARAMETROS.md. Una corrida whistler
+    # antigua a 576^2 (si existiera) se analiza con PSC_ANALYSIS_CONFIG.
     "whistler_bimaxwellian_strong": {
         "label": "Whistler Strong Bi-Maxwellian",
         "mass_ratio": 200.0,
@@ -187,9 +193,9 @@ _PROFILES = {
         "Te_perp_over_Te_par": 3.0,
         "kappa": None,
         "domain_di": 20.0,
-        "ngrid": 576,
-        "nmax": 1_200_000,
-        "nicell": 1000,
+        "ngrid": 1152,
+        "nmax": 300_000,
+        "nicell": 2000,
         "particle_basename": "prt_whistler_bimaxwellian_strong",
         "instability": "whistler",
         "driven_species": "electron",
@@ -204,9 +210,9 @@ _PROFILES = {
         "Te_perp_over_Te_par": 2.0,
         "kappa": None,
         "domain_di": 20.0,
-        "ngrid": 576,
-        "nmax": 1_200_000,
-        "nicell": 1000,
+        "ngrid": 1152,
+        "nmax": 300_000,
+        "nicell": 2000,
         "particle_basename": "prt_whistler_bimaxwellian_moderate",
         "instability": "whistler",
         "driven_species": "electron",
@@ -221,9 +227,9 @@ _PROFILES = {
         "Te_perp_over_Te_par": 1.5,
         "kappa": None,
         "domain_di": 20.0,
-        "ngrid": 576,
-        "nmax": 1_200_000,
-        "nicell": 1000,
+        "ngrid": 1152,
+        "nmax": 300_000,
+        "nicell": 2000,
         "particle_basename": "prt_whistler_bimaxwellian_weak",
         "instability": "whistler",
         "driven_species": "electron",

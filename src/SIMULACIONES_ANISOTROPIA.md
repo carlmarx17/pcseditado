@@ -88,19 +88,23 @@ Criterion: `A_e > 1 + 0.21 / beta_e_parallel^0.6`
 The whistler is the only **electron-scale** instability of the matrix
 (gamma_max = 0.175 / 0.054 / 0.0075 Omega_ce and omega_r = 0.25–0.5
 Omega_ce for strong/moderate/weak, from `linear_theory.py`). The source
-files and grid are identical to the rest of the matrix, but the whistler
-job scripts override duration and output cadence by environment
-(`PSC_NMAX=150000`, `PSC_FIELDS_EVERY=50`, `PSC_PARTICLES_EVERY=5000`,
-`PSC_ENERGIES_EVERY=10`, `PSC_CHECKPOINT_EVERY=50000`): the ion-scale
-defaults alias the whistler branch (field-output Nyquist 0.24 Omega_ce)
-and run ~24× past saturation. Full parameter study, literature comparison
-and open decisions: `WHISTLER_PARAMETROS.md`.
+files keep the shared header defaults, but the whistler **production
+jobs** refine the numerics for the whole family by environment override
+(`PSC_NGRID=1152`, `PSC_NICELL=2000`, `PSC_NP_Y/Z=48`), shorten the run
+to the electron scales (`PSC_NMAX=300000` = 19.8 Omega_ci^-1) and set
+the output cadence the whistler branch needs (`PSC_FIELDS_EVERY=100` ->
+field-output Nyquist 2.38 Omega_ce; `PSC_PARTICLES_EVERY=20000`,
+`PSC_ENERGIES_EVERY=20`, `PSC_CHECKPOINT_EVERY=150000`): the ion-scale
+defaults alias the whistler branch and run ~24× past saturation. The
+grid column below is the production grid. Full parameter study,
+literature comparison, resource budget and the remaining open decision:
+`WHISTLER_PARAMETROS.md`.
 
 | Executable | File | Regime | beta_i_par | A_i | beta_e_par | A_e | Grid |
 |---|---|---|---:|---:|---:|---:|---:|
-| `psc_whistler_bimaxwellian_strong` | `psc_whistler_bimaxwellian_strong.cxx` | Strong | 1.0 | 1.0 | 0.5 | 3.0 | 576×576 |
-| `psc_whistler_bimaxwellian_moderate` | `psc_whistler_bimaxwellian_moderate.cxx` | Moderate | 1.0 | 1.0 | 0.5 | 2.0 | 576×576 |
-| `psc_whistler_bimaxwellian_weak` | `psc_whistler_bimaxwellian_weak.cxx` | Weak | 1.0 | 1.0 | 0.5 | 1.5 | 576×576 |
+| `psc_whistler_bimaxwellian_strong` | `psc_whistler_bimaxwellian_strong.cxx` | Strong | 1.0 | 1.0 | 0.5 | 3.0 | 1152×1152 |
+| `psc_whistler_bimaxwellian_moderate` | `psc_whistler_bimaxwellian_moderate.cxx` | Moderate | 1.0 | 1.0 | 0.5 | 2.0 | 1152×1152 |
+| `psc_whistler_bimaxwellian_weak` | `psc_whistler_bimaxwellian_weak.cxx` | Weak | 1.0 | 1.0 | 0.5 | 1.5 | 1152×1152 |
 
 ## Bi-Kappa
 
