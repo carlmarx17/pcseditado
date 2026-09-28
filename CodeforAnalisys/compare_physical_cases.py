@@ -2,7 +2,17 @@
 """
 compare_physical_cases.py
 =========================
-Compare integrated diagnostics across PSC cases, e.g. Maxwellian vs Kappa.
+Compare integrated diagnostics across PSC cases, e.g. bi-Maxwellian vs
+bi-Kappa twins of the same regime.
+
+Every comparison follows the species that drives the instability (read from
+the analysis manifests): ions for mirror/firehose, electrons for whistler.
+The magnetic amplitude is the vector fluctuation <|dB|^2>^1/2/B0, gamma is
+quoted with its error, the energy panel uses the global DiagEnergies budget
+when it exists, and the heat flux the third-moment table of
+heat_flux_analysis.py. The run parameters must match (``validate_comparison``)
+unless --allow-parameter-mismatch is given; realizations of one case are
+compared with convergence_study.py.
 """
 
 from __future__ import annotations
@@ -103,9 +113,22 @@ def load_case(name: str, path: Path) -> dict:
             rows[step].update({f"{table_name}_{k}": v for k, v in row.items()})
 
     gamma_rows = _read_csv(path / "growth_rate_summary.csv")
-    gamma_raw = _to_float(gamma_rows[0].get("gamma")) if gamma_rows else np.nan
-    fit_ok = bool(gamma_rows) and gamma_rows[0].get("fit_ok", "").strip().lower() in ("1", "true")
+    total = next((r for r in gamma_rows if r.get("series", "total") == "total"), None)
+    gamma_raw = _to_float(total.get("gamma")) if total else np.nan
+    gamma_err = _to_float(total.get("gamma_err")) if total else np.nan
+    fit_ok = bool(total) and total.get("fit_ok", "").strip().lower() in ("1", "true")
     gamma = gamma_raw if fit_ok else np.nan
+    driven = manifest.get("driven_species", "ion")
+    s = "e" if driven == "electron" else "i"
+
+    # Global energy budget (DiagEnergies), when the run has it.
+    energy_rows = _read_csv(path / "global_energy_table.csv")
+    energy_t = np.array([_to_float(r.get("omega_ci_t")) for r in energy_rows])
+    energy_rel = np.array([_to_float(r.get("relative_change")) for r in energy_rows])
+    # Third-moment heat flux of the driven species (06_heat_flux).
+    heat_rows = [r for r in _read_csv(path.parent / "06_heat_flux" / "heat_flux_table.csv")
+                 if r.get("species") == driven]
+    heat_by_step = {int(_to_float(r.get("step"), -1)): r for r in heat_rows}
     merged = []
     for step in sorted(rows):
         row = rows[step]
@@ -119,22 +142,31 @@ def load_case(name: str, path: Path) -> dict:
             "case": name,
             "step": step,
             "omega_ci_t": _to_float(time),
+            "driven_species": driven,
             "A_i": _to_float(row.get("anisotropy_A_i")),
-            "R_i": _to_float(row.get("anisotropy_R_i")),
-            "beta_parallel_i": _to_float(row.get("anisotropy_beta_parallel_i")),
-            "delta_B_rms": _to_float(row.get("field_delta_B_rms")),
-            "delta_B_rms_over_B0": _to_float(row.get("field_delta_B_rms_over_B0")),
+            "A_e": _to_float(row.get("anisotropy_A_e")),
+            "A_driven": _to_float(row.get(f"anisotropy_A_{s}")),
+            "R_driven": _to_float(row.get(f"anisotropy_R_{s}")),
+            "beta_parallel_driven": _to_float(row.get(f"anisotropy_beta_parallel_{s}")),
+            "delta_B_vec_rms_over_B0": _to_float(
+                row.get("field_delta_B_vec_rms_over_B0", row.get("field_delta_B_rms_over_B0"))),
+            "delta_B_parallel_rms_over_B0": _to_float(row.get("field_delta_B_parallel_rms_over_B0")),
+            "delta_B_perp_rms_over_B0": _to_float(row.get("field_delta_B_perp_rms_over_B0")),
             "gamma": gamma,
+            "gamma_err": gamma_err,
             "gamma_raw": gamma_raw,
             "gamma_fit_ok": fit_ok,
             "kappa_fit": _to_float(row.get("fit_kappa_fit")),
             "F_supra": _to_float(row.get("fit_suprathermal_fraction")),
             "E_B": _to_float(row.get("energy_E_B")),
-            "E_proxy": _to_float(row.get("energy_E_proxy")),
-            "q_parallel": _to_float(row.get("anisotropy_q_parallel_particle")),
-            "q_perp": _to_float(row.get("anisotropy_q_perp_particle")),
+            "energy_relative_change": (
+                float(np.interp(_to_float(time), energy_t, energy_rel, left=np.nan, right=np.nan))
+                if energy_rows else np.nan),
+            "abs_q_par_over_q0": _to_float(heat_by_step.get(step, {}).get("abs_q_par_over_q0_smax6",
+                                           heat_by_step.get(step, {}).get("abs_q_par_over_q0"))),
         })
-    return {"name": name, "rows": merged, "gamma": gamma, "manifest": manifest}
+    return {"name": name, "rows": merged, "gamma": gamma, "gamma_err": gamma_err,
+            "manifest": manifest, "driven_species": driven}
 
 
 def validate_comparison(cases: list[dict], mode: str = "distribution") -> list[str]:
@@ -165,19 +197,28 @@ def validate_comparison(cases: list[dict], mode: str = "distribution") -> list[s
     return errors
 
 
+CASE_COLORS = ["#58a6ff", "#ff7b72", "#56d364", "#d2a8ff", "#f2cc60", "#a8d4ff"]
+LINESTYLES = ["-", "--", ":", "-."]
+
+
 def plot_timeseries(cases: list[dict], ykeys: list[str], labels: list[str], path: Path, title: str, yscale=None):
+    if not any(np.any(np.isfinite([r[k] for r in c["rows"]])) for c in cases for k in ykeys if c["rows"]):
+        return
     fig, ax = plt.subplots(figsize=(9, 5.4))
     fig.patch.set_facecolor(DARK_BG)
     _style(ax)
-    for case in cases:
+    for i, case in enumerate(cases):
         rows = case["rows"]
         if not rows:
             continue
         t = np.array([r["omega_ci_t"] for r in rows], dtype=float)
-        for ykey, label in zip(ykeys, labels):
+        color = ps.c(CASE_COLORS[i % len(CASE_COLORS)])
+        for j, (ykey, label) in enumerate(zip(ykeys, labels)):
             y = np.array([r[ykey] for r in rows], dtype=float)
             if np.any(np.isfinite(y)):
-                ax.plot(t, y, marker="o", lw=1.7, ms=3.5, label=f"{case['name']} {label}")
+                ax.plot(t, y, LINESTYLES[j % len(LINESTYLES)], color=color, lw=1.7,
+                        marker="o" if len(t) < 60 else None, ms=3.5,
+                        label=f"{case['name']} {label}")
     if yscale:
         ax.set_yscale(yscale)
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
@@ -190,11 +231,17 @@ def plot_timeseries(cases: list[dict], ykeys: list[str], labels: list[str], path
 def plot_growth_bars(cases: list[dict], path: Path):
     names = [case["name"] for case in cases]
     gamma = np.array([case["gamma"] for case in cases], dtype=float)
+    err = np.array([case.get("gamma_err", np.nan) for case in cases], dtype=float)
     fig, ax = plt.subplots(figsize=(7, 5))
     fig.patch.set_facecolor(DARK_BG)
     _style(ax)
-    ax.bar(names, gamma, color="#58a6ff")
-    ax.set_ylabel(r"$\gamma$", color=TEXT_CLR)
+    colors = [ps.c(CASE_COLORS[i % len(CASE_COLORS)]) for i in range(len(cases))]
+    ax.bar(names, np.nan_to_num(gamma), yerr=np.where(np.isfinite(err), err, 0.0),
+           color=colors, capsize=5, ecolor=TEXT_CLR)
+    for i, g in enumerate(gamma):
+        if not np.isfinite(g):
+            ax.text(i, 0.0, "no valid fit", ha="center", va="bottom", color=TEXT_CLR, fontsize=10)
+    ax.set_ylabel(r"$\gamma/\Omega_{ci}$ (fit of $|\delta\mathbf{B}|_{\rm rms}$)", color=TEXT_CLR)
     ax.set_title("Growth-rate comparison", color=TEXT_CLR, fontweight="bold")
     _save(fig, path)
 
@@ -223,15 +270,27 @@ def main():
     rows = [row for case in cases for row in case["rows"]]
     _write_csv(outdir / "comparison_kappa_vs_maxwellian.csv", rows)
 
-    plot_timeseries(cases, ["A_i", "R_i"], [r"$A_i$", r"$R_i$"],
-                    outdir / "comparison_anisotropy.png", "Anisotropy comparison")
-    plot_timeseries(cases, ["delta_B_rms_over_B0"], [r"$\delta B_{\rm rms}/B_0$"],
+    drivers = {case["driven_species"] for case in cases}
+    if len(drivers) > 1:
+        raise SystemExit(f"Cases are driven by different species {sorted(drivers)}; "
+                         "compare within one instability family.")
+    s = "e" if drivers == {"electron"} else "i"
+    plot_timeseries(cases, ["A_driven"], [rf"$A_{s}$"],
+                    outdir / "comparison_anisotropy.png",
+                    f"Anisotropy of the driven species ({next(iter(drivers))}s)")
+    plot_timeseries(cases, ["delta_B_vec_rms_over_B0"],
+                    [r"$\langle|\delta\mathbf{B}|^2\rangle^{1/2}/B_0$"],
                     outdir / "comparison_deltaB.png", "Magnetic-fluctuation comparison", yscale="log")
+    plot_timeseries(cases, ["delta_B_parallel_rms_over_B0", "delta_B_perp_rms_over_B0"],
+                    [r"$\delta B_\parallel$", r"$\delta B_\perp$"],
+                    outdir / "comparison_deltaB_components.png",
+                    "Compressive vs transverse fluctuation (/B0)", yscale="log")
     plot_growth_bars(cases, outdir / "comparison_growth_rate.png")
-    plot_timeseries(cases, ["E_B", "E_proxy"], [r"$E_B$", r"$E_{\rm proxy}$"],
-                    outdir / "comparison_energy.png", "Partial energy proxy comparison")
-    plot_timeseries(cases, ["q_parallel", "q_perp"], [r"$q_\parallel/n$", r"$|q_\perp|/n$"],
-                    outdir / "comparison_heat_flux.png", "Window third moments relative to B0")
+    plot_timeseries(cases, ["energy_relative_change"], [r"$\Delta E_{\rm tot}/E_{\rm tot}$"],
+                    outdir / "comparison_energy.png", "Global energy conservation (DiagEnergies)")
+    plot_timeseries(cases, ["abs_q_par_over_q0"], [rf"$\langle|q_{{\parallel {s}}}|\rangle/q_0$"],
+                    outdir / "comparison_heat_flux.png",
+                    r"Heat flux of the driven species (third moment, $s_{\max}=6$)")
     print(f"Comparison written to {outdir}")
 
 

@@ -27,9 +27,10 @@ import numpy as np
 from data_reader import PICDataReader
 from spectral_analysis import (
     SpectralAnalyzer, _fit_growth_rate,
-    DARK_BG, PANEL_BG, TEXT_CLR, GRID_CLR, _new_dark_fig,
+    PANEL_BG, TEXT_CLR, GRID_CLR, _new_dark_fig,
 )
 import matplotlib.pyplot as plt  # noqa: E402  (Agg backend set by spectral_analysis import above)
+import plot_style as ps  # noqa: E402
 from psc_units import (
     B0, DI, DX_DI, MASS_RATIO, KAPPA, INSTABILITY, PROFILE_LABEL,
     SIM_PROFILE, step_to_omegaci,
@@ -56,7 +57,7 @@ MIRROR_CAVEAT = (
 def _add_mirror_caveat(fig) -> None:
     if INSTABILITY != "mirror":
         return
-    fig.text(0.5, -0.02, MIRROR_CAVEAT, ha="center", va="top", fontsize=9.5, color="#8b949e")
+    fig.text(0.5, -0.02, MIRROR_CAVEAT, ha="center", va="top", fontsize=9.5, color=ps.c("#8b949e"))
 
 
 # ── Data loading ──────────────────────────────────────────────────────────
@@ -266,6 +267,19 @@ def load_theory(path: str, polarization: str | None = None,
             "polarization": polarization}
 
 
+def to_electron_units(theory: dict, mass_ratio: float) -> dict:
+    """Theory table in k d_e and omega/|Omega_ce| (input: k d_i, omega/Omega_ci).
+
+    d_e = d_i / sqrt(mi/me) and |Omega_ce| = (mi/me) Omega_ci. The key names
+    stay the same so the interpolation and plotting code is unit-agnostic.
+    """
+    sqrt_mr = float(np.sqrt(mass_ratio))
+    return {**theory,
+            "kdi": np.asarray(theory["kdi"]) / sqrt_mr,
+            "omega_r": np.asarray(theory["omega_r"]) / mass_ratio,
+            "gamma": np.asarray(theory["gamma"]) / mass_ratio}
+
+
 def interp_theory(theory: dict | None, k_query: float) -> tuple[float, float]:
     if theory is None or len(theory["kdi"]) == 0:
         return float("nan"), float("nan")
@@ -298,25 +312,6 @@ def select_modes(k_par: np.ndarray, final_power: np.ndarray, k_target: float | N
     return modes
 
 
-def _slope_standard_error(times: np.ndarray, amplitude: np.ndarray, fit: dict) -> float:
-    if fit["fit_time_range"] is None:
-        return float("nan")
-    lo, hi = fit["fit_time_range"]
-    mask = (times >= lo) & (times <= hi) & (amplitude > 0)
-    t = times[mask]
-    n = t.size
-    if n < 3:
-        return float("nan")
-    y = np.log(amplitude[mask])
-    yhat = fit["gamma"] * t + fit["intercept"]
-    dof = n - 2
-    s2 = float(np.sum((y - yhat) ** 2) / dof)
-    sxx = float(np.sum((t - np.mean(t)) ** 2))
-    if sxx <= 0:
-        return float("nan")
-    return float(np.sqrt(s2 / sxx))
-
-
 def growth_rate_rows(
     case: str, distribution: str, instability: str, polarization: str,
     times_norm: np.ndarray, A: np.ndarray, k_par: np.ndarray, modes: list[int],
@@ -326,9 +321,13 @@ def growth_rate_rows(
     for mode_idx in modes:
         amplitude = np.abs(A[:, mode_idx])
         fit = _fit_growth_rate(times_norm, amplitude)
-        gamma_error = _slope_standard_error(times_norm, amplitude, fit)
+        # Statistical error of the slope combined with its sensitivity to the
+        # linear-phase window (growth_fit.fit_exponential_growth).
+        gamma_error = fit["gamma_err"]
         k_val = float(k_par[mode_idx])
-        omega_theory, gamma_theory = interp_theory(theory, k_val) if length_unit == "d_i" else (float("nan"), float("nan"))
+        # The theory table is converted to the plotting normalization before
+        # it gets here, so it can be interpolated in either unit.
+        omega_theory, gamma_theory = interp_theory(theory, k_val)
         relative_diff = (
             100.0 * (fit["gamma"] - gamma_theory) / gamma_theory
             if np.isfinite(fit["gamma"]) and np.isfinite(gamma_theory) and gamma_theory != 0
@@ -356,6 +355,7 @@ def growth_rate_rows(
                 np.isfinite(fit["rvalue"]) and fit["rvalue"] ** 2 >= MIN_FIT_R2
                 and fit["gamma"] > 0
             ),
+            "fit_window_source": fit["window_source"],
         })
     return rows
 
@@ -370,9 +370,9 @@ def plot_dispersion_map(
     log_power = np.log10(normalized + 1e-12)
 
     fig, ax = _new_dark_fig((9.2, 7.2))
-    mesh = ax.pcolormesh(k_par, omega, log_power, shading="auto", cmap="turbo", vmin=vmin, vmax=vmax)
+    mesh = ax.pcolormesh(k_par, omega, log_power, shading="auto", cmap=ps.CMAP_SEQUENTIAL, vmin=vmin, vmax=vmax)
     if theory is not None and len(theory["kdi"]):
-        ax.plot(theory["kdi"], theory["omega_r"], "--", color="white", lw=1.6, label="linear theory")
+        ax.plot(theory["kdi"], theory["omega_r"], "--", color=ps.c("#ff7b72"), lw=1.8, label="linear theory")
         ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
     cb = fig.colorbar(mesh, ax=ax)
     cb.set_label(r"$\log_{10}(P/P_{\max})$", color=TEXT_CLR)
@@ -382,8 +382,7 @@ def plot_dispersion_map(
     ax.set_ylabel(omega_label)
     ax.set_title(title, fontsize=17)
     _add_mirror_caveat(fig)
-    fig.savefig(outpath, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
-    plt.close(fig)
+    ps.save(fig, outpath)
     print(f"Saved dispersion map: {outpath}")
 
 
@@ -400,8 +399,7 @@ def plot_sigma_map(sigma: np.ndarray, k_par: np.ndarray, omega: np.ndarray, titl
     ax.set_ylabel(omega_label)
     ax.set_title(title, fontsize=17)
     _add_mirror_caveat(fig)
-    fig.savefig(outpath, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
-    plt.close(fig)
+    ps.save(fig, outpath)
     print(f"Saved helicity map: {outpath}")
 
 
@@ -419,18 +417,18 @@ def plot_mode_growth(
         ax.text(0.5, 0.5, "no measurable power in this mode", transform=ax.transAxes,
                 ha="center", va="center", color=TEXT_CLR, fontsize=13)
     else:
-        ax.semilogy(times_norm[valid], power[valid], "o", color="#58a6ff", markersize=5, label="PIC $P_n(t)$")
+        ax.semilogy(times_norm[valid], power[valid], "o", color=ps.c("#58a6ff"), markersize=5, label="PIC $P_n(t)$")
         if np.isfinite(fit["gamma"]):
             lo, hi = fit["fit_time_range"]
             ax.axvspan(lo, hi, color=GRID_CLR, alpha=0.4, label="fit window")
-            ax.semilogy(fit["fit_time"], fit["fit_amplitude"] ** 2, "--", color="#f0883e", lw=2.0,
+            ax.semilogy(fit["fit_time"], fit["fit_amplitude"] ** 2, "--", color=ps.c("#f0883e"), lw=2.0,
                         label=fr"PIC fit $\gamma={fit['gamma']:.3g}$ (R$^2$={fit['rvalue']**2:.2f})")
-            _, gamma_theory = interp_theory(theory, k_val) if length_unit == "d_i" else (None, float("nan"))
+            _, gamma_theory = interp_theory(theory, k_val)
             if np.isfinite(gamma_theory):
                 t0 = fit["fit_time"][0]
                 p0 = fit["fit_amplitude"][0] ** 2
                 theory_curve = p0 * np.exp(2.0 * gamma_theory * (fit["fit_time"] - t0))
-                ax.semilogy(fit["fit_time"], theory_curve, ":", color="#a371f7", lw=2.0,
+                ax.semilogy(fit["fit_time"], theory_curve, ":", color=ps.c("#d2a8ff"), lw=2.0,
                             label=fr"theory $\gamma={gamma_theory:.3g}$")
     ax.set_xlabel(fr"${time_unit}$")
     ax.set_ylabel(r"$P_n(t) = |\psi_" + polarization + r"(k,t)|^2$")
@@ -438,8 +436,7 @@ def plot_mode_growth(
     if ax.get_legend_handles_labels()[0]:
         ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR, fontsize=11)
     _add_mirror_caveat(fig)
-    fig.savefig(outpath, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
-    plt.close(fig)
+    ps.save(fig, outpath)
     print(f"Saved mode-growth curve: {outpath}")
 
 
@@ -450,7 +447,7 @@ def plot_mirror_bparallel(
     log_power = np.log10(normalized + 1e-12)
     fig, ax = _new_dark_fig((8.5, 7.0))
     mesh = ax.pcolormesh(k1, k0, log_power, shading="auto", cmap="inferno", vmin=-6, vmax=0)
-    ax.plot(k1[peak_idx[1]], k0[peak_idx[0]], "x", color="#3fb950", markersize=12, mew=2.5, label="peak mode")
+    ax.plot(k1[peak_idx[1]], k0[peak_idx[0]], "x", color=ps.c("#3fb950"), markersize=12, mew=2.5, label="peak mode")
     cb = fig.colorbar(mesh, ax=ax)
     cb.set_label(r"$\log_{10}(|\delta B_z/B_0|^2 / \max)$", color=TEXT_CLR)
     cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
@@ -471,7 +468,7 @@ def plot_mirror_bparallel(
         axins = ax.inset_axes([0.60, 0.60, 0.38, 0.38])
         axins.set_facecolor(PANEL_BG)
         axins.pcolormesh(k1, k0, log_power, shading="auto", cmap="inferno", vmin=-6, vmax=0)
-        axins.plot(k_perp_peak, k_par_peak, "x", color="#3fb950", markersize=10, mew=2.2)
+        axins.plot(k_perp_peak, k_par_peak, "x", color=ps.c("#3fb950"), markersize=10, mew=2.2)
         axins.set_xlim(-zoom, zoom)
         axins.set_ylim(-zoom, zoom)
         axins.tick_params(colors=TEXT_CLR, labelsize=8)
@@ -479,8 +476,7 @@ def plot_mirror_bparallel(
             spine.set_edgecolor(GRID_CLR)
         ax.indicate_inset_zoom(axins, edgecolor=TEXT_CLR)
 
-    fig.savefig(outpath, dpi=220, bbox_inches="tight", facecolor=DARK_BG)
-    plt.close(fig)
+    ps.save(fig, outpath)
     print(f"Saved mirror oblique spectrum: {outpath}")
 
 
@@ -650,14 +646,25 @@ def main() -> int:
     sigma = sigma_m(power_plus, power_minus)
 
     theories = {p: None for p in ("plus", "minus")}
-    if args.theory_csv and length_unit != "d_i":
-        print("[WARN] --theory-csv is given in k*d_i; skipping theory overlay for electron normalization.")
-    elif args.theory_csv:
+    if args.theory_csv:
         if args.allow_unverified_theory and args.theory_polarization is None:
             raise ValueError("Unverified theory requires --theory-polarization; do not reuse one curve for both channels")
         selected_channels = [args.theory_polarization] if args.theory_polarization else list(theories)
         for pol in selected_channels:
-            theories[pol] = load_theory(args.theory_csv, pol, args.allow_unverified_theory)
+            try:
+                theory = load_theory(args.theory_csv, pol, args.allow_unverified_theory)
+            except ValueError as exc:
+                # e.g. whistler tables carry only the electron-cyclotron
+                # ("minus") branch: the other channel has no theory to overlay.
+                if args.theory_polarization is None and "theory branch" in str(exc):
+                    print(f"[INFO] no '{pol}' branch in {args.theory_csv}; {pol} shown without theory.")
+                    continue
+                raise
+            # linear_theory.py writes k d_i and omega/Omega_ci. For the
+            # electron normalization (whistler) express it in k d_e and
+            # omega/|Omega_ce| instead of dropping the comparison.
+            theories[pol] = (to_electron_units(theory, MASS_RATIO)
+                             if normalization == "electron" else theory)
 
     plot_dispersion_map(
         power_plus, k_par, omega, fr"$P_+(k_\parallel,\omega)$ — {PROFILE_LABEL}",
@@ -701,7 +708,7 @@ def main() -> int:
         )
         mirror_amp = np.abs(mirror_result["amplitude_t"])
         mirror_fit = _fit_growth_rate(times_norm_win, mirror_amp)
-        mirror_error = _slope_standard_error(times_norm_win, mirror_amp, mirror_fit)
+        mirror_error = mirror_fit["gamma_err"]
         print(
             f"Mirror oblique peak: k_perp d_i = {mirror_result['k_perp_peak']:.3g}, "
             f"k_par d_i = {mirror_result['k_par_peak']:.3g}, theta_kB = {mirror_result['theta_kb_deg']:.1f} deg, "

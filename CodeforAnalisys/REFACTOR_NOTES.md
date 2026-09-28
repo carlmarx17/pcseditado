@@ -21,6 +21,18 @@ This file records current maintenance decisions. The usage guide is in
   VDFs and the CSV tables are the verifiable output.
 - The energy-error figure is only generated when the step contains finite
   particle kinetic energy and magnetic energy; incomplete steps are not mixed in.
+- `growth_fit.py` is the only growth-rate fit. New scripts must call it
+  instead of fitting ln(amplitude) themselves; fit the amplitude (sqrt of a
+  power) and report `gamma_err`.
+- `plasma_physics.py` holds every formula used by more than one script
+  (thermal pressure from PSC moments, local projection, diamagnetic current,
+  reference thresholds, u = gamma v kinematics). Do not re-derive them.
+- Every diagnostic follows `psc_units.DRIVEN_SPECIES`; spectral k ranges follow
+  `psc_units.K_MAX_DI_DEFAULT` (electron scales for the whistler cases).
+- `mirror_physics.py` moved to `legacy/`; `make mirror` is an alias of
+  `make structures`.
+- `synthetic_run.py` + `test_pipeline_synthetic.py` are the end-to-end check;
+  a new diagnostic should get a known-answer assertion there.
 
 ## Maintained scope
 

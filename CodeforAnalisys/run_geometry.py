@@ -15,13 +15,14 @@ def resolve_run(profile):
     provenance = {"grid": "profile", "domain_di": "profile", "dt_code": "CFL estimate; verify runtime log", "nicell": "profile; verify runtime log"}
     config_path = os.environ.get("PSC_ANALYSIS_CONFIG")
     config = json.loads(Path(config_path).read_text()) if config_path else {}
-    allowed = {"ngrid", "domain_di", "dt_code", "nicell", "nmax"}
+    allowed = {"ngrid", "domain_di", "dt_code", "nicell", "nmax",
+               "fields_every", "particles_every"}
     if set(config) - allowed:
         raise ValueError(f"Unknown run settings: {sorted(set(config)-allowed)}")
     for key, val in config.items():
         if isinstance(val, bool) or not np.isfinite(val) or val <= 0:
             raise ValueError(f"Invalid run setting {key}={val}")
-        if key in {"ngrid", "nicell", "nmax"} and int(val) != val:
+        if key in {"ngrid", "nicell", "nmax", "fields_every", "particles_every"} and int(val) != val:
             raise ValueError(f"{key} must be an integer")
         values[key] = val
         provenance["grid" if key == "ngrid" else key] = str(Path(config_path).resolve())

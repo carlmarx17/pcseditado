@@ -11,16 +11,18 @@ Generates:
 Diamagnetic current definition (force balance nabla P = J × B):
   J_d = (B × nabla P_perp) / B^2
 
-In 2D (YZ plane, B0 || z-hat):
+In 2D (YZ plane, B0 || z-hat, d/dx = 0):
   J_dx =  (By · dP_perp/dz  -  Bz · dP_perp/dy) / B^2
-  J_dy, J_dz → 0  in the 2D YZ plane
 
-The dominant out-of-plane component is J_dx.
+The in-plane components, -Bx dP/dz and Bx dP/dy, are second order in the
+fluctuation for B ~ B0 z-hat; the out-of-plane J_dx is the one mapped here.
 
-PSC normalised units:
-  - Pressure: P = n m <v^2>  (PIC), with mu_0 = 1
-  - Magnetic field: normalised so B0 = B0_ref at t = 0
-  - Resulting diamagnetic current in PIC units
+P_perp is the *thermal* pressure: PSC's raw second moment t_ab = n m <u v>
+minus the bulk-flow part, projected on the local field (plasma_physics.
+central_pressure_tensor / field_aligned_pressures). Gradients are taken in
+code lengths (d_e), periodic, so J is in code current-density units; the
+same formula (plasma_physics.diamagnetic_current_x) is used by
+physical_diagnostics.py.
 """
 
 import argparse
@@ -34,18 +36,23 @@ import numpy as np
 from matplotlib.ticker import AutoMinorLocator
 from scipy.ndimage import gaussian_filter
 
+import plot_style as ps
 from data_reader import PICDataReader
+from plasma_physics import (
+    central_pressure_tensor,
+    diamagnetic_current_x,
+    field_aligned_pressures,
+)
 from psc_units import (
-    B0,
-    DOMAIN_DE,
     DOMAIN_DI_Y,
     DOMAIN_DI_Z,
+    DX_DE,
     DX_DI,
     FIELD_FILE_PATTERN,
-    MASS_RATIO,
+    M_ELEC,
+    M_ION,
     MOMENT_FILE_PATTERN,
-    N_GRID_Y,
-    N_GRID_Z,
+    PROFILE_LABEL,
     step_to_omegaci,
 )
 
@@ -54,6 +61,7 @@ try:
 except ImportError:
     Image = None
 
+ps.apply()
 plt.rcParams.update({
     "font.size": 15,
     "axes.labelsize": 18,
@@ -64,11 +72,12 @@ plt.rcParams.update({
     "figure.titlesize": 20,
 })
 
-# ── Dark-theme colour palette ────────────────────────────────────────────────
-DARK_BG   = "#0d1117"
-PANEL_BG  = "#161b22"
-TEXT_CLR  = "#e6edf3"
-GRID_CLR  = "#21262d"
+# Theme colours (paper: white background; dark: screen) from plot_style.
+DARK_BG   = ps.FIG_BG
+PANEL_BG  = ps.PANEL_BG
+TEXT_CLR  = ps.TEXT_CLR
+GRID_CLR  = ps.GRID_CLR
+CONTOUR_CLR = ps.MUTED_CLR
 
 # Default smoothing scale in d_i. The diamagnetic current comes from moment
 # gradients: PIC shot noise (nicell ~ 1000) dominates any gradient computed
@@ -197,42 +206,31 @@ class DiamagneticCurrentAnalyzer:
         Gaussian smoothing (sigma cells) is applied to pressure and B fields
         before computing gradients — essential to suppress PIC shot noise.
         """
-        moments = PICDataReader.read_multiple_fields_3d(
-            mom_file, "all_1st",
-            ["txx_i/p0/3d", "tyy_i/p0/3d", "txx_e/p0/3d", "tyy_e/p0/3d"],
-        )
+        names = ["rho", "txx", "tyy", "tzz", "txy", "tyz", "tzx", "px", "py", "pz"]
         fields = PICDataReader.read_multiple_fields_3d(
             fld_file, "jeh-",
             ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"],
         )
+        bx = PICDataReader.flatten_2d_slice(fields["hx_fc/p0/3d"]).astype(float)
+        by = PICDataReader.flatten_2d_slice(fields["hy_fc/p0/3d"]).astype(float)
+        bz = PICDataReader.flatten_2d_slice(fields["hz_fc/p0/3d"]).astype(float)
+        smooth = lambda arr: gaussian_filter(arr.astype(float), sigma=self.sigma, mode="wrap")
 
-        pperp_i = 0.5 * (
-            PICDataReader.flatten_2d_slice(moments["txx_i/p0/3d"])
-            + PICDataReader.flatten_2d_slice(moments["tyy_i/p0/3d"])
-        )
-        pperp_e = 0.5 * (
-            PICDataReader.flatten_2d_slice(moments["txx_e/p0/3d"])
-            + PICDataReader.flatten_2d_slice(moments["tyy_e/p0/3d"])
-        )
-
-        bx = PICDataReader.flatten_2d_slice(fields["hx_fc/p0/3d"])
-        by = PICDataReader.flatten_2d_slice(fields["hy_fc/p0/3d"])
-        bz = PICDataReader.flatten_2d_slice(fields["hz_fc/p0/3d"])
-
-        smooth = lambda arr: gaussian_filter(arr.astype(float), sigma=self.sigma)
-        pperp_i, pperp_e = smooth(pperp_i), smooth(pperp_e)
-        bx, by, bz       = smooth(bx), smooth(by), smooth(bz)
-
-        b2 = bx**2 + by**2 + bz**2 + 1e-40
-
-        # Pressure gradients: array layout (Nz, Ny) → axis 0 = z, axis 1 = y
-        dyi, dzi = np.gradient(pperp_i, axis=1), np.gradient(pperp_i, axis=0)
-        dye, dze = np.gradient(pperp_e, axis=1), np.gradient(pperp_e, axis=0)
-
-        # J_dx = (By · dP_perp/dz  -  Bz · dP_perp/dy) / B^2   [= (B x grad P_perp)/B^2]
-        jdia_i     = (by * dzi - bz * dyi) / b2
-        jdia_e     = (by * dze - bz * dye) / b2
+        currents = {}
+        for suffix, mass in (("i", M_ION), ("e", M_ELEC)):
+            raw = PICDataReader.read_multiple_fields_3d(
+                mom_file, "all_1st", [f"{n}_{suffix}/p0/3d" for n in names])
+            mom = {k.split("/")[0]: PICDataReader.flatten_2d_slice(v).astype(float)
+                   for k, v in raw.items()}
+            t = central_pressure_tensor(mom, suffix, mass)
+            _, pperp, _ = field_aligned_pressures(
+                t["Pxx"], t["Pyy"], t["Pzz"], t["Pxy"], t["Pyz"], t["Pzx"], bx, by, bz)
+            pperp = np.nan_to_num(pperp, nan=float(np.nanmean(pperp)))
+            currents[suffix] = diamagnetic_current_x(
+                smooth(pperp), smooth(by), smooth(bz), DX_DE, DX_DE)
+        jdia_i, jdia_e = currents["i"], currents["e"]
         jdia_total = jdia_i + jdia_e
+        b2 = smooth(bx) ** 2 + smooth(by) ** 2 + smooth(bz) ** 2
 
         return {
             "Jdia_i":     jdia_i,
@@ -260,9 +258,9 @@ class DiamagneticCurrentAnalyzer:
         vmax_tot = vmax_tot or np.percentile(np.abs(Jtot), 99.5)
 
         configs = [
-            (Ji, "RdBu_r", vmax_i, r"$J^{(d)}_x$ ions", r"$J_d^{(\rm i)}$ [a.u.]", "ions"),
-            (Je, "PuOr_r", vmax_e, r"$J^{(d)}_x$ electrons", r"$J_d^{(\rm e)}$ [a.u.]", "electrons"),
-            (Jtot, "seismic", vmax_tot, r"$J^{(d)}_x$ total", r"$J_d^{(\rm tot)}$ [a.u.]", "total"),
+            (Ji, ps.CMAP_DIVERGING, vmax_i, r"$J^{(d)}_x$ ions", r"$J_d^{(\rm i)}$ [code units]", "ions"),
+            (Je, ps.CMAP_DIVERGING, vmax_e, r"$J^{(d)}_x$ electrons", r"$J_d^{(\rm e)}$ [code units]", "electrons"),
+            (Jtot, ps.CMAP_DIVERGING, vmax_tot, r"$J^{(d)}_x$ total", r"$J_d^{(\rm tot)}$ [code units]", "total"),
         ]
 
         for field, cmap, vm, title, lbl, slug in configs:
@@ -278,7 +276,7 @@ class DiamagneticCurrentAnalyzer:
             vmax_bmod = float(np.percentile(Bmod, 95))
             if vmax_bmod > vmin_bmod + 1e-8:
                 lvls = np.linspace(vmin_bmod, vmax_bmod, 7)
-                ax.contour(Bmod.T, levels=lvls, colors="white", linewidths=0.5, alpha=0.4,
+                ax.contour(Bmod.T, levels=lvls, colors=CONTOUR_CLR, linewidths=0.5, alpha=0.6,
                            extent=[0, DOMAIN_DI_Z, 0, DOMAIN_DI_Y])
             cb = fig.colorbar(im, ax=ax, pad=0.01, aspect=30)
             cb.set_label(lbl, fontsize=14, color=TEXT_CLR)
@@ -296,8 +294,7 @@ class DiamagneticCurrentAnalyzer:
             for spine in ax.spines.values():
                 spine.set_edgecolor(GRID_CLR)
             out_file = self.outdir / f"jdia_{slug}_step{step:06d}.png"
-            fig.savefig(out_file, dpi=180, bbox_inches="tight", facecolor=DARK_BG)
-            plt.close(fig)
+            ps.save(fig, out_file)
             print(f"  Saved: {out_file}")
 
     def _render_frame_to_pil(
@@ -342,9 +339,9 @@ class DiamagneticCurrentAnalyzer:
         fig.patch.set_facecolor(DARK_BG)
 
         configs = [
-            (Ji,   "RdBu_r",  vmax_i,   r"$J^{(d)}_x$ ions",      r"$J_d^{(\rm i)}$ [a.u.]"),
-            (Je,   "PuOr_r",  vmax_e,   r"$J^{(d)}_x$ electrons", r"$J_d^{(\rm e)}$ [a.u.]"),
-            (Jtot, "seismic", vmax_tot, r"$J^{(d)}_x$ total",     r"$J_d^{(\rm tot)}$ [a.u.]"),
+            (Ji,   ps.CMAP_DIVERGING, vmax_i,   r"$J^{(d)}_x$ ions",      r"$J_d^{(\rm i)}$ [code units]"),
+            (Je,   ps.CMAP_DIVERGING, vmax_e,   r"$J^{(d)}_x$ electrons", r"$J_d^{(\rm e)}$ [code units]"),
+            (Jtot, ps.CMAP_DIVERGING, vmax_tot, r"$J^{(d)}_x$ total",     r"$J_d^{(\rm tot)}$ [code units]"),
         ]
 
         for ax, (field, cmap, vm, title, lbl) in zip(axes, configs):
@@ -358,7 +355,7 @@ class DiamagneticCurrentAnalyzer:
             vmax_bmod = float(np.percentile(Bmod, 95))
             if vmax_bmod > vmin_bmod + 1e-8:
                 lvls = np.linspace(vmin_bmod, vmax_bmod, 7)
-                ax.contour(Bmod.T, levels=lvls, colors="white", linewidths=0.5, alpha=0.4,
+                ax.contour(Bmod.T, levels=lvls, colors=CONTOUR_CLR, linewidths=0.5, alpha=0.6,
                            extent=[0, DOMAIN_DI_Z, 0, DOMAIN_DI_Y])
             cb = fig.colorbar(im, ax=ax, pad=0.01, aspect=30)
             cb.set_label(lbl, fontsize=14, color=TEXT_CLR)
@@ -377,7 +374,7 @@ class DiamagneticCurrentAnalyzer:
         fig.suptitle(
             rf"Diamagnetic Current  —  $t \approx {step_to_omegaci(step):.2f}\,\Omega_{{ci}}^{{-1}}$  (step {step})"
             "\n"
-            rf"Mirror Maxwellian  ($m_i/m_e = {int(MASS_RATIO)}$,  $B_0 = {B0:.4f}$)",
+            rf"{PROFILE_LABEL}  (contours: $|B|$)",
             fontsize=17, color=TEXT_CLR, fontweight="bold",
         )
         return fig

@@ -44,7 +44,11 @@ except ImportError:  # NumPy fallback keeps spectra available without SciPy.
         )()
 
 from data_reader import PICDataReader
-from psc_units import DX_DI, DI, DOMAIN_DI, RHO_I, INSTABILITY, PROFILE_LABEL, step_to_omegaci
+from growth_fit import fit_exponential_growth
+from psc_units import (
+    DX_DI, DI, DOMAIN_DI, RHO_I, INSTABILITY, K_MAX_DI_DEFAULT, PROFILE_LABEL,
+    step_to_omegaci,
+)
 
 warnings.filterwarnings("ignore")
 ps.apply()
@@ -81,48 +85,22 @@ def _new_dark_fig(figsize):
     return fig, ax
 
 
+#: Optional explicit linear-phase window (Omega_ci t) shared by every fit in
+#: this module; set from --t-start/--t-end. None -> automatic window.
+FIT_WINDOW: tuple[float | None, float | None] = (None, None)
+
+
 def _fit_growth_rate(time: np.ndarray, amplitude: np.ndarray) -> dict:
     """Log-linear growth rate of a mode amplitude ~ exp(gamma * t).
 
-    Mirrors the linear-phase window selection used for the box-integrated
-    delta_B_rms(t) fit, applied here per k-shell so every mode gets its own
-    gamma instead of a single global number.
+    Delegates to growth_fit.fit_exponential_growth, the single linear-phase
+    fit of the pipeline, so gamma(k) and the box-integrated gamma use the
+    same estimator. The previous slope-sign window kept saturation samples
+    whenever noise made the local slope positive and biased gamma low.
     """
-    valid = np.isfinite(time) & np.isfinite(amplitude) & (amplitude > 0)
-    if np.count_nonzero(valid) < 4:
-        return {
-            "gamma": np.nan, "intercept": np.nan, "rvalue": np.nan,
-            "n_points": int(np.count_nonzero(valid)), "fit_time_range": None,
-        }
-
-    t = time[valid]
-    y = np.log(amplitude[valid])
-    slope_local = np.gradient(y, t)
-    positive = slope_local > 0
-    if np.count_nonzero(positive) >= 3:
-        idx_valid = np.where(positive)[0]
-        lo = idx_valid[max(0, int(0.15 * len(idx_valid)))]
-        hi = idx_valid[min(len(idx_valid) - 1, int(0.85 * len(idx_valid)))]
-        fit_slice = slice(lo, hi + 1)
-    else:
-        fit_slice = slice(1, -1)
-    if len(t[fit_slice]) < 3:
-        fit_slice = slice(None)
-
-    coeff = np.polyfit(t[fit_slice], y[fit_slice], 1)
-    fitted = np.polyval(coeff, t[fit_slice])
-    ss_res = float(np.sum((y[fit_slice] - fitted) ** 2))
-    ss_tot = float(np.sum((y[fit_slice] - np.mean(y[fit_slice])) ** 2))
-    rvalue = float(np.sqrt(max(0.0, 1.0 - ss_res / ss_tot))) if ss_tot > 0 else np.nan
-    return {
-        "gamma": float(coeff[0]),
-        "intercept": float(coeff[1]),
-        "rvalue": rvalue,
-        "n_points": int(len(t[fit_slice])),
-        "fit_time_range": (float(t[fit_slice][0]), float(t[fit_slice][-1])),
-        "fit_time": t[fit_slice],
-        "fit_amplitude": np.exp(fitted),
-    }
+    fit = fit_exponential_growth(time, amplitude, t_start=FIT_WINDOW[0],
+                                 t_end=FIT_WINDOW[1])
+    return fit
 
 
 def report_box_resolution(k_ratio_range: tuple[float, float] = (0.3, 0.5)) -> str:
@@ -460,7 +438,7 @@ class SpectralAnalyzer:
         plane: str = "auto",
         slice_idx: int = None,
         steps_to_process: list[int] = None,
-        k_max_di: float = 2.0,
+        k_max_di: float = K_MAX_DI_DEFAULT,
     ) -> int:
         """Mode-resolved growth rate gamma(k): accumulate E(k, Omega_ci t) across
         every snapshot and fit a log-linear growth rate per k-shell, instead of
@@ -586,14 +564,21 @@ class SpectralAnalyzer:
             growth_rows.append({
                 "k": float(k),
                 "gamma_perp": fit_perp["gamma"],
+                "gamma_perp_err": fit_perp["gamma_err"],
                 "gamma_perp_rvalue": fit_perp["rvalue"],
                 "gamma_perp_npoints": fit_perp["n_points"],
+                "gamma_perp_fit_ok": fit_perp["fit_ok"],
                 "gamma_parallel": fit_par["gamma"],
+                "gamma_parallel_err": fit_par["gamma_err"],
                 "gamma_parallel_rvalue": fit_par["rvalue"],
                 "gamma_parallel_npoints": fit_par["n_points"],
+                "gamma_parallel_fit_ok": fit_par["fit_ok"],
                 "sigma_m": sigma_m_k,
                 "final_energy_perp": float(energy_perp[i, -1]),
                 "final_energy_parallel": float(energy_par[i, -1]),
+                # The first shell is the box fundamental: a peak there may be
+                # limited by the box size rather than set by the physics.
+                "box_limited": int(i == 0),
             })
 
         total_par = energy_par.sum(axis=0)
@@ -647,18 +632,30 @@ class SpectralAnalyzer:
         peak_par_idx = max(significant_par, key=lambda i: growth_rows[i]["gamma_parallel"]) \
             if significant_par else int(np.argmax(energy_par[:, -1]))
 
-        if significant_perp:
-            row = growth_rows[peak_perp_idx]
+        peak_rows = []
+        for label, idxs, peak_idx in (("perp", significant_perp, peak_perp_idx),
+                                      ("parallel", significant_par, peak_par_idx)):
+            if not idxs:
+                continue
+            row = growth_rows[peak_idx]
             print(
-                f"  Max gamma_perp = {row['gamma_perp']:.4g} Omega_ci at "
-                f"k d_i = {row['k']:.3g} (r={row['gamma_perp_rvalue']:.2f})"
+                f"  Max gamma_{label} = {row[f'gamma_{label}']:.4g} "
+                f"+/- {row[f'gamma_{label}_err']:.2g} Omega_ci at "
+                f"k d_i = {row['k']:.3g} (r={row[f'gamma_{label}_rvalue']:.2f})"
             )
-        if significant_par:
-            row = growth_rows[peak_par_idx]
-            print(
-                f"  Max gamma_parallel = {row['gamma_parallel']:.4g} Omega_ci at "
-                f"k d_i = {row['k']:.3g} (r={row['gamma_parallel_rvalue']:.2f})"
-            )
+            if row["box_limited"]:
+                print(f"  [WARN] the gamma_{label} peak sits in the first k shell "
+                      f"(k d_i = {row['k']:.3g}): it may be limited by the box "
+                      "size; confirm with the bigbox40 twin before quoting it.")
+            peak_rows.append({
+                "component": label, "k": row["k"],
+                "gamma": row[f"gamma_{label}"], "gamma_err": row[f"gamma_{label}_err"],
+                "rvalue": row[f"gamma_{label}_rvalue"],
+                "fit_ok": row[f"gamma_{label}_fit_ok"],
+                "box_limited": row["box_limited"],
+                "k_max_di_analysed": float(k_max_di),
+            })
+        self._write_csv(self.outdir / f"growth_rate_peak_{resolved_plane}.csv", peak_rows)
 
         self.plot_growth_curve(
             valid_times, energy_perp[peak_perp_idx], k_centers[peak_perp_idx],
@@ -831,10 +828,18 @@ if __name__ == "__main__":
     parser.add_argument("--dy", type=float, default=DX_DI, help="Grid spacing along y in d_i.")
     parser.add_argument("--dz", type=float, default=DX_DI, help="Grid spacing along z in d_i.")
     parser.add_argument("--parallel-axis", type=str, default="z", choices=["x", "y", "z"], help="Direction of the guide field / parallel axis.")
-    parser.add_argument("--k-max-di", type=float, default=2.0, help="Upper bound k*d_i for the gamma(k) reconstruction; higher bins are grid noise, not physical modes.")
+    parser.add_argument("--k-max-di", type=float, default=K_MAX_DI_DEFAULT,
+                        help="Upper bound k*d_i for the gamma(k) reconstruction. Default: "
+                             "2 for ion-scale cases, 2*sqrt(mi/me) (k d_e = 2) for the "
+                             "electron-driven whistler cases, whose modes live at k d_i ~ 3-14.")
+    parser.add_argument("--t-start", type=float, default=None,
+                        help="Explicit start of the linear phase (Omega_ci t) for every gamma fit.")
+    parser.add_argument("--t-end", type=float, default=None,
+                        help="Explicit end of the linear phase (Omega_ci t) for every gamma fit.")
     parser.add_argument("--steps", nargs="*", type=int, default=None, help="Specific steps to process.")
     parser.add_argument("--outdir", type=str, default="spectral_plots", help="Directory for spectral plots and CSV outputs.")
     args = parser.parse_args()
+    FIT_WINDOW = (args.t_start, args.t_end)
 
     analyzer = SpectralAnalyzer(
         dx=args.dx,

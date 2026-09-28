@@ -6,9 +6,12 @@
 
 PYTHON ?= $(abspath ../.venv/bin/python)
 DATA_DIR ?= ../build/src
-DETECTED_CASE = $(shell detected=$$(find "$(DATA_DIR)" -maxdepth 1 -type f \
-	-name 'prt_*.h5' -printf '%f\n' 2>/dev/null | sed -E \
-	's/^(prt_)?([^.]+)\.[0-9]+(_p[0-9]+)?\.h5$$/\2/' | sort -u | head -1); \
+# Particle series names, from prt_<case>.<step>.h5 or .bp. Portable: BSD find
+# (macOS) has no -printf, and the previous GNU-only form made detection and the
+# CASE/data cross-check silently do nothing on a laptop.
+PRT_SERIES = find "$(DATA_DIR)" -maxdepth 1 \( -name 'prt_*.h5' -o -name 'prt_*.bp' \) \
+	2>/dev/null | sed -E 's|.*/||; s/^(prt_)?([^.]+)\.[0-9]+(_p[0-9]+)?\.(h5|bp)$$/\2/' | sort -u
+DETECTED_CASE = $(shell detected=$$($(PRT_SERIES) | head -1); \
 	if test -n "$$detected"; then echo "$$detected"; \
 	else basename "$(abspath $(DATA_DIR))" | grep -E '^[FMW]_[SMW]_bM$$' || true; fi)
 CASE ?= $(DETECTED_CASE)
@@ -34,11 +37,21 @@ PARTICLES_OUT = $(OUTPUT_DIR)/03_particles
 SPECTRAL_OUT = $(OUTPUT_DIR)/04_spectra
 DIAMAGNETIC_OUT = $(OUTPUT_DIR)/05_diamagnetic
 HEATFLUX_OUT = $(OUTPUT_DIR)/06_heat_flux
-MIRROR_OUT = $(OUTPUT_DIR)/07_mirror_structures
+STRUCTURES_OUT = $(OUTPUT_DIR)/07_structures
 VALIDATION_OUT = $(OUTPUT_DIR)/08_validation
 PHYSICS_OUT = $(OUTPUT_DIR)/09_physical_diagnostics
 COMPARE_CASES ?=
 COMPARE_OUT ?= $(RESULTS_ROOT)/comparison_physical
+# Convergence / realizations: CONVERGENCE_RUNS='base=../analysis_results/A dx2=../analysis_results/B'
+CONVERGENCE_RUNS ?=
+CONVERGENCE_OUT ?= $(RESULTS_ROOT)/convergence
+# Free label of this realization (seed, dt/ppc variant); stored in the manifest.
+RUN_TAG ?=
+# PSC job logs with the gauss/continuity checks. COSMA writes them next to the
+# run directory as <job-name>_<jobid>.out, the job id being the suffix of the
+# run directory name (see cosma_jobs/simulacion/*.sh).
+RUN_JOBID = $(lastword $(subst _, ,$(notdir $(abspath $(DATA_DIR)))))
+LOGS ?= $(wildcard $(DATA_DIR)/*.out $(DATA_DIR)/*.log $(dir $(abspath $(DATA_DIR)))*_$(RUN_JOBID).out)
 THEORY_CSV ?=
 # Dispersion-diagram controls.
 #
@@ -75,10 +88,12 @@ DISPERSION_T_END ?=
 GROWTH_COMPONENT ?= parallel
 GROWTH_T_START ?= $(DISPERSION_T_START)
 GROWTH_T_END ?= $(DISPERSION_T_END)
-GROWTH_KPAR_MAX ?= 1.5
-GROWTH_KPERP_MAX ?= 1.5
+# Empty -> the script's profile-aware default: 1.5 d_i^-1 for ion-scale cases,
+# k d_e <= 2 (k d_i <= 2 sqrt(mi/me)) for the electron-driven whistler cases.
+GROWTH_KPAR_MAX ?=
+GROWTH_KPERP_MAX ?=
 GROWTH_DISPLAY_KPAR_MAX ?=
-GROWTH_DISPLAY_KPERP_MAX ?= 0.9
+GROWTH_DISPLAY_KPERP_MAX ?=
 GROWTH_SHADING ?= auto
 GROWTH_CONTOURS ?= 7
 GROWTH_ANGLE_STEP ?= 15
@@ -92,11 +107,12 @@ export MPLCONFIGDIR ?= /tmp/psc-matplotlib
 #   dark  -> the previous GitHub-dark look, for screen and slides.
 export PSC_FIG_THEME ?= paper
 
-.PHONY: all analysis common manifest F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM \
-	W_S_bM W_M_bM W_W_bM brazil mirror diamagnetic fields spectral dispersion growth-map \
+.PHONY: all analysis thesis common manifest spectrum F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM \
+	W_S_bM W_M_bM W_W_bM brazil mirror structures diamagnetic fields spectral dispersion growth-map \
+	residuals energy-exchange estimators convergence \
 	anisotropy-dispersion \
 	polarization validate particles heatflux physics compare-physics clean help \
-	theory theory-self-test prt-region vdf-spatial \
+	theory theory-self-test prt-region prt-bfield vdf-spatial \
 	theory-liouville theory-liouville-x theory-liouville-sweep \
 	liouville-self-test kappa-eff-self-test \
 	check-fields check-moments check-particles check-case check-resolution \
@@ -104,20 +120,25 @@ export PSC_FIG_THEME ?= paper
 
 all: analysis
 
-common: brazil fields particles spectral diamagnetic heatflux validate physics energy-if-present
+common: brazil fields particles spectral diamagnetic heatflux validate physics \
+	energy-if-present residuals structures energy-exchange estimators
 
 analysis: manifest common
-	@if printf '%s' "$(CASE)" | grep -Eq '^(M_|mirror_)'; then \
-		$(MAKE) mirror DATA_DIR="$(DATA_DIR)" CASE="$(CASE)" \
-			RESULTS_ROOT="$(RESULTS_ROOT)"; \
-	fi
+
+# Everything a thesis chapter needs for one run, in dependency order: the
+# initial-condition check and manifest first, then the validation evidence
+# (energy, field residuals, estimators), then the physics.
+thesis: manifest energy-if-present residuals physics brazil spectral structures \
+	energy-exchange estimators heatflux particles validate diamagnetic fields
+	@echo "Thesis products for $(CASE) in $(abspath $(OUTPUT_DIR))"
 
 F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM W_S_bM W_M_bM W_W_bM:
 	$(MAKE) analysis DATA_DIR="$(DATA_DIR)" CASE="$@" RESULTS_ROOT="$(RESULTS_ROOT)"
 
 manifest: check-case check-initial-conditions
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) write_analysis_manifest.py \
-		--data-dir "$(DATA_DIR)" --output-dir "$(OUTPUT_DIR)" --case "$(CASE)"
+		--data-dir "$(DATA_DIR)" --output-dir "$(OUTPUT_DIR)" --case "$(CASE)" \
+		$(if $(RUN_TAG),--run-tag "$(RUN_TAG)",)
 
 show-inputs:
 	@echo "Run name:       $(RUN_NAME)"
@@ -135,9 +156,7 @@ check-case:
 		echo "ERROR: CASE is empty and could not be detected from prt_<CASE>.<step>.h5"; \
 		echo "Use: make analysis DATA_DIR=../run CASE=F_M_bM"; exit 1; \
 	}
-	@count=$$(find "$(DATA_DIR)" -maxdepth 1 -type f -name 'prt_*.h5' \
-		-printf '%f\n' 2>/dev/null | sed -E \
-		's/^(prt_)?([^.]+)\.[0-9]+(_p[0-9]+)?\.h5$$/\2/' | sort -u | wc -l); \
+	@count=$$($(PRT_SERIES) | wc -l); \
 	if test "$$count" -gt 1; then \
 		echo "ERROR: multiple particle series found in $(DATA_DIR)."; \
 		echo "Put each PSC case in its own directory."; exit 1; \
@@ -186,10 +205,16 @@ brazil: check-case check-fields check-moments check-resolution
 		--data-dir "$(DATA_DIR)" --B0 $(B0_REF) \
 		--run-name "$(RUN_NAME)" --outdir "$(ANISOTROPY_OUT)"
 
-mirror: check-case check-fields check-resolution
-	@echo "Generating mirror-structure plots"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) mirror_physics.py \
-		--B0 $(B0_REF) --fields "$(FIELD_PATTERN)" --outdir "$(MIRROR_OUT)"
+# Saturated structures (holes/peaks, |B| skewness, n-|B| correlation, total-
+# pressure balance). Replaces the old mirror_physics.py maps (now in legacy/);
+# `make mirror` is kept as an alias.
+structures: check-case check-fields check-resolution
+	@echo "Measuring saturated magnetic structures and pressure balance"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) structures_analysis.py \
+		--data-dir "$(DATA_DIR)" --fields "$(FIELD_PATTERN)" --moments "$(MOMENT_PATTERN)" \
+		--outdir "$(STRUCTURES_OUT)" $(STRUCTURES_FLAGS)
+
+mirror: structures
 
 diamagnetic: check-case check-fields check-moments check-resolution
 	@echo "Generating diamagnetic-current plots"
@@ -206,10 +231,17 @@ fields: check-case check-fields check-resolution
 		--every $(SNAPSHOT_EVERY) --gif_every $(GIF_EVERY) \
 		$(if $(FIELDS_GIF),--create_gifs --fixed_scale,)
 
-spectral: check-case check-fields check-resolution
+# spectrum = gamma(k), E(k,t), helicity, compressibility only. `spectral` runs
+# it and then the four other spectral products; a cluster job can instead run
+# spectrum / dispersion / growth-map (x2) / polarization as parallel steps.
+spectrum: check-case check-fields check-resolution
 	@echo "Generating spectral plots"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) spectral_analysis.py \
-		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)"
+		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)" \
+		$(if $(GROWTH_T_START),--t-start "$(GROWTH_T_START)",) \
+		$(if $(GROWTH_T_END),--t-end "$(GROWTH_T_END)",)
+
+spectral: spectrum
 	$(MAKE) dispersion DATA_DIR="$(DATA_DIR)" CASE="$(CASE)" \
 		RESULTS_ROOT="$(RESULTS_ROOT)"
 	$(MAKE) growth-map DATA_DIR="$(DATA_DIR)" CASE="$(CASE)" \
@@ -242,9 +274,10 @@ growth-map: check-case check-fields check-resolution
 		--component "$(GROWTH_COMPONENT)" \
 		$(if $(GROWTH_T_START),--t-start "$(GROWTH_T_START)",) \
 		$(if $(GROWTH_T_END),--t-end "$(GROWTH_T_END)",) \
-		--kpar-max "$(GROWTH_KPAR_MAX)" --kperp-max "$(GROWTH_KPERP_MAX)" \
+		$(if $(GROWTH_KPAR_MAX),--kpar-max "$(GROWTH_KPAR_MAX)",) \
+		$(if $(GROWTH_KPERP_MAX),--kperp-max "$(GROWTH_KPERP_MAX)",) \
 		$(if $(GROWTH_DISPLAY_KPAR_MAX),--display-kpar-max "$(GROWTH_DISPLAY_KPAR_MAX)",) \
-		--display-kperp-max "$(GROWTH_DISPLAY_KPERP_MAX)" \
+		$(if $(GROWTH_DISPLAY_KPERP_MAX),--display-kperp-max "$(GROWTH_DISPLAY_KPERP_MAX)",) \
 		--shading "$(GROWTH_SHADING)" --contours "$(GROWTH_CONTOURS)" \
 		--angle-step "$(GROWTH_ANGLE_STEP)" --min-rvalue "$(GROWTH_MIN_RVALUE)"
 
@@ -277,18 +310,22 @@ particles: check-case check-particles
 		"$(PARTICLE_PATTERN)" --run-name "$(RUN_NAME)" \
 		--outdir "$(PARTICLES_OUT)"
 
-heatflux: check-case check-fields check-moments check-resolution
-	@echo "Generating heat-flux plots"
+# Third central moment of the particle VDF in the local frame of the prt
+# window, truncated at s_max (needed for kappa = 3) with sampling errors.
+heatflux: check-case check-particles check-fields check-resolution
+	@echo "Measuring the particle heat flux (third moment) in the prt window"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) heat_flux_analysis.py \
-		--moments "$(MOMENT_PATTERN)" --fields "$(FIELD_PATTERN)" \
-		--outdir "$(HEATFLUX_OUT)"
+		--data-dir "$(DATA_DIR)" --particles "$(PARTICLE_PATTERN)" \
+		--fields "$(FIELD_PATTERN)" --outdir "$(HEATFLUX_OUT)" $(HEATFLUX_FLAGS)
 
 physics: check-case check-resolution
 	@echo "Generating integrated physical diagnostics"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) physical_diagnostics.py \
 		--data-dir "$(DATA_DIR)" --particles "$(PARTICLE_PATTERN)" \
 		--fields "$(FIELD_PATTERN)" --moments "$(MOMENT_PATTERN)" \
-		--outdir "$(PHYSICS_OUT)"
+		--outdir "$(PHYSICS_OUT)" \
+		$(if $(GROWTH_T_START),--growth-t-start "$(GROWTH_T_START)",) \
+		$(if $(GROWTH_T_END),--growth-t-end "$(GROWTH_T_END)",)
 
 theory: check-case
 	@echo "Solving the parallel linear dispersion relation for $(CASE)"
@@ -308,6 +345,28 @@ energy-if-present: check-case
 energy: check-case
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) energy_conservation.py \
 		$(DATA_DIR)/diag*.asc --outdir "$(PHYSICS_OUT)"
+
+# div B of the Yee field snapshots plus PSC's own Gauss / continuity checks
+# parsed from the job log (LOGS='path/to/job.out' if it is elsewhere).
+residuals: check-case check-fields
+	@echo "Field-solver residuals: div B, Gauss, continuity"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) field_residuals.py \
+		--data-dir "$(DATA_DIR)" --fields "$(FIELD_PATTERN)" --outdir "$(PHYSICS_OUT)" \
+		$(if $(strip $(LOGS)),--logs $(LOGS),)
+
+# J_s.E per species (parallel/perpendicular), integrated in time and checked
+# against the kinetic-energy change from DiagEnergies.
+energy-exchange: check-case check-fields check-moments check-resolution
+	@echo "Field-particle energy exchange J.E per species"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) energy_exchange.py \
+		--data-dir "$(DATA_DIR)" --fields "$(FIELD_PATTERN)" --moments "$(MOMENT_PATTERN)" \
+		--outdir "$(PHYSICS_OUT)"
+
+# The four anisotropy estimators of the pipeline on one time axis.
+estimators: check-case check-fields check-moments check-particles check-resolution
+	@echo "Comparing particle and moment anisotropy estimators"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) estimator_consistency.py \
+		--data-dir "$(DATA_DIR)" --outdir "$(PHYSICS_OUT)"
 
 # Adiabatic Liouville mapping + trapped-domain closures (paper fig. 2).
 # Defaults (kappa0, A0) come from the active PSC_PROFILE; override with
@@ -357,6 +416,14 @@ prt-region: check-case check-fields
 		--data-dir "$(DATA_DIR)" --outdir "$(PARTICLES_OUT)" \
 		$(if $(STEPS),--steps $(STEPS),) --average-over-window
 
+# Time-averaged <|B|>, B_rms and dB_rms inside the prt window, with the PIC
+# noise floor removed. PRT_BFIELD_FLAGS takes e.g.
+# '--avg-window 100 158 --noise-window 0 0.3 --kmax-de 2.0 --floor static'.
+prt-bfield: check-case check-fields
+	@echo "Time-averaged B statistics inside the prt window (noise-cleaned)"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) prt_region_bfield_stats.py \
+		--data-dir "$(DATA_DIR)" --outdir "$(PHYSICS_OUT)" $(PRT_BFIELD_FLAGS)
+
 vdf-spatial: check-case check-fields check-particles
 	@echo "Computing the spatially resolved VDF inside the prt window"
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) vdf_spatial.py \
@@ -370,6 +437,13 @@ compare-physics:
 	}
 	$(PYTHON) compare_physical_cases.py $(COMPARE_CASES) --outdir "$(COMPARE_OUT)"
 
+convergence:
+	@test -n "$(CONVERGENCE_RUNS)" || { \
+		echo "ERROR: set CONVERGENCE_RUNS='base=../analysis_results/run_a dx2=../analysis_results/run_b ...'"; \
+		exit 1; \
+	}
+	$(PYTHON) convergence_study.py $(CONVERGENCE_RUNS) --outdir "$(CONVERGENCE_OUT)"
+
 clean:
 	@test -n "$(RUN_NAME)" && test "$(OUTPUT_DIR)" != "/" && rm -rf "$(OUTPUT_DIR)"
 
@@ -381,17 +455,22 @@ help:
 	@echo "  make F_M_bM DATA_DIR=../path/to/F_M_bM      # legacy profile"
 	@echo "  make compare-physics COMPARE_CASES='maxwellian=../analysis_results/mirror_maxwellian/09_physical_diagnostics kappa=../analysis_results/mirror_kappa/09_physical_diagnostics'"
 	@echo ""
-	@echo "Current cases: mirror_bimaxwellian_strong mirror_bimaxwellian_moderate mirror_bimaxwellian_weak"
-	@echo "               firehose_bimaxwellian_strong firehose_bimaxwellian_moderate firehose_bimaxwellian_weak"
-	@echo "               whistler_bimaxwellian_strong whistler_bimaxwellian_moderate whistler_bimaxwellian_weak"
-	@echo "               mirror_bikappa3 mirror_bikappa5 firehose_bikappa3 firehose_bikappa5"
+	@echo "Current cases: mirror_bimaxwellian_{strong,moderate,weak}  mirror_bikappa3 mirror_bikappa5"
+	@echo "               mirror_bikappa3_moderate mirror_bikappa5_moderate"
+	@echo "               firehose_bimaxwellian_{strong,moderate,weak}  firehose_bikappa3 firehose_bikappa5"
+	@echo "               firehose_bimaxwellian_{strong,moderate}_bigbox40  firehose_bikappa{3,5}_bigbox40"
+	@echo "               whistler_bimaxwellian_{strong,moderate,weak}  whistler_bikappa3_moderate"
 	@echo "Legacy cases:  F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM W_S_bM W_M_bM W_W_bM"
-	@echo "Main targets: analysis brazil particles fields spectral dispersion growth-map polarization diamagnetic heatflux validate physics compare-physics"
-	@echo "              anisotropy-dispersion"
+	@echo "Main targets: thesis analysis brazil particles fields spectral dispersion growth-map polarization"
+	@echo "              diamagnetic heatflux validate physics structures residuals energy-exchange estimators"
+	@echo "              compare-physics convergence anisotropy-dispersion"
+	@echo "  make thesis DATA_DIR=... CASE=... [RUN_TAG=seed2] [GROWTH_T_START=.. GROWTH_T_END=..] [LOGS=job.out]"
+	@echo "  make convergence CONVERGENCE_RUNS='base=../analysis_results/A dx2=../analysis_results/B'"
 	@echo "  make polarization DATA_DIR=... CASE=... THEORY_CSV=theory.csv  # omega-k dispersion (psi_pm), mode growth, mirror oblique spectrum"
 	@echo "  make theory CASE=...                          # solve linear dispersion -> linear_theory.csv (fills gamma_theory)"
 	@echo "  make theory-self-test                         # validate the solver against known limits"
 	@echo "  make prt-region DATA_DIR=... CASE=...          # where the prt window sits in the field fluctuations"
+	@echo "  make prt-bfield DATA_DIR=... CASE=...          # time-averaged <|B|>, B_rms, dB_rms in the prt window"
 	@echo "  make vdf-spatial DATA_DIR=... CASE=...         # VDF resolved in space; hole vs peak populations + 2D VDF with the trapping boundary"
 	@echo "  make theory-liouville CASE=...                # closure profiles vs b (paper fig. 2)"
 	@echo "  make theory-liouville-x CASE=...              # the same closures vs x along B(x) = B0[1 - a sech^2(x/L)]"

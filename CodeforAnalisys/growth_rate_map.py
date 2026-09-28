@@ -374,10 +374,14 @@ def main() -> int:
     from dispersion_analysis import load_series
 
     try:
-        from psc_units import DX_DI, step_to_omegaci
+        from psc_units import DX_DI, K_MAX_DI_DEFAULT, step_to_omegaci
     except (ImportError, ValueError):
         DX_DI = 1.0
+        K_MAX_DI_DEFAULT = 1.5
         step_to_omegaci = lambda step: float(step)
+    # Ion-scale cases: 1.5 d_i^-1 (the maintained default). Electron-driven
+    # (whistler) cases: the electron-scale band, k d_e <= 2.
+    k_default = 1.5 if K_MAX_DI_DEFAULT <= 2.0 else K_MAX_DI_DEFAULT
 
     parser = argparse.ArgumentParser(
         description="gamma(k_parallel,k_perp) growth-rate map from PSC snapshots."
@@ -389,8 +393,10 @@ def main() -> int:
     parser.add_argument("--dx", type=float, default=DX_DI)
     parser.add_argument("--dy", type=float, default=DX_DI)
     parser.add_argument("--dz", type=float, default=DX_DI)
-    parser.add_argument("--kpar-max", type=float, default=1.5)
-    parser.add_argument("--kperp-max", type=float, default=1.5)
+    parser.add_argument("--kpar-max", type=float, default=k_default,
+                        help="k_par*d_i cap (default 1.5; 2*sqrt(mi/me) for whistler cases)")
+    parser.add_argument("--kperp-max", type=float, default=k_default,
+                        help="k_perp*d_i cap (default 1.5; 2*sqrt(mi/me) for whistler cases)")
     parser.add_argument("--min-rvalue", type=float, default=0.7)
     parser.add_argument("--t-start", type=float)
     parser.add_argument("--t-end", type=float)
@@ -403,7 +409,8 @@ def main() -> int:
                              "oblique modes.")
     parser.add_argument("--display-kpar-max", type=float, default=None,
                         help="Plot-only k_parallel zoom; does not change the computed CSV.")
-    parser.add_argument("--display-kperp-max", type=float, default=0.9,
+    parser.add_argument("--display-kperp-max", type=float,
+                        default=0.9 if k_default <= 2.0 else None,
                         help="Plot-only k_perp zoom; does not change the computed CSV.")
     parser.add_argument("--shading", choices=["auto", "nearest", "gouraud"], default="auto",
                         help="pcolormesh shading used only for display.")

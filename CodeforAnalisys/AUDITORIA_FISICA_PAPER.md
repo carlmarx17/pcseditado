@@ -48,6 +48,54 @@ esto corrio aun sobre datos reales. Ver el detalle marcado `[CERRADO
 2026-09-16]` en cada seccion de abajo para lo que ya no bloquea, y lo que
 sigue bloqueando.
 
+## Follow-up (2026-09-28)
+
+Written in English, per the project convention for new documentation.
+
+**Errors found and fixed in this revision** (all products made before
+2026-09-28 must be regenerated; the manifest now records
+`analysis_conventions_version: 5`):
+
+| Problem | Effect | Fix |
+|---|---|---|
+| gamma fitted on rms(\|B\|-B0) | For transverse modes (parallel firehose, EMIC, whistler) \|B\|-B0 ~ dB_perp^2/2B0: the fit returned **2 gamma** | Fit on the vector fluctuation <\|dB\|^2>^1/2, plus separate dB_par and dB_perp fits |
+| Three different gamma fits; the spectral one selected the window by the sign of the local slope | gamma(k) and polarization rates biased low (~15 % on a saturating synthetic series); no window uncertainty | `growth_fit.py`: one fit for all scripts, max-slope linear phase, `gamma_err` = slope error (+) window sensitivity; explicit window via `GROWTH_T_START/END` |
+| J_dia in `physical_diagnostics.py`: opposite sign, raw second moment, B0 projection, per-cell gradients | Diamagnetic-current maps and correlations with the wrong sign and units | Shared `plasma_physics.diamagnetic_current_x`: J = B x grad P_perp / B^2, thermal P_perp on the local B, gradients in d_e |
+| `heat_flux_analysis.py` plotted P_par U_par | Not a heat flux (zero for a skewed VDF at rest) | Third central moment from particles, local frame, truncation (kappa = 3), subsample errors, analytic noise floor of <\|q\|> |
+| Whistler cases: spectral cap k d_i = 2, growth map 1.5 | The whole whistler band (k d_i ~ 3-14) was cut away | Profile-aware caps (k d_e <= 2 for electron-driven cases) |
+| Whistler: maps, Brazil plot, validation and comparisons on ions | A single fixed point (ions stay isotropic) | Driven-species aware everywhere; `compare-physics` refuses mixed families |
+| Linear theory: no whistler seed/range; overlay dropped in electron units | No PIC-theory comparison for whistler | Whistler branch (seed, k range) validated against the Kennel-Petschek marginal frequency omega_r/\|Omega_ce\| = 1 - 1/A_e (error 3e-4); overlay converted to k d_e, omega/\|Omega_ce\| |
+| kappa = 5 cases of 2026-09-25 had no analysis profile | `make` failed for them | Profiles `mirror_bikappa5_moderate`, `firehose_bikappa5_bigbox40` |
+| Makefile case detection used GNU `find -printf` | On macOS CASE detection and the CASE/data cross-check silently did nothing | Portable detection |
+| Particle temperatures used Var(u) | Not the estimator of the moment maps (<u v>) | PSC's <u v> convention; energies m(gamma-1) |
+| Truncated third moment about the full-population mean | A symmetric core produced a spurious q after removing a tail | Recentred on the kept particles (found by the new unit test) |
+
+**Analyses added (the code side of the P0/P1 rows below):** field-solver
+residuals (`field_residuals.py`: div B of the Yee snapshots, Gauss and
+continuity from the job log), saturated structures (`structures_analysis.py`:
+holes/peaks, \|B\| skewness, n-\|B\| correlation, total-pressure balance,
+lifetime), energy exchange (`energy_exchange.py`: J_s·E per species, parallel
+and perpendicular, checked against DiagEnergies), estimator comparison
+(`estimator_consistency.py`, section 4 of this audit), convergence and
+realization spread (`convergence_study.py`), and `make thesis`.
+
+**Verification.** 66 unit tests, 43 dispersion tests and the self-tests pass
+(linear theory 4/4, Liouville, kappa_eff). `synthetic_run.py` writes a run in
+PSC's exact layout with prescribed physics; `make thesis` on it recovers
+gamma = 0.234 +/- 0.006 (imposed 0.25; the automatic window is biased low by
+<= 5 % for a smooth saturation, documented), div B dx/B0 ~ 1e-7, the energy
+budget, r(n,\|B\|) = -0.998 and the pressure balance; the whistler variant runs
+end to end with the theory overlay.
+
+**Still open, unchanged by this revision:** nothing has been run on real PSC
+output yet; the convergence, box-size and seed runs do not exist (the tool to
+evaluate them does); oblique theory (ALPS) is not installed; trajectory
+tracking for mu conservation is not instrumented in PSC; the whistler contour
+constants (0.21, 0.6) must be cited with the growth level of their source.
+Twelve C++ case headers still state 1024x1024 / 1500 ppc while the runs use
+576 / 1000 (comments only; reported by the parity checker, left for a
+separate change).
+
 ## Dictamen y alcance
 
 La infraestructura cubre anisotropia, campos, espectros, crecimiento modal,

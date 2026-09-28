@@ -22,6 +22,8 @@ Repository root on COSMA: `/cosma7/data/dp433/dc-mart18/pcseditado`
 | `sim_firehose_bimaxwellian_strong_40di.sh` | Strong bi-Maxwellian firehose, big box — the **controlled twin** of the bi-Kappa-3 run | **40 d_i** | ngrid 1152 |
 | `sim_firehose_bikappa5_40di.sh` | Bi-Kappa-5 firehose, big box — third member of the strong firehose series | **40 d_i** | ngrid 1152 |
 | `sim_mirror_bikappa5_moderate.sh` | Moderate bi-Kappa-5 mirror — third member of the moderate mirror series | 20 d_i | ngrid 576 |
+| `sim_whistler_bimaxwellian_moderate.sh` | Moderate bi-Maxwellian whistler (β_e∥=0.5, A_e=2) | 20 d_i | ngrid 576 |
+| `sim_whistler_bikappa3_moderate.sh` | Moderate bi-Kappa-3 whistler — distribution twin of the one above | 20 d_i | ngrid 576 |
 
 ### Batch that closes the kappa comparison
 
@@ -48,6 +50,29 @@ sbatch cosma_jobs/simulacion/sim_firehose_bikappa5_40di.sh
 Note the job id each submission prints: it becomes the `RUN_TAG` needed to
 resume from a checkpoint if 48 h are not enough.
 
+### Whistler pair: electron-scale schedule
+
+The whistler grows on the electron cyclotron time, so its two scripts use their
+own duration and output cadence (identical between the twins, different from
+mirror/firehose on purpose). With 576² in 20 d_i, Ω_ce Δt = 0.0264:
+
+| Variable | Whistler | Mirror/firehose | Why |
+|---|---|---|---|
+| `PSC_NMAX` | 80 000 (Ω_ce t = 2111, Ω_ci t = 10.6) | 1 200 000 | saturation at Ω_ce t ≈ 150–250; ~10× that covers the relaxation of A_e |
+| `PSC_FIELDS_EVERY` | 100 (Nyquist 1.19 Ω_ce) | 500 (0.24 Ω_ce) | ω_r ≈ 0.37–0.39 Ω_ce would alias at 500 |
+| `PSC_ENERGIES_EVERY` | 20 | 500 | growth-rate fit (γ ≈ 0.044–0.054 Ω_ce) |
+| `PSC_PARTICLES_EVERY` | 2000 (Ω_ce Δt = 53) | 10 000 | A_e(t), κ_eff(t) through growth and relaxation |
+| `PSC_CHECKPOINT_EVERY` | 40 000 | 150 000 | one mid-run checkpoint |
+
+```bash
+BUILD_DIR="$PWD/build" BUILD_JOBS=4 \
+  PSC_TARGETS="psc_whistler_bimaxwellian_moderate psc_whistler_bikappa3_moderate" \
+  src/cosma_build_psc_adios2.sh
+
+sbatch cosma_jobs/simulacion/sim_whistler_bimaxwellian_moderate.sh
+sbatch cosma_jobs/simulacion/sim_whistler_bikappa3_moderate.sh
+```
+
 ### `analisis/` — Python pipeline over finished runs
 
 | Script | Analyses | Partition / limit |
@@ -57,6 +82,10 @@ resume from a checkpoint if 48 h are not enough.
 | `analisis_mirror_bikappa3_moderate_pauper.sh` | Mirror **bikappa3** moderate | cosma7-rp-pauper / 24h |
 | `analisis_firehose_bimaxwellian_moderate_bigbox40_pauper.sh` | Firehose bimaxwellian moderate, 40 d_i box | cosma7-rp-pauper / 24h |
 | `analisis_firehose_bikappa3_bigbox40_pauper.sh` | Firehose bikappa3, 40 d_i box | cosma7-rp-pauper / 24h |
+| **`reanalysis_v5_all.sh`** | **Deletes the old products and re-runs the full v5 pipeline on every finished run** (see section D) | cosma7-rp / 48h, 20 nodes |
+
+> The per-case scripts above predate the v5 analysis revision (2026-09-28)
+> and write to `run_aware_v4`; use `reanalysis_v5_all.sh` for new products.
 
 ### `utils/` — helpers that do not submit anything
 
@@ -217,6 +246,65 @@ sbatch cosma_jobs/analisis/analisis_firehose_bikappa3_bigbox40_pauper.sh
 > ```bash
 > sbatch --export=ALL,DATA_DIR=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/psc_firehose_bikappa3_bigbox40_11657093 cosma_jobs/analisis/analisis_firehose_bikappa3_bigbox40_pauper.sh
 > ```
+
+### D) Full re-analysis with the v5 pipeline (clean + all stages)
+
+The v5 revision of `CodeforAnalisys` (2026-09-28) changes numbers that go
+into the thesis (gamma of transverse modes was 2x, gamma(k) biased low,
+J_dia sign, the heat flux was a proxy, whistler k range). Every old product
+must be replaced. One job does it for every finished run:
+
+```bash
+cd /cosma7/data/dp433/dc-mart18/pcseditado && git pull
+```
+
+```bash
+sbatch cosma_jobs/analisis/reanalysis_v5_all.sh
+```
+
+What it does, in this order (nothing is deleted until the new code has
+proven itself on the node):
+
+1. refuses to start if the checkout is older than v5;
+2. preflight on a compute node: unit tests and the synthetic end-to-end run;
+3. skips any run whose last field snapshot is short of `nmax` (unfinished);
+4. per run, new manifest + initial-condition check; only if it passes are
+   the run's old results deleted (`analysis_results/run_aware_v4/<case>`,
+   `analysis_results/<case>`, old comparisons). Nothing else is touched;
+5. every analysis stage of every run as its own job step (83 steps for the
+   five runs), longest first, one step per node, on 20 nodes;
+6. comparisons of the controlled series (only the distribution changes;
+   `compare-physics`, `kappa_evolution`): mirror moderate 20 d_i
+   bi-Maxwellian / kappa 5 / kappa 3, and firehose strong 40 d_i
+   bi-Maxwellian / kappa 3 (both job scripts use identical settings);
+7. `analysis_results/v5/REANALYSIS_SUMMARY_<jobid>.txt` with the status of
+   every step; per-step logs in `logs/reanalysis_v5_<jobid>/`.
+
+Runs included: `firehose_bimaxwellian_strong_bigbox40` (_12062436; the
+other folder, _12031167, is not used), `firehose_bikappa3_bigbox40`
+(_11657093), `mirror_bimaxwellian_moderate` (_11596993),
+`mirror_bikappa3_moderate` (_11618877), `mirror_bikappa5_moderate` (_12063822).
+Left out until they finish, with their old results kept:
+`firehose_bimaxwellian_moderate_bigbox40` (_11643619) and
+`whistler_bimaxwellian_strong_mr800` (_12068623; it also needs a mi/me = 800
+profile in `psc_units.py`). To add a run, append `CASE:folder` to `RUNS=(...)`.
+
+Overrides without editing:
+
+```bash
+sbatch --export=ALL,ONLY="mirror_bikappa5_moderate" cosma_jobs/analisis/reanalysis_v5_all.sh
+```
+
+```bash
+sbatch --export=ALL,DRY_RUN=1 cosma_jobs/analisis/reanalysis_v5_all.sh
+```
+
+`CLEAN=0` keeps the old results; `GROWTH_T_START=.. GROWTH_T_END=..` fixes the
+linear-phase window of every gamma fit; `--nodes=N --ntasks=N` changes the
+parallelism without changing the results. The job was tested end to end on
+synthetic runs with the same folder names (87/87 steps OK, cleanup limited to
+the analysed cases); the ADIOS2 (`.bp`) reading path is the one already used
+by the per-case jobs.
 
 ---
 

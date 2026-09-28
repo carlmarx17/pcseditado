@@ -43,7 +43,15 @@ except ImportError:  # pragma: no cover - requirements include scipy
     curve_fit = None
 
 from data_reader import PICDataReader
-from plasma_physics import field_aligned_pressures, mirror_threshold
+from growth_fit import fit_exponential_growth
+from plasma_physics import (
+    central_pressure_tensor,
+    central_uv,
+    diamagnetic_current_x,
+    field_aligned_pressures,
+    reference_threshold,
+    velocity_from_u,
+)
 from spectral_analysis import SpectralAnalyzer
 from psc_units import (
     B0,
@@ -53,6 +61,8 @@ from psc_units import (
     DOMAIN_DI_Y,
     DOMAIN_DI_Z,
     DRIVEN_SPECIES,
+    DRIVEN_SUFFIX,
+    DX_DE,
     INSTABILITY,
     KAPPA,
     MASS_RATIO,
@@ -299,12 +309,15 @@ def particle_temperatures(snapshot: ParticleSnapshot, species: str = "ion") -> d
     if not np.any(mask):
         return {}
     mass = abs(_weighted_mean(snapshot.m[mask], snapshot.w[mask]))
-    vx = snapshot.px[mask]
-    vy = snapshot.py[mask]
-    vz = snapshot.pz[mask]
+    ux, uy, uz = snapshot.px[mask], snapshot.py[mask], snapshot.pz[mask]
     weights = snapshot.w[mask]
-    tpar = mass * _weighted_var(vz, weights)
-    tperp = 0.5 * mass * (_weighted_var(vx, weights) + _weighted_var(vy, weights))
+    # PSC writes u = gamma v and deposits t_ab = n m <u_a v_b>. Building the
+    # particle temperature with the same central <u v> moment makes it the
+    # estimator the moment maps use, and it is the correct kinetic pressure
+    # for the suprathermal tails of kappa = 3 (reduces to m var(v) if |u|<<1).
+    vx, vy, vz, _ = velocity_from_u(ux, uy, uz)
+    tpar = mass * central_uv(uz, vz, weights)
+    tperp = 0.5 * mass * (central_uv(ux, vx, weights) + central_uv(uy, vy, weights))
     return {
         "T_parallel": float(tpar),
         "T_perp": float(tperp),
@@ -522,6 +535,7 @@ def _window_field_scalars(bx, by, bz, lo, hi, b0: float) -> dict:
         "prt_delta_B_rms_over_B0": float(np.sqrt(np.nanmean(delta_b**2)) / b0_abs),
         "prt_delta_B_parallel_rms_over_B0": float(np.sqrt(np.nanmean(dbz**2)) / b0_abs),
         "prt_delta_B_perp_rms_over_B0": float(np.sqrt(np.nanmean(dbx**2 + dby**2)) / b0_abs),
+        "prt_delta_B_vec_rms_over_B0": float(np.sqrt(np.nanmean(dbx**2 + dby**2 + dbz**2)) / b0_abs),
         "prt_B_min_over_B0": float(np.nanmin(bmag) / b0_abs),
         "prt_B_max_over_B0": float(np.nanmax(bmag) / b0_abs),
         "prt_mirror_depth": float(1.0 - np.nanmin(bmag) / b0_abs),
@@ -567,6 +581,12 @@ def field_metrics(field_file: str, b0: float = B0,
         "delta_B_parallel_rms_over_B0": float(np.sqrt(np.nanmean(dbz**2)) / b0_abs),
         "delta_B_perp_rms": float(np.sqrt(np.nanmean(dbx**2 + dby**2))),
         "delta_B_perp_rms_over_B0": float(np.sqrt(np.nanmean(dbx**2 + dby**2)) / b0_abs),
+        # Full vector fluctuation |dB| = |B - <B>|. This, not |B| - B0, is the
+        # amplitude whose log-slope is gamma for every branch: for transverse
+        # modes (parallel firehose, EMIC, whistler) |B| - B0 ~ dB_perp^2/2B0
+        # is second order and its log-slope is 2 gamma.
+        "delta_B_vec_rms": float(np.sqrt(np.nanmean(dbx**2 + dby**2 + dbz**2))),
+        "delta_B_vec_rms_over_B0": float(np.sqrt(np.nanmean(dbx**2 + dby**2 + dbz**2)) / b0_abs),
         "B_min": float(np.nanmin(bmag)),
         "mirror_depth": float(1.0 - np.nanmin(bmag) / b0_abs),
         "mirror_area_fraction": float(np.nanmean(bmag < (b0 - sigma_b))),
@@ -836,9 +856,7 @@ def particle_heat_flux(snapshot: ParticleSnapshot, species: str = "ion") -> dict
         return {}
     mass = abs(_weighted_mean(snapshot.m[mask], snapshot.w[mask]))
     weights = snapshot.w[mask]
-    vx = snapshot.px[mask]
-    vy = snapshot.py[mask]
-    vz = snapshot.pz[mask]
+    vx, vy, vz, _ = velocity_from_u(snapshot.px[mask], snapshot.py[mask], snapshot.pz[mask])
     dvx = vx - _weighted_mean(vx, weights)
     dvy = vy - _weighted_mean(vy, weights)
     dvz = vz - _weighted_mean(vz, weights)
@@ -859,15 +877,14 @@ def particle_energy(snapshot: ParticleSnapshot, species: str = "ion") -> dict:
         return {}
     mass = abs(_weighted_mean(snapshot.m[mask], snapshot.w[mask]))
     weights = snapshot.w[mask]
-    vx = snapshot.px[mask]
-    vy = snapshot.py[mask]
-    vz = snapshot.pz[mask]
-    ux = _weighted_mean(vx, weights)
-    uy = _weighted_mean(vy, weights)
-    uz = _weighted_mean(vz, weights)
-    bulk = 0.5 * mass * (ux**2 + uy**2 + uz**2)
-    thermal = 0.5 * mass * _weighted_mean((vx - ux) ** 2 + (vy - uy) ** 2 + (vz - uz) ** 2, weights)
-    return {"E_kin_bulk": bulk, "E_kin_thermal": thermal}
+    ux, uy, uz = snapshot.px[mask], snapshot.py[mask], snapshot.pz[mask]
+    vx, vy, vz, gamma = velocity_from_u(ux, uy, uz)
+    # Exact kinetic energy per particle m(gamma-1) = m u^2/(gamma+1), the
+    # quantity DiagEnergies sums; the bulk part uses the mean velocity.
+    kinetic = mass * _weighted_mean((ux**2 + uy**2 + uz**2) / (gamma + 1.0), weights)
+    bulk = 0.5 * mass * (_weighted_mean(vx, weights) ** 2 + _weighted_mean(vy, weights) ** 2
+                         + _weighted_mean(vz, weights) ** 2)
+    return {"E_kin_bulk": bulk, "E_kin_thermal": kinetic - bulk}
 
 
 def plot_validation(rows: list[dict], outdir: Path):
@@ -1215,81 +1232,43 @@ def plot_spatial_maps(rows: list[dict], outdir: Path):
 
 
 def growth_rate(time: np.ndarray, delta_b: np.ndarray,
-                amp_lo: float = 0.1, amp_hi: float = 0.9) -> dict:
+                amp_lo: float = 0.1, amp_hi: float = 0.9,
+                t_start: float | None = None, t_end: float | None = None) -> dict:
     """Fit gamma on the exponential segment of ln(delta_b).
 
-    The linear-phase window is selected by AMPLITUDE, not by local slope:
-    slope-based selection keeps saturation samples (noise makes the local
-    slope flicker positive there), stretching the window across saturation
-    and biasing gamma low. Here the fit uses only samples whose ln-amplitude
-    lies in the central [amp_lo, amp_hi] band between the noise floor and the
-    saturation level.
+    Thin wrapper over growth_fit.fit_exponential_growth, the single linear-
+    phase fit of the pipeline (amplitude-band window from the noise floor to
+    saturation, or an explicit [t_start, t_end]). Returns {} when the series
+    is too short; otherwise the keys below, including ``gamma_err`` (slope
+    standard error combined with the window sensitivity) and ``fit_ok``.
     """
-    valid = np.isfinite(time) & np.isfinite(delta_b) & (delta_b > 0) & (time > 0.0)
-    if np.count_nonzero(valid) < 4:
+    t = np.asarray(time, dtype=float)
+    a = np.asarray(delta_b, dtype=float)
+    keep = np.isfinite(t) & (t > 0.0)
+    fit = fit_exponential_growth(t[keep], a[keep], t_start=t_start, t_end=t_end,
+                                 band=(amp_lo, amp_hi),
+                                 min_gain=MIN_AMPLITUDE_GAIN,
+                                 max_onset=None if t_start is not None else MAX_ONSET_T0)
+    if fit["fit_time_range"] is None:
         return {}
-    t = time[valid]
-    y = np.log(delta_b[valid])
-    # Noise floor: median of the first 5% of samples; saturation: 95th pct.
-    n_head = max(3, int(0.05 * len(y)))
-    y_noise = float(np.median(y[:n_head]))
-    y_sat = float(np.nanpercentile(y, 95))
-    if y_sat <= y_noise:  # no growth at all; fall back to everything
-        band = np.ones_like(y, dtype=bool)
-    else:
-        lo_level = y_noise + amp_lo * (y_sat - y_noise)
-        hi_level = y_noise + amp_hi * (y_sat - y_noise)
-        band = (y >= lo_level) & (y <= hi_level)
-        # Restrict to the FIRST contiguous rise: stop at the first sample
-        # after the curve has reached hi_level (post-saturation excursions
-        # back into the band must not re-enter the fit).
-        above_hi = np.where(y > hi_level)[0]
-        if len(above_hi):
-            band[above_hi[0]:] = False
-    if np.count_nonzero(band) < 3:
-        band = np.ones_like(y, dtype=bool)
-    tf, yf = t[band], y[band]
-    coeff = np.polyfit(tf, yf, 1)
-    y_pred = np.polyval(coeff, tf)
-    ss_res = float(np.sum((yf - y_pred) ** 2))
-    ss_tot = float(np.sum((yf - np.mean(yf)) ** 2))
-    r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
-
-    gamma = float(coeff[0])
-    # Un R^2 alto sólo dice que los puntos caen sobre una recta: un decaimiento
-    # limpio da R^2 ~ 0.95 y pasaba el filtro como si fuera crecimiento. Estas
-    # comprobaciones separan "ajuste bueno" de "tasa de crecimiento válida".
-    amplitude_gain = float(np.exp(yf[-1] - yf[0]))
-    # Si la serie arranca muy después de t=0, la fase lineal pudo ocurrir antes
-    # del primer snapshot (típico de un restart): el ajuste describe entonces
-    # la fase saturada, no el crecimiento.
-    starts_late = float(t[0]) > MAX_ONSET_T0
-    reasons = []
-    if not (np.isfinite(r_squared) and r_squared >= 0.7):
-        reasons.append(f"R2={r_squared:.3f} < 0.7")
-    if not np.isfinite(gamma) or gamma <= 0:
-        reasons.append(f"gamma={gamma:.4g} no es crecimiento")
-    if amplitude_gain < MIN_AMPLITUDE_GAIN:
-        reasons.append(f"amplitud x{amplitude_gain:.2f} < x{MIN_AMPLITUDE_GAIN}")
-    if starts_late:
-        reasons.append(
-            f"la serie empieza en t={t[0]:.1f} > {MAX_ONSET_T0}: "
-            "la fase lineal puede quedar fuera de los datos")
-
     return {
-        "gamma": gamma,
-        "intercept": float(coeff[1]),
-        "linear_phase_start": float(tf[0]),
-        "linear_phase_end": float(tf[-1]),
-        "r_squared": r_squared,
-        "amplitude_gain": amplitude_gain,
-        "series_start": float(t[0]),
-        "fit_ok": int(not reasons),
-        "fit_reject_reason": "; ".join(reasons),
-        "time": t,
-        "ln_delta_b": y,
-        "fit_time": tf,
-        "fit_ln_delta_b": y_pred,
+        "gamma": fit["gamma"],
+        "gamma_stderr": fit["gamma_stderr"],
+        "gamma_window_spread": fit["gamma_window_spread"],
+        "gamma_err": fit["gamma_err"],
+        "intercept": fit["intercept"],
+        "linear_phase_start": fit["linear_phase_start"],
+        "linear_phase_end": fit["linear_phase_end"],
+        "r_squared": fit["r_squared"],
+        "amplitude_gain": fit["amplitude_gain"],
+        "series_start": fit["series_start"],
+        "window_source": fit["window_source"],
+        "fit_ok": fit["fit_ok"],
+        "fit_reject_reason": fit["fit_reject_reason"],
+        "time": fit["time"],
+        "ln_delta_b": fit["ln_amplitude"],
+        "fit_time": fit["fit_time"],
+        "fit_ln_delta_b": fit["fit_ln_amplitude"],
     }
 
 
@@ -1297,7 +1276,7 @@ def plot_field_time(rows: list[dict], outdir: Path):
     if not rows:
         return
     t = np.array([r["omega_ci_t"] for r in rows], dtype=float)
-    rms = np.array([r["delta_B_rms_over_B0"] for r in rows], dtype=float)
+    rms = np.array([r.get("delta_B_vec_rms_over_B0", r["delta_B_rms_over_B0"]) for r in rows], dtype=float)
     par = np.array([r["delta_B_parallel_rms_over_B0"] for r in rows], dtype=float)
     perp = np.array([r["delta_B_perp_rms_over_B0"] for r in rows], dtype=float)
     depth = np.array([r["mirror_depth"] for r in rows], dtype=float)
@@ -1315,7 +1294,7 @@ def plot_field_time(rows: list[dict], outdir: Path):
     ax.plot(t, rms, color=ps.c("#58a6ff"), **_series_style(len(t)))
     ax.set_yscale("log")
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
-    ax.set_ylabel(r"$\delta B_{\rm rms}/B_0$", color=TEXT_CLR)
+    ax.set_ylabel(r"$\langle|\delta\mathbf{B}|^2\rangle^{1/2}/B_0$", color=TEXT_CLR)
     ax.set_title("Magnetic fluctuation growth", color=TEXT_CLR, fontweight="bold")
     _savefig_many(fig, [outdir / "deltaB_rms_vs_time.png"])
 
@@ -1415,123 +1394,54 @@ def plot_growth(growth: dict, outdir: Path):
     fig, ax = plt.subplots(figsize=(8.5, 5.2))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    ax.plot(growth["time"], growth["ln_delta_b"], color=ps.c("#58a6ff"), label=r"$\ln\delta B_{\rm rms}$", **_series_style(len(growth["time"])))
+    series = growth.get("series_label", r"|\delta\mathbf{B}|_{\rm rms}")
+    ax.plot(growth["time"], growth["ln_delta_b"], color=ps.c("#58a6ff"),
+            label=rf"$\ln {series}$", **_series_style(len(growth["time"])))
+    err = growth.get("gamma_err", float("nan"))
+    err_txt = rf"\pm{err:.2g}" if np.isfinite(err) else ""
+    status = "" if growth.get("fit_ok") else " (not valid)"
     ax.plot(growth["fit_time"], growth["fit_ln_delta_b"], "--", color=ps.c("#ff7b72"),
-            label=rf"$\gamma={growth['gamma']:.4g}$")
+            label=rf"$\gamma={growth['gamma']:.4g}{err_txt}\,\Omega_{{ci}}${status}")
     ax.axvspan(growth["linear_phase_start"], growth["linear_phase_end"],
                color=ps.c("#ff7b72"), alpha=0.12)
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
-    ax.set_ylabel(r"$\ln(\delta B_{\rm rms})$", color=TEXT_CLR)
+    ax.set_ylabel(rf"$\ln {series}$", color=TEXT_CLR)
     ax.set_title("Linear growth-rate fit", color=TEXT_CLR, fontweight="bold")
     ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
-    _savefig(fig, outdir / "growth_rate_fit.png")
+    _savefig(fig, outdir / growth.get("figure_name", "growth_rate_fit.png"))
+
+
+#: Smoothing of P_perp and B before differentiating, in d_i. PIC shot noise
+#: dominates any gradient taken below the ion scales; the same value is the
+#: default of diamagnetic_current.py so both scripts show the same current.
+JDIA_SIGMA_DI = 0.5
 
 
 def compute_jdia(moment_file: str, field_file: str) -> dict[str, np.ndarray]:
-    mom_i = load_moments(moment_file, "i")
-    mom_e = load_moments(moment_file, "e")
+    """Out-of-plane diamagnetic current J_x = (B x grad P_perp)_x / B^2 per species.
+
+    P_perp is the thermal pressure (bulk flow removed) projected on the local
+    field, and the gradient is taken in code lengths (d_e), so the result is
+    in code current-density units. The previous version used the raw second
+    moment, B0 along z for the projection, per-cell gradients and the
+    opposite sign to diamagnetic_current.py.
+    """
     fld = load_fields(field_file)
-    flat_f = lambda key: PICDataReader.flatten_2d_slice(fld[key]).astype(float)
-    bx, by, bz = flat_f("Bx"), flat_f("By"), flat_f("Bz")
-    b2 = bx**2 + by**2 + bz**2 + 1e-30
-
-    def pperp(mom, suffix):
-        return 0.5 * (mom[f"txx_{suffix}"] + mom[f"tyy_{suffix}"])
-
-    pi = pperp(mom_i, "i")
-    pe = pperp(mom_e, "e")
-    if gaussian_filter is not None:
-        pi = gaussian_filter(pi, sigma=3.0)
-        pe = gaussian_filter(pe, sigma=3.0)
-        by = gaussian_filter(by, sigma=3.0)
-        bz = gaussian_filter(bz, sigma=3.0)
-    dpidz, dpidy = np.gradient(pi)
-    dpedz, dpedy = np.gradient(pe)
-    j_i = (dpidy * bz - dpidz * by) / b2
-    j_e = (dpedy * bz - dpedz * by) / b2
-    return {"J_dia_i": j_i, "J_dia_e": j_e, "J_dia_total": j_i + j_e}
-
-
-def moment_heat_flux_maps(moment_file: str, field_file: str) -> dict[str, np.ndarray]:
-    """Compute spatial ion heat-flux proxies from pressure and bulk velocity."""
-    names = [
-        "rho_i/p0/3d",
-        "txx_i/p0/3d", "tyy_i/p0/3d", "tzz_i/p0/3d",
-        "txy_i/p0/3d", "tyz_i/p0/3d", "tzx_i/p0/3d",
-        "px_i/p0/3d", "py_i/p0/3d", "pz_i/p0/3d",
-    ]
-    raw = PICDataReader.read_multiple_fields_3d(
-        moment_file, "all_1st", names
-    )
-    mom = {
-        key.split("/")[0]: PICDataReader.flatten_2d_slice(value).astype(float)
-        for key, value in raw.items()
-    }
-    fields = load_fields(field_file)
-    bx = PICDataReader.flatten_2d_slice(fields["Bx"]).astype(float)
-    by = PICDataReader.flatten_2d_slice(fields["By"]).astype(float)
-    bz = PICDataReader.flatten_2d_slice(fields["Bz"]).astype(float)
-
-    n = np.where(mom["rho_i"] > 1e-12, mom["rho_i"], np.nan)
-    px, py, pz = mom["px_i"], mom["py_i"], mom["pz_i"]
-    vx, vy, vz = px / (n * M_ION), py / (n * M_ION), pz / (n * M_ION)
-    pxx = mom["txx_i"] - px * px / (n * M_ION)
-    pyy = mom["tyy_i"] - py * py / (n * M_ION)
-    pzz = mom["tzz_i"] - pz * pz / (n * M_ION)
-    pxy = mom["txy_i"] - px * py / (n * M_ION)
-    pyz = mom["tyz_i"] - py * pz / (n * M_ION)
-    pzx = mom["tzx_i"] - pz * px / (n * M_ION)
-
-    bmag = np.sqrt(bx**2 + by**2 + bz**2 + 1e-30)
-    bhx, bhy, bhz = bx / bmag, by / bmag, bz / bmag
-    vpar = vx * bhx + vy * bhy + vz * bhz
-    ppar = (
-        pxx * bhx**2 + pyy * bhy**2 + pzz * bhz**2
-        + 2.0 * pxy * bhx * bhy
-        + 2.0 * pyz * bhy * bhz
-        + 2.0 * pzx * bhz * bhx
-    )
-    pperp = 0.5 * (pxx + pyy + pzz - ppar)
-    vperp = np.sqrt(
-        (vx - vpar * bhx) ** 2
-        + (vy - vpar * bhy) ** 2
-        + (vz - vpar * bhz) ** 2
-    )
-    return {
-        "q_parallel": ppar * vpar,
-        "q_perp": pperp * vperp,
-        "P_parallel": ppar,
-        "P_perp": pperp,
-    }
-
-
-def localized_heat_flux_rows(
-    heat_flux: dict[str, np.ndarray], step: int
-) -> list[dict]:
-    """Summarize heat flux in four fixed spatial quadrants."""
-    qpar = np.asarray(heat_flux["q_parallel"], dtype=float)
-    qperp = np.asarray(heat_flux["q_perp"], dtype=float)
-    mid0, mid1 = qpar.shape[0] // 2, qpar.shape[1] // 2
-    slices = {
-        "low_y_low_z": (slice(0, mid0), slice(0, mid1)),
-        "low_y_high_z": (slice(0, mid0), slice(mid1, None)),
-        "high_y_low_z": (slice(mid0, None), slice(0, mid1)),
-        "high_y_high_z": (slice(mid0, None), slice(mid1, None)),
-    }
-    rows = []
-    for region, selection in slices.items():
-        local_par = qpar[selection]
-        local_perp = qperp[selection]
-        rows.append({
-            "step": step,
-            "omega_ci_t": step_to_omegaci(step),
-            "region": region,
-            "q_parallel_mean": float(np.nanmean(local_par)),
-            "q_parallel_abs_mean": float(np.nanmean(np.abs(local_par))),
-            "q_perp_mean": float(np.nanmean(local_perp)),
-            "q_perp_abs_mean": float(np.nanmean(np.abs(local_perp))),
-        })
-    return rows
+    bx, by, bz = (PICDataReader.flatten_2d_slice(fld[k]).astype(float) for k in ("Bx", "By", "Bz"))
+    sigma_cells = JDIA_SIGMA_DI * DI / DX_DE
+    smooth = ((lambda a: gaussian_filter(a, sigma=sigma_cells, mode="wrap"))
+              if gaussian_filter is not None else (lambda a: a))
+    bx_s, by_s, bz_s = smooth(bx), smooth(by), smooth(bz)
+    out = {}
+    for suffix, mass in (("i", M_ION), ("e", M_ELEC)):
+        tensor = central_pressure_tensor(load_moments(moment_file, suffix), suffix, mass)
+        _, pperp, _ = field_aligned_pressures(
+            tensor["Pxx"], tensor["Pyy"], tensor["Pzz"],
+            tensor["Pxy"], tensor["Pyz"], tensor["Pzx"], bx, by, bz)
+        pperp = np.nan_to_num(pperp, nan=float(np.nanmean(pperp)))
+        out[f"J_dia_{suffix}"] = diamagnetic_current_x(smooth(pperp), by_s, bz_s, DX_DE, DX_DE)
+    out["J_dia_total"] = out["J_dia_i"] + out["J_dia_e"]
+    return out
 
 
 def secular_heating(rows: list[dict], anisotropy_rows: list[dict] | None = None) -> dict:
@@ -1621,7 +1531,7 @@ def correlations(a_map: np.ndarray, delta_b: np.ndarray, bmag: np.ndarray,
         "corr_A_dB_parallel": corr(a_map, db_par),
         "corr_A_B_perp": corr(a_map, b_perp),
         "corr_A_Jdia": corr(a_map, jdia),
-        "corr_A_rho_i": corr(a_map, rho),
+        "corr_A_n": corr(a_map, rho),
     }
 
 
@@ -1670,6 +1580,8 @@ def _process_particle_step_worker(args):
                 "T_parallel_e": elec.get("T_parallel", np.nan),
                 "T_perp_e": elec.get("T_perp", np.nan),
                 "A_e": elec.get("A", np.nan),
+                "R_e": elec.get("R", np.nan),
+                "beta_parallel_e": 2.0 * elec.get("T_parallel", np.nan) / (B0**2 + 1e-30),
             }
             row.update(particle_heat_flux(snap, "ion"))
             row.update(particle_energy(snap, "ion"))
@@ -1750,7 +1662,6 @@ def _moment_correlation_worker(args):
     maps = moment_thermal_maps(moment_file, field_file, species)
     fmet = field_metrics(field_file, B0)
     jdia = compute_jdia(moment_file, field_file)
-    heat_flux = moment_heat_flux_maps(moment_file, field_file)
     return step, correlations(
         maps["A"],
         PICDataReader.flatten_2d_slice(fmet["delta_B"]),
@@ -1760,7 +1671,7 @@ def _moment_correlation_worker(args):
         step,
         b_perp=PICDataReader.flatten_2d_slice(fmet["B_perp_map"]),
         db_par=PICDataReader.flatten_2d_slice(fmet["delta_B_parallel_map"]),
-    ), localized_heat_flux_rows(heat_flux, step)
+    )
 
 
 def _field_map_worker(args):
@@ -1786,15 +1697,17 @@ def _field_map_worker(args):
 def _thermal_map_worker(args):
     step, moment_file, field_file, species, outdir = args
     maps = moment_thermal_maps(moment_file, field_file, species)
-    plot_map(maps["T_parallel"], outdir / f"T_parallel_map_step_{step}.png",
-             rf"$T_{{\parallel i}}$ - step {step}", r"$T_{\parallel i}$", cmap="plasma",
-             smooth_sigma=3.0)
-    plot_map(maps["T_perp"], outdir / f"T_perp_map_step_{step}.png",
-             rf"$T_{{\perp i}}$ - step {step}", r"$T_{\perp i}$", cmap="plasma",
-             smooth_sigma=3.0)
-    plot_map(maps["A"], outdir / f"A_i_map_step_{step}.png",
-             rf"$A_i=T_\perp/T_\parallel$ - step {step}", r"$A_i$", cmap="RdYlBu_r",
-             smooth_sigma=3.0)
+    s = "i" if species == "ion" else "e"
+    toci = step_to_omegaci(step)
+    plot_map(maps["T_parallel"], outdir / f"T_parallel_{s}_map_step_{step}.png",
+             rf"$T_{{\parallel {s}}}$ — $t\Omega_{{ci}} = {toci:.1f}$", rf"$T_{{\parallel {s}}}$",
+             cmap=ps.CMAP_SEQUENTIAL, smooth_sigma=3.0)
+    plot_map(maps["T_perp"], outdir / f"T_perp_{s}_map_step_{step}.png",
+             rf"$T_{{\perp {s}}}$ — $t\Omega_{{ci}} = {toci:.1f}$", rf"$T_{{\perp {s}}}$",
+             cmap=ps.CMAP_SEQUENTIAL, smooth_sigma=3.0)
+    plot_map(maps["A"], outdir / f"A_{s}_map_step_{step}.png",
+             rf"$A_{s}=T_{{\perp {s}}}/T_{{\parallel {s}}}$ — $t\Omega_{{ci}} = {toci:.1f}$",
+             rf"$A_{s}$", cmap=ps.CMAP_DIVERGING, smooth_sigma=3.0)
     return step, True
 
 
@@ -1812,8 +1725,10 @@ class PhysicalDiagnostics:
         selected_steps: list[int] | None,
         jobs: int = 0,
         vdf_cadence_omegaci: float = 10.0,
+        growth_window: tuple[float | None, float | None] = (None, None),
     ):
         self.data_dir = Path(data_dir).expanduser().resolve()
+        self.growth_window = growth_window
         self.outdir = Path(outdir)
         self.max_particles = max_particles
         self.max_particle_steps = max_particle_steps
@@ -1943,8 +1858,8 @@ class PhysicalDiagnostics:
             expected.append("firehose: expected A_i < 1, R_i > 1 and T_parallel_i > T_perp_i")
             ok = row["A_i"] < 1.0 and row["R_i"] > 1.0 and row["T_parallel_i"] > row["T_perp_i"]
         else:
-            expected.append("whistler/electron-driven case: ion validation is reported but not the active driver")
-            ok = True
+            expected.append("whistler (electron-driven): expected A_e > 1 and isotropic ions")
+            ok = row.get("A_e", np.nan) > 1.0 and abs(row["A_i"] - 1.0) < 0.15
         text = [
             f"Profile: {PROFILE_LABEL}",
             f"Instability: {INSTABILITY}",
@@ -1954,6 +1869,10 @@ class PhysicalDiagnostics:
             f"A_i          = {row['A_i']:.8g}",
             f"R_i          = {row['R_i']:.8g}",
             f"beta_parallel_i = {row['beta_parallel_i']:.8g}",
+            f"T_parallel_e = {row.get('T_parallel_e', np.nan):.8g}",
+            f"T_perp_e     = {row.get('T_perp_e', np.nan):.8g}",
+            f"A_e          = {row.get('A_e', np.nan):.8g}",
+            f"beta_parallel_e = {row.get('beta_parallel_e', np.nan):.8g}",
             "",
             *expected,
             f"Initial check: {'NOT_INITIAL (step 0 missing)' if row['step'] != 0 else 'PASS' if ok else 'CHECK'}",
@@ -1971,25 +1890,35 @@ class PhysicalDiagnostics:
         rows = [row for _, row in results]
         _write_csv(self.outdir / "field_fluctuation_table.csv", rows)
         plot_field_time(rows, self.outdir)
-        growth = growth_rate(
-            np.array([r["omega_ci_t"] for r in rows]),
-            np.array([r["delta_B_rms"] for r in rows]),
-        )
-        plot_growth(growth, self.outdir)
-        if growth:
-            _write_csv(self.outdir / "growth_rate_summary.csv", [{
-                "gamma": growth["gamma"],
-                "linear_phase_start": growth["linear_phase_start"],
-                "linear_phase_end": growth["linear_phase_end"],
-                "r_squared": growth["r_squared"],
-                "amplitude_gain": growth["amplitude_gain"],
-                "series_start": growth["series_start"],
-                "fit_ok": growth["fit_ok"],
-                "fit_reject_reason": growth["fit_reject_reason"],
-            }])
-            if not growth["fit_ok"]:
+        # gamma from the full vector fluctuation (valid for every branch) and,
+        # separately, from its compressive and transverse parts: which one
+        # grows first is part of the mode identification.
+        t = np.array([r["omega_ci_t"] for r in rows])
+        summary_rows = []
+        for series, column, label, figure in (
+            ("total", "delta_B_vec_rms", r"|\delta\mathbf{B}|_{\rm rms}", "growth_rate_fit.png"),
+            ("parallel", "delta_B_parallel_rms", r"\delta B_{\parallel,\rm rms}", "growth_rate_fit_parallel.png"),
+            ("perp", "delta_B_perp_rms", r"\delta B_{\perp,\rm rms}", "growth_rate_fit_perp.png"),
+        ):
+            growth = growth_rate(t, np.array([r[column] for r in rows]),
+                                 t_start=self.growth_window[0], t_end=self.growth_window[1])
+            if not growth:
+                continue
+            growth.update(series_label=label, figure_name=figure)
+            plot_growth(growth, self.outdir)
+            summary_rows.append({
+                "series": series,
+                "amplitude": column,
+                **{key: growth[key] for key in (
+                    "gamma", "gamma_err", "gamma_stderr", "gamma_window_spread",
+                    "linear_phase_start", "linear_phase_end", "r_squared",
+                    "amplitude_gain", "series_start", "window_source",
+                    "fit_ok", "fit_reject_reason")},
+            })
+            if series == "total" and not growth["fit_ok"]:
                 print(f"  [WARN] tasa de crecimiento global NO valida: "
                       f"{growth['fit_reject_reason']}")
+        _write_csv(self.outdir / "growth_rate_summary.csv", summary_rows)
         self.plot_field_maps()
         self.run_magnetic_spectra()
         return rows
@@ -2041,10 +1970,13 @@ class PhysicalDiagnostics:
             return []
         rows = []
         corr_rows = []
-        heat_flux_rows = []
         common = sorted(set(self.moment_files) & set(self.field_files))
         steps_for_maps = _select_steps(sorted(self.moment_files), self.selected_steps, self.max_map_steps)
-        species = "ion"
+        # Maps, Brazil trajectory and correlations follow the species that
+        # drives the instability: for the whistler cases the ions stay
+        # isotropic and an ion Brazil plot would show a single fixed point.
+        species = DRIVEN_SPECIES
+        s = DRIVEN_SUFFIX
 
         stats_tasks = [
             (step, self.moment_files[step], self.field_files.get(step), species)
@@ -2053,7 +1985,7 @@ class PhysicalDiagnostics:
         stats_results = _run_step_tasks(
             _moment_stats_worker, stats_tasks, self.jobs, "Moment statistics"
         )
-        rows = [row for _, row in stats_results]
+        rows = [{**row, "species": species} for _, row in stats_results]
 
         map_tasks = [
             (step, self.moment_files[step], self.field_files.get(step), species, self.outdir)
@@ -2068,53 +2000,31 @@ class PhysicalDiagnostics:
         corr_results = _run_step_tasks(
             _moment_correlation_worker, corr_tasks, self.jobs, "Moment correlations"
         )
-        for step, corr_row, heat_rows in corr_results:
+        for step, corr_row in corr_results:
             corr_rows.append(corr_row)
-            heat_flux_rows.extend(heat_rows)
 
         for step in [s for s in steps_for_maps if s in common]:
             maps = moment_thermal_maps(self.moment_files[step], self.field_files[step], species)
             fmet = field_metrics(self.field_files[step], B0)
             jdia = compute_jdia(self.moment_files[step], self.field_files[step])
-            heat_flux = moment_heat_flux_maps(
-                self.moment_files[step], self.field_files[step]
-            )
-            plot_map(jdia["J_dia_i"], self.outdir / f"J_dia_i_map_step_{step}.png",
-                     rf"$J_{{dia,i}}$ - step {step}", r"$J_{dia,i}$", cmap="RdBu_r", symmetric=True)
-            plot_map(jdia["J_dia_e"], self.outdir / f"J_dia_e_map_step_{step}.png",
-                     rf"$J_{{dia,e}}$ - step {step}", r"$J_{dia,e}$", cmap="RdBu_r", symmetric=True)
-            plot_map(jdia["J_dia_total"], self.outdir / f"J_dia_total_map_step_{step}.png",
-                     rf"$J_{{dia,total}}$ - step {step}", r"$J_{dia,total}$", cmap="RdBu_r", symmetric=True)
-            plot_map(
-                heat_flux["q_parallel"],
-                self.outdir / f"q_parallel_map_step_{step}.png",
-                rf"$q_{{\parallel,i}}$ - step {step}",
-                r"$q_{\parallel,i}$",
-                cmap="RdBu_r",
-                symmetric=True,
-                smooth_sigma=3.0,
-            )
-            plot_map(
-                heat_flux["q_perp"],
-                self.outdir / f"q_perp_map_step_{step}.png",
-                rf"$q_{{\perp,i}}$ - step {step}",
-                r"$q_{\perp,i}$",
-                cmap="inferno",
-                smooth_sigma=3.0,
-            )
+            toci = step_to_omegaci(step)
+            for key, label in (("J_dia_i", r"J_{{\rm dia},x,i}"), ("J_dia_e", r"J_{{\rm dia},x,e}"),
+                               ("J_dia_total", r"J_{{\rm dia},x}")):
+                plot_map(jdia[key], self.outdir / f"{key}_map_step_{step}.png",
+                         rf"${label}$ — $t\Omega_{{ci}} = {toci:.1f}$",
+                         rf"${label}$ [code units]", cmap=ps.CMAP_DIVERGING, symmetric=True)
             plot_scatter(maps["A"], PICDataReader.flatten_2d_slice(fmet["delta_B"]),
-                         self.outdir / "A_vs_deltaB_scatter.png", r"$A_i$", r"$\delta B$",
-                         "Spatial correlation: anisotropy vs delta B")
+                         self.outdir / f"A_{s}_vs_deltaB_scatter.png", rf"$A_{s}$",
+                         r"$|B|-B_0$", "Spatial correlation: anisotropy vs |B| - B0")
             plot_scatter(maps["A"], PICDataReader.flatten_2d_slice(fmet["B_magnitude"]),
-                         self.outdir / "A_vs_B_scatter.png", r"$A_i$", r"$|B|$",
+                         self.outdir / f"A_{s}_vs_B_scatter.png", rf"$A_{s}$", r"$|B|$",
                          "Spatial correlation: anisotropy vs |B|")
             plot_scatter(maps["A"], jdia["J_dia_total"],
-                         self.outdir / "A_vs_Jdia_scatter.png", r"$A_i$", r"$J_{dia}$",
-                         "Spatial correlation: anisotropy vs Jdia")
+                         self.outdir / f"A_{s}_vs_Jdia_scatter.png", rf"$A_{s}$",
+                         r"$J_{{\rm dia},x}$", "Spatial correlation: anisotropy vs J_dia")
 
         _write_csv(self.outdir / "anisotropy_spatial_stats.csv", rows)
         _write_csv(self.outdir / "spatial_correlations.csv", corr_rows)
-        _write_csv(self.outdir / "localized_heat_flux_table.csv", heat_flux_rows)
         plot_spatial_maps(rows, self.outdir)
         self.plot_brazil_from_rows(rows)
         return rows
@@ -2142,31 +2052,35 @@ class PhysicalDiagnostics:
                         linewidths=0.0 if dense else 0.3)
         # Inicio y final explícitos: sin ellos no se sabe hacia dónde corre.
         ax.plot(beta[0], a[0], "o", mfc="none", mec=ps.c("#56d364"), mew=2.2,
-                ms=13, zorder=3, label=r"inicio ($t=0$)")
+                ms=13, zorder=3, label=r"start ($t=0$)")
         ax.plot(beta[-1], a[-1], "X", color=ps.c("#f85149"), ms=13, zorder=3,
-                label="final")
+                label="end")
 
         # Rango visible primero: así un umbral que queda fuera del recuadro no
         # aparece en la leyenda prometiendo una curva que no se ve.
-        pad = 0.12 * (np.nanmax(a) - np.nanmin(a) + 1e-12)
+        # At least 5 % of |A| as margin: a nearly constant trajectory (e.g. the
+        # first snapshots of a run) would otherwise sit on the frame.
+        pad = max(0.12 * (np.nanmax(a) - np.nanmin(a)), 0.05 * np.nanmax(np.abs(a)))
         y_lo = min(np.nanmin(a) - pad, 0.95)
         y_hi = max(np.nanmax(a) + pad, 1.05)
 
         bgrid = np.logspace(np.log10(max(np.nanmin(beta) * 0.6, 0.05)),
                             np.log10(max(np.nanmax(beta) * 1.6, 0.2)), 300)
-        # Reference curves only; linear_theory.py cannot solve oblique mirror.
-        mirror_curve = mirror_threshold(bgrid)
-        visible = np.any((mirror_curve >= y_lo) & (mirror_curve <= y_hi))
-        ax.plot(bgrid, mirror_curve, "--", color=ps.c("#ff7b72"),
-                label="mirror reference (cold electrons)" if visible else None)
-        ax.fill_between(bgrid, mirror_curve, 1e3, color=ps.c("#ff7b72"), alpha=0.08)
-        fh = bgrid[bgrid > 2.0]
-        if len(fh):
-            fh_curve = 1.0 - 2.0 / fh
-            visible = np.any((fh_curve >= y_lo) & (fh_curve <= y_hi))
-            ax.plot(fh, fh_curve, "--", color=ps.c("#58a6ff"),
-                    label="firehose (CGL)" if visible else None)
-            ax.fill_between(fh, 1e-3, fh_curve, color=ps.c("#58a6ff"), alpha=0.08)
+        # Reference curves only (not kinetic thresholds of these exact VDFs):
+        # the one of the declared family, drawn on the driven species' plane.
+        families = ("whistler",) if DRIVEN_SPECIES == "electron" else ("mirror", "firehose")
+        styles = {"mirror": ps.c("#ff7b72"), "firehose": ps.c("#58a6ff"),
+                  "whistler": ps.c("#d2a8ff")}
+        for family in families:
+            curve, label = reference_threshold(family, bgrid)
+            visible = np.any((curve >= y_lo) & (curve <= y_hi))
+            ax.plot(bgrid, curve, "--", color=styles[family], label=label if visible else None)
+            if family == "firehose":
+                ax.fill_between(bgrid, 1e-3, curve, color=styles[family], alpha=0.08,
+                                where=np.isfinite(curve))
+            else:
+                ax.fill_between(bgrid, curve, 1e3, color=styles[family], alpha=0.08,
+                                where=np.isfinite(curve))
         ax.axhline(1.0, color=TEXT_CLR, alpha=0.35, linestyle=":")
 
         # Escala log sólo si el rango la justifica. Estas corridas cubren un
@@ -2182,9 +2096,11 @@ class PhysicalDiagnostics:
             ax.set_yscale("log")
         ax.set_xlim(np.nanmin(beta) * 0.85, np.nanmax(beta) * 1.15)
         ax.set_ylim(y_lo, y_hi)
-        ax.set_xlabel(r"$\beta_{\parallel i}$", color=TEXT_CLR)
-        ax.set_ylabel(r"$A_i$", color=TEXT_CLR)
-        ax.set_title("Brazil plot from moment averages", color=TEXT_CLR, fontweight="bold")
+        s = DRIVEN_SUFFIX
+        ax.set_xlabel(rf"$\beta_{{\parallel {s}}}$", color=TEXT_CLR)
+        ax.set_ylabel(rf"$A_{s}$", color=TEXT_CLR)
+        ax.set_title(f"Brazil plot from moment averages ({DRIVEN_SPECIES}s)",
+                     color=TEXT_CLR, fontweight="bold")
         ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
         cb = fig.colorbar(sc, ax=ax, pad=0.02)
         cb.set_label(r"$t\Omega_{ci}$", color=TEXT_CLR)
@@ -2264,7 +2180,7 @@ class PhysicalDiagnostics:
         if heating:
             ax.plot(t, heating["slope_per_omegaci"] * t + heating["intercept"],
                     ":", color=ps.c("#8b949e"), lw=2.0,
-                    label=(rf"deriva secular $e^-$ "
+                    label=(rf"secular $e^-$ trend "
                            rf"($R^2$={heating['r_squared']:.3f})"))
         ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
         ax.set_ylabel("energy proxy [code]", color=TEXT_CLR)
@@ -2319,6 +2235,10 @@ def parse_args():
     parser.add_argument("--steps", nargs="*", type=int, help="Optional explicit steps.")
     parser.add_argument("--jobs", "-j", type=int, default=0,
                         help="Number of parallel processes to use (default: 0 = use all CPUs).")
+    parser.add_argument("--growth-t-start", type=float, default=None,
+                        help="Explicit start of the linear phase (Omega_ci t) for the gamma fits.")
+    parser.add_argument("--growth-t-end", type=float, default=None,
+                        help="Explicit end of the linear phase (Omega_ci t) for the gamma fits.")
     return parser.parse_args()
 
 
@@ -2336,6 +2256,7 @@ def main():
         selected_steps=args.steps,
         jobs=args.jobs,
         vdf_cadence_omegaci=args.vdf_cadence_omegaci,
+        growth_window=(args.growth_t_start, args.growth_t_end),
     ).run()
 
 

@@ -13,6 +13,69 @@ not a conserved total. `electron_energy_trend.csv` describes a fit without
 subtracting it or attributing it to numerical heating. Old corrected-energy
 files in existing output directories are obsolete and are not removed automatically.
 
+**Revision 2026-09-28 (analysis conventions version 5).** Every product made
+before this date must be regenerated; the manifest records the version.
+
+- gamma is fitted on the vector fluctuation \(\langle|\delta\mathbf B|^2\rangle^{1/2}\),
+  not on \(|B|-B_0\): for transverse modes (parallel firehose, EMIC, whistler)
+  \(|B|-B_0\sim\delta B_\perp^2/2B_0\) is second order and gave **2 gamma**.
+- One linear-phase fit for the whole pipeline (`growth_fit.py`) with
+  `gamma_err` = slope error (+) window sensitivity; the spectral fits used a
+  slope-sign window that biased gamma low.
+- The diamagnetic current of `physical_diagnostics.py` had the opposite sign
+  to `diamagnetic_current.py`, used the raw second moment and per-cell
+  gradients; both now use the thermal \(P_\perp\) on the local field, gradients
+  in \(d_e\), and \(\mathbf J=\mathbf B\times\nabla P_\perp/B^2\).
+- `heat_flux_analysis.py` measured \(P_\parallel U_\parallel\), which is not a
+  heat flux; it now measures the third central moment from the particles
+  (local frame, truncation for kappa = 3, sampling error and noise floor).
+- Whistler (electron-driven) cases: the spectral analysis and the growth map
+  cut at \(k d_i = 2\) and 1.5, below the whole whistler band
+  (\(k d_i \sim 3-14\)); maps, Brazil plot and comparisons were for ions only;
+  the theory had no whistler branch and its overlay was dropped. All fixed.
+- Particle temperatures use PSC's \(\langle u\,v\rangle\) pressure convention
+  (the one of the moment maps), and energies the exact \(m(\gamma-1)\).
+- New analyses: field-solver residuals, saturated structures and pressure
+  balance, \(J_s\cdot E\) energy exchange, estimator comparison and
+  convergence/realization study (see "Thesis workflow" below).
+
+## Thesis workflow
+
+One command produces every product of one run, in dependency order
+(initial-condition check and manifest, validation evidence, then physics):
+
+```bash
+make thesis DATA_DIR=/path/to/run CASE=mirror_bimaxwellian_moderate \
+    [RUN_TAG=seed1] [LOGS=/path/to/job.out] [GROWTH_T_START=5 GROWTH_T_END=20]
+```
+
+`GROWTH_T_START/END` fix the linear phase (in \(\Omega_{ci}t\)) of every gamma
+fit once it has been read off `growth_rate_fit.png` and the growth-rate map;
+without them the automatic window is used and its sensitivity is part of
+`gamma_err`. `LOGS` defaults to the COSMA job log next to the run directory.
+
+Before spending COSMA time, validate the whole chain on a synthetic run with
+known answers (prescribed gamma = 0.25 Omega_ci, divergence-free Yee field,
+pressure-balanced structures, bi-Maxwellian particles, conserved energy):
+
+```bash
+python synthetic_run.py /tmp/syn --case mirror_bimaxwellian_moderate
+make thesis DATA_DIR=/tmp/syn RESULTS_ROOT=/tmp/syn_results
+```
+
+`test_pipeline_synthetic.py` runs the same check inside the test suite.
+
+| Thesis figure (audit proposal) | Evidence | Target | Main files |
+|---|---|---|---|
+| 1. Initial VDFs and measured parameters | measured n, B0, T, A, beta vs declared | `manifest`, `validate`, `particles` | `check_initial_conditions` output, `08_validation/`, `03_particles/` |
+| 2. Energy validation and convergence | global energy, div B, Gauss, continuity; dx/dt/ppc/seed spread | `energy`, `residuals`, `convergence` | `global_energy_*`, `field_residuals*`, `convergence_*` |
+| 3. gamma(k_par, k_perp), mode identification, theory | growth map, polarization, helicity, compressibility, PIC vs theory | `spectral`, `theory`, `polarization` | `04_spectra/` |
+| 4. A(t), beta(t), dB(t), saturation | trajectories of the driven species, gamma with error | `physics`, `brazil`, `estimators` | `09_physical_diagnostics/`, `01_anisotropy/` |
+| 5. Structures | holes/peaks, |B| skewness, n-|B| correlation, pressure balance | `structures` | `07_structures/` |
+| 6. Local VDF / kappa_eff / closures | spatial VDF, kappa_eff, Liouville closures | `vdf-spatial`, `theory-liouville*` | `03_particles/`, `04_spectra/` |
+| Energy transfer (P1) | J_s·E per species and channel vs DiagEnergies | `energy-exchange` | `energy_exchange_*` |
+| Heat flux (P2) | third moment, truncation, noise floor | `heatflux` | `06_heat_flux/` |
+
 ## Expected input
 
 Each data directory must contain a single PSC run:
@@ -193,6 +256,20 @@ Regression tests are run with:
 | `W_M_bM` | Whistler | electron | `beta_e_parallel=0.5`, `A_e=2.0` |
 | `W_W_bM` | Whistler | electron | `beta_e_parallel=0.5`, `A_e=1.5` |
 
+The table above lists the legacy profiles. The maintained production cases
+(576x576, 20 d_i, 1000 ppc; `*_bigbox40`: 1152x1152, 40 d_i) are:
+
+| `CASE` family | Driven species | beta_par, A of the driven species | Distributions |
+|---|---|---|---|
+| `mirror_*_strong` / `_moderate` / `_weak` | ion | 5 / 3.0, 5 / 2.0, 6 / 1.5 | bi-Maxwellian; kappa 3, 5 (strong and moderate) |
+| `firehose_*_strong` / `_moderate` / `_weak` | ion | 10 / 0.1, 6 / 0.3, 3 / 0.6 | bi-Maxwellian; kappa 3, 5 (strong) |
+| `firehose_*_bigbox40` | ion | 10 / 0.1, 6 / 0.3 | bi-Maxwellian; kappa 3, 5 (strong) |
+| `whistler_*_strong` / `_moderate` / `_weak` | electron | 0.5 / 3.0, 0.5 / 2.0, 0.5 / 1.5 | bi-Maxwellian; kappa 3 (moderate) |
+
+The whistler moderate twins write fields every 100 steps and particles every
+2000 (\(\Delta t\,\Omega_{ce}=2.64\), Nyquist \(1.19\,\Omega_{ce}\)); the profile
+records it (`fields_every`, `particles_every`).
+
 `psc_units.py` defines the physical profiles and output names. Do not use one
 production profile to analyse a different case: `F_M_bM` is not equivalent to
 `firehose_maxwellian`.
@@ -213,8 +290,8 @@ Main subfolders:
 03_particles/      VDFs and particle moments
 04_spectra/        mode-resolved gamma(k), E(k,t) map, helicity and compressibility
 05_diamagnetic/    diamagnetic currents
-06_heat_flux/      heat flux and spatial regions
-07_mirror_structures/ local |B| depressions for mirror
+06_heat_flux/      particle heat flux (third moment), truncation, noise floor
+07_structures/     magnetic holes/peaks, |B| skewness, pressure balance
 08_validation/     pointwise validation against particles
 09_physical_diagnostics/ integrated diagnostics with the standard outputs
 ```
@@ -232,9 +309,13 @@ writes into `09_physical_diagnostics/` the tables and figures of the physics
 checklist: `validation_table.csv`, `validation_summary.txt`,
 `anisotropy_table.csv`, `fit_metrics.csv`, `field_fluctuation_table.csv`,
 `growth_rate_summary.csv`, `anisotropy_spatial_stats.csv`,
-`spatial_correlations.csv`, `energy_table.csv`, plus `T_parallel/T_perp/A_i`,
-`deltaB`, `mirror_holes` and `J_dia` maps, 2D VDFs, Maxwellian/Kappa fits,
-growth rate, correlations and energy.
+`spatial_correlations.csv`, `energy_table.csv`, plus `T_parallel/T_perp/A`
+maps of the driven species, `deltaB`, `mirror_holes` and `J_dia` maps, 2D
+VDFs, Maxwellian/Kappa fits, growth rate (total, parallel and perpendicular
+amplitude, with `gamma_err`), correlations and energy. The same folder
+receives `global_energy_*` (`make energy`), `field_residuals*`
+(`make residuals`), `energy_exchange*` (`make energy-exchange`) and
+`estimator_consistency*` (`make estimators`).
 
 To compare already-analysed cases, for example Maxwellian vs Kappa:
 
@@ -242,9 +323,23 @@ To compare already-analysed cases, for example Maxwellian vs Kappa:
 make compare-physics COMPARE_CASES="maxwellian=../analysis_results/mirror_maxwellian/09_physical_diagnostics kappa=../analysis_results/mirror_kappa/09_physical_diagnostics"
 ```
 
-This produces `comparison_kappa_vs_maxwellian.csv`, `comparison_anisotropy.png`,
-`comparison_deltaB.png`, `comparison_growth_rate.png`, `comparison_energy.png`
-and `comparison_heat_flux.png`.
+This produces `comparison_kappa_vs_maxwellian.csv`, `comparison_anisotropy.png`
+(driven species), `comparison_deltaB.png`, `comparison_deltaB_components.png`,
+`comparison_growth_rate.png` (with `gamma_err`), `comparison_energy.png`
+(DiagEnergies) and `comparison_heat_flux.png` (third moment). The runs must
+share every declared parameter except the distribution; cases driven by
+different species are refused.
+
+Numerical convergence and realizations (same case, different dx/dt/ppc/seed,
+each analysed with its own `RUN_TAG`):
+
+```bash
+make convergence CONVERGENCE_RUNS="base=../analysis_results/runA dx2=../analysis_results/runB seed2=../analysis_results/runC"
+```
+
+writes `convergence_table.csv` (each observable, its change with respect to
+the reference and which parameter changed), `convergence_groups.csv` (mean
+and spread over realizations) and `convergence.png`.
 
 ## Physical background, formulas and variables
 
@@ -510,8 +605,11 @@ comparing strong, moderate, weak, Maxwellian and Kappa runs.
 
 #### 6.2. Formulas
 
+The amplitude is the full vector fluctuation,
+
 $$
-\delta B_{\rm rms}(t)=\delta B_0 e^{\gamma t},
+\delta B_{\rm rms}(t)=\langle|\mathbf B-\langle\mathbf B\rangle|^2\rangle^{1/2}
+=\delta B_0 e^{\gamma t},
 $$
 
 $$
@@ -519,6 +617,20 @@ $$
 \qquad
 \gamma=\frac{d}{dt}\ln\delta B_{\rm rms}.
 $$
+
+Not \(|B|-B_0\): for a transverse mode \(|B|-B_0\simeq\delta B_\perp^2/2B_0\) and
+its log-slope is \(2\gamma\). The compressive (\(\delta B_\parallel\)) and
+transverse (\(\delta B_\perp\)) amplitudes are fitted too.
+
+The linear phase (`growth_fit.py`, shared by every script) is located on a
+running median of \(\ln\delta B\): noise floor = minimum before the saturation
+maximum, rise = 10-90 % of the log-rise, and inside it the contiguous interval
+where the local slope stays above 80 % of its maximum. Ordinary least squares
+gives \(\gamma\) and its standard error; refits with other band edges and slope
+fractions give the window sensitivity, and `gamma_err` combines both. On a
+smoothly saturating (logistic) synthetic series the automatic fit is within
+~5 % of the true rate from 15 to 2400 snapshots; for the thesis tables fix the
+window with `GROWTH_T_START/END` after inspecting the fit.
 
 Time is presented as:
 
@@ -816,18 +928,22 @@ the depressions and enhancements of the magnetic field.
 
 $$
 \mathbf J_{{\rm dia},s}
-=\frac{\nabla P_{\perp,s}\times\mathbf B}{B^2}.
+=\frac{\mathbf B\times\nabla P_{\perp,s}}{B^2},
 $$
 
-In the \(YZ\) plane, the dominant out-of-plane component is:
+the sign for which \(\mathbf J\times\mathbf B=\nabla_\perp P_\perp\). In the \(YZ\)
+plane, the out-of-plane component is:
 
 $$
 J_{{\rm dia},x,s}
 =\frac{
-(\partial P_{\perp,s}/\partial y)B_z
--(\partial P_{\perp,s}/\partial z)B_y
+B_y\,\partial P_{\perp,s}/\partial z
+-B_z\,\partial P_{\perp,s}/\partial y
 }{B^2},
 $$
+
+with \(P_{\perp,s}\) the thermal pressure (bulk flow removed) projected on the
+local field and the gradients taken in \(d_e\), so \(J\) is in code units.
 
 $$
 J_{\rm dia,total}=J_{{\rm dia},i}+J_{{\rm dia},e}.
@@ -854,53 +970,44 @@ transports it spatially.
 
 #### 10.2. Formulas
 
-The diagnostic based directly on particles uses the third central moment:
+PSC does not deposit third moments, so the heat flux is measured from the
+particles of the prt window (`heat_flux_analysis.py`, `make heatflux`). The
+window is split into blocks; in each block the bulk velocity \(\mathbf U\) and
+the field direction \(\hat{\mathbf b}\) are those of the block:
 
 $$
-\mathbf c_p=\mathbf v_p-\langle\mathbf v\rangle,
-\qquad
-c_p^2=\mathbf c_p\cdot\mathbf c_p,
+\mathbf c_p=\mathbf v_p-\mathbf U,\qquad
+\mathbf q=\frac{m}{2}\langle c_p^2\,\mathbf c_p\rangle_w,\qquad
+q_\parallel=\mathbf q\cdot\hat{\mathbf b},\qquad
+q_\perp=|\mathbf q-q_\parallel\hat{\mathbf b}|,
 $$
 
-$$
-q_{\parallel}^{(p)}
-=\frac{m}{2}\langle c_p^2c_{\parallel,p}\rangle_w,
-\qquad
-q_{\perp}^{(p)}
-=\frac{m}{2}\langle c_p^2c_{\perp,p}\rangle_w.
-$$
-
-In the code, \(c_{\perp,p}=\sqrt{c_{x,p}^2+c_{y,p}^2}\). Therefore
-\(q_{\perp}^{(p)}\) measures a positive perpendicular magnitude and not a signed
-vector component. The full vector definition would be
-\(\mathbf q=(m/2)\langle c^2\mathbf c\rangle\).
-
-The maps built from fluid moments are transport proxies:
+normalised by the free-streaming scale
 
 $$
-v_\parallel=\mathbf u\cdot\hat{\mathbf b},
-\qquad
-\mathbf v_\perp=\mathbf u-v_\parallel\hat{\mathbf b},
+q_0=\tfrac32\,T\,v_T,\qquad v_T=\sqrt{2T/m},\qquad T=(T_\parallel+2T_\perp)/3 .
 $$
 
-$$
-q_\parallel^{({\rm proxy})}=P_\parallel v_\parallel,
-\qquad
-q_\perp^{({\rm proxy})}=P_\perp|\mathbf v_\perp|.
-$$
+`v = u/gamma` (PSC stores \(u=\gamma v\)). For kappa = 3 the sixth moment of
+the ideal distribution diverges, so the variance of \(q\) is infinite: the
+moments are also computed over \(|\mathbf c|\le s_{\max}\sqrt{T/m}\)
+(\(s_{\max}=4,6,8\)), recentred on the kept particles; quote a truncated value
+with its \(s_{\max}\). The sampling error comes from disjoint subsamples. The
+mean of \(|q_\parallel|/q_0\) over \(N\) particles of a VDF *without* heat flux is
+not zero but the floor \(\sqrt{2/\pi}\sqrt{10}/(3\sqrt2)/\sqrt N\approx0.59/\sqrt N\)
+(Maxwellian), drawn on the figure; only values clearly above it are a
+measured flux.
 
-The moment maps do not contain the full third moment and therefore must not be
-interpreted as the exact kinetic heat flux. The particle calculation is the
-physically more direct diagnostic.
+The earlier moment-based maps \(P_\parallel U_\parallel\) were a convective
+enthalpy term, not a heat flux, and have been removed.
 
 #### 10.3. Variables
 
-1. \(\mathbf c_p\): peculiar velocity relative to the mean flow.
-2. \(c_{\parallel,p}\), \(c_{\perp,p}\): parallel and perpendicular peculiar
-   components.
+1. \(\mathbf c_p\): peculiar velocity relative to the block bulk flow.
+2. \(\hat{\mathbf b}\): block-mean direction of the local magnetic field.
 3. \(\langle\cdot\rangle_w\): particle-weight-weighted average.
-4. \(\mathbf u\): macroscopic velocity.
-5. \(q_\parallel,q_\perp\): parallel and perpendicular thermal energy transport.
+4. \(q_0\): free-streaming heat flux scale.
+5. \(s_{\max}\): truncation radius in thermal units.
 
 ### 11. Spatial correlations
 
@@ -924,11 +1031,16 @@ $$
 Among others, the following are computed:
 
 $$
-r(A,\delta B),\quad
+r(A,|\delta B|),\quad
 r(A,B),\quad
 r(A,J_{\rm dia}),\quad
-r(A,\rho_i).
+r(A,n),
 $$
+
+with \(A\) and \(n\) of the driven species. The structure analysis
+(`structures_analysis.py`) adds \(r(\delta n_i/n_i,\delta|B|/B_0)\), the
+skewness of \(|B|\) (negative: holes; positive: peaks) and the total-pressure
+balance \(\mathrm{std}(B^2/2+P_{\perp i}+P_{\perp e})/\mathrm{std}(B^2/2)\).
 
 #### 11.3. Interpretation
 
@@ -973,6 +1085,21 @@ This is a diagnostic balance of the available quantities, not the complete
 electromagnetic energy: it does not explicitly include all of the electric field
 energy nor all species in every term.
 
+The conservation diagnostic is the global DiagEnergies budget
+(`energy_conservation.py`): \(E_E+E_B+K_i+K_e\) without detrending, with the
+criterion that matters for the physics,
+\(\max|\Delta E_{\rm tot}|/\max|\Delta E_{\rm exchanged}|\) (the error relative
+to the energy the instability moves). `energy_exchange.py` then tells which
+species gives or takes it and through which channel:
+
+$$
+\frac{dK_s}{dt}=\int\mathbf J_s\cdot\mathbf E\,dV,\qquad
+\mathbf J_s\cdot\mathbf E=J_{\parallel s}E_\parallel+\mathbf J_{\perp s}\cdot\mathbf E_\perp ,
+$$
+
+integrated in time and compared with \(\Delta K_s/V\) from DiagEnergies
+(\(V=2E_B(0)/B_0^2\)).
+
 #### 12.3. Variables
 
 1. \(E_{\rm bulk}\): kinetic energy of the mean flow.
@@ -1008,6 +1135,10 @@ T_j=m\,\operatorname{Var}_w(v_j),
 v_{{\rm th},j}=\sqrt{\frac{T_j}{m}},
 $$
 
+(`physical_diagnostics.py` uses the central mixed moment
+\(T_j=m(\langle u_jv_j\rangle-\langle u_j\rangle\langle v_j\rangle)\), PSC's
+moment convention, which reduces to the variance for \(|u|\ll c\)),
+
 $$
 \operatorname{relative\ error}
 =100\frac{|X_{\rm measured}-X_{\rm expected}|}{|X_{\rm expected}|}.
@@ -1028,8 +1159,9 @@ $$
    and Brazil plots.
 2. `fluctuationofmagneticfiel.py`: section 5; generates normalized magnetic
    fluctuation maps.
-3. `mirror_physics.py`: sections 5 and 9; visualizes Mirror magnetic structures
-   and the associated current.
+3. `structures_analysis.py`: sections 5 and 11; catalogue of magnetic holes
+   and peaks, |B| skewness, density correlation, pressure balance, lifetime
+   (replaces `mirror_physics.py`, now in `legacy/`).
 4. `spectral_analysis.py`: section 7; computes FFT, PSD, radial spectrum and
    slope (reused by `physical_diagnostics.py`), plus the mode-resolved
    `gamma(k)`, the helicity \(\sigma_m(k)\) and the compressibility described in
@@ -1039,8 +1171,8 @@ $$
    `legacy/` and are not part of the maintained workflow.
 6. `diamagnetic_current.py`: section 9; computes \(J_{{\rm dia},i}\),
    \(J_{{\rm dia},e}\) and the total current.
-7. `heat_flux_analysis.py`: section 10; computes the spatial proxies
-   \(P_\parallel v_\parallel\) and \(P_\perp v_\perp\).
+7. `heat_flux_analysis.py`: section 10; third central moment of the particle
+   VDF in the local frame, truncated, with sampling error and noise floor.
 8. `physical_diagnostics.py`: integrates sections 3 to 12, creating tables,
    maps, correlations, fits, growth rate and energy balance.
 9. `validate_moments.py`: section 13; verifies initial density, drift,
@@ -1060,6 +1192,23 @@ $$
     positions that are present in the prt files.
 15. `prt_region_field_cut.py`: locates the prt window on the field fluctuation
     maps and draws a 1D cut across it.
+16. `prt_region_bfield_stats.py`: time series and time average of \(\langle|B|\rangle\),
+    \(B_{\rm rms}\) and \(\delta B_{\rm rms}\) (par/perp) inside the prt window,
+    with the PIC noise floor removed (see below).
+17. `growth_fit.py`: section 6; the single linear-phase fit (gamma, gamma_err).
+18. `energy_conservation.py`: section 12; global DiagEnergies budget.
+19. `energy_exchange.py`: section 12; \(J_s\cdot E\) per species and channel.
+20. `field_residuals.py`: div B of the Yee snapshots and PSC's Gauss /
+    continuity checks from the job log.
+21. `estimator_consistency.py`: the four anisotropy estimators (particles in
+    the B0 and local frames, moments in the window and in the domain) on one
+    time axis, with the fraction of cells the Brazil-plot filter rejects.
+22. `convergence_study.py`: observables of several runs vs dx, dt, ppc, box
+    and seed; realization mean and spread.
+23. `synthetic_run.py`: a PSC-format run with known answers, to validate the
+    chain end to end.
+24. `plasma_physics.py`: shared formulas (pressure projection, thermal
+    pressure, diamagnetic current, reference thresholds, u/v kinematics).
 
 ## Linear theory and spatial VDF
 
@@ -1095,6 +1244,23 @@ make prt-region DATA_DIR=/path CASE=mirror_bikappa3_moderate
 ```bash
 make vdf-spatial DATA_DIR=/path CASE=mirror_bikappa3_moderate
 ```
+
+Magnetic-field statistics inside the same window, time-averaged:
+
+```bash
+make prt-bfield DATA_DIR=/path CASE=mirror_bikappa3_moderate \
+    PRT_BFIELD_FLAGS='--avg-window 100 158'
+```
+
+`prt_region_bfield_stats.py` removes the PIC noise in two steps: a spectral
+low-pass on the full periodic domain (\(|k| \le k_c\), default half the grid
+Nyquist), then a quadrature subtraction of the noise floor. With
+`--floor tracked` (default) the floor follows the power above \(k_c\), which
+carries no physical signal, scaled by the low/high-band ratio measured in a quiet
+window before growth; this follows the rise of the floor caused by numerical
+heating. The quiet window (`--noise-window`, in \(\Omega_{ci}t\)) must end before
+linear growth: for the whistler cases that is a few snapshots, so set it by hand
+after looking at the figure. Outputs go to `09_physical_diagnostics/`.
 
 `vdf_spatial.py` splits the particles into `hole` / `ambient` / `peak` according
 to the \(|B|\) of their cell and compares \(A\) between populations **against the

@@ -100,8 +100,15 @@ def read_case(path: Path) -> dict:
     gpath = path / "growth_rate_summary.csv"
     if gpath.exists():
         with open(gpath, newline="") as fh:
+            # First row = series "total" (vector |dB|); text columns such as
+            # series / amplitude / window_source are skipped.
             for r in csv.DictReader(fh):
-                growth = {k: float(v) for k, v in r.items() if k != "fit_reject_reason" and v.strip()}
+                growth = {}
+                for k, v in r.items():
+                    try:
+                        growth[k] = float(v)
+                    except (TypeError, ValueError):
+                        continue
                 if r.get("fit_ok", "0").lower() not in ("1", "true"):
                     growth = {}
                 break

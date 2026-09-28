@@ -10,7 +10,9 @@ que no hay comparación PIC contra teoría cinética. Este módulo produce el CS
 Alcance
 -------
 Modos de **propagación paralela** (k ∥ B0): firehose paralelo y ciclotrónico
-iónico (EMIC), en polarización derecha (R) e izquierda (L). El modo mirror es
+iónico (EMIC), en polarización derecha (R) e izquierda (L), y el whistler de
+anisotropía electrónica (rama "minus", escala electrónica; en los perfiles
+whistler el rango de k y la semilla se ajustan solos). El modo mirror es
 oblicuo y aperiódico y NO se obtiene de esta relación; pedir `--instability
 mirror` es un error explícito en vez de devolver un número sin sentido.
 
@@ -233,14 +235,24 @@ class ParallelDispersion:
         return complex(np.nan, np.nan)
 
     def scan(self, k_values: np.ndarray, polarization: str = "plus",
-             omega_guess: complex | None = None) -> list[dict]:
-        """Recorre k arrastrando la raíz anterior como semilla."""
+             omega_guess: complex | None = None,
+             guess_fn=None) -> list[dict]:
+        """Recorre k arrastrando la raíz anterior como semilla.
+
+        ``guess_fn(k)`` supplies the seed whenever there is no previous root
+        (first k, or after a failed solve); the whistler branch needs it,
+        since its frequency is ~mi/me times the ion-scale default seed.
+        """
         rows = []
         guess = omega_guess
         for k in k_values:
+            if guess is None and guess_fn is not None:
+                guess = guess_fn(k)
             root = self.solve(k, polarization, guess)
-            if np.isfinite(root) and abs(np.imag(root)) < 50:
+            if np.isfinite(root) and abs(np.imag(root)) < 0.5 * self.mass_ratio:
                 guess = root
+            elif guess_fn is not None:
+                guess = None
             rows.append({
                 "kdi": float(k),
                 "omega_r_over_Omegai": float(np.real(root)),
@@ -296,7 +308,49 @@ def self_test(verbose: bool = True) -> bool:
         print(f"[{'OK ' if passed else 'FALLA'}] umbral firehose paralelo: "
               f"beta_par - beta_perp = {threshold:.3f} (analitico: 2.0)")
 
+    # 4. Whistler de anisotropía electrónica: para una bi-Maxwelliana el
+    #    término resonante cambia de signo en A_e(ω - Ω_ce) + Ω_ce = 0, de modo
+    #    que γ cruza cero exactamente en ω_r/|Ω_ce| = 1 - 1/A_e (Kennel &
+    #    Petschek 1966). Discrimina el signo de la giro-frecuencia electrónica
+    #    y la rama "minus", que es la que usan los casos whistler.
+    worst = 0.0
+    for A_e in (1.5, 2.0, 3.0):
+        crossing = _whistler_marginal_frequency(A_e)
+        worst = max(worst, abs(crossing - (1.0 - 1.0 / A_e))
+                    if np.isfinite(crossing) else np.inf)
+    passed = worst < 5e-3
+    ok &= passed
+    if verbose:
+        print(f"[{'OK ' if passed else 'FALLA'}] whistler: omega_r/|Omega_ce| en gamma=0 "
+              f"= 1 - 1/A_e; error max = {worst:.2e}")
+
     return bool(ok)
+
+
+def whistler_guess(k_di: float, mass_ratio: float) -> complex:
+    """Seed for the whistler root: cold whistler ω = |Ω_ce| k²d_e²/(1+k²d_e²).
+
+    ``k_di`` in 1/d_i; the result in Ω_ci with a small positive growth rate.
+    """
+    kde = k_di / math.sqrt(mass_ratio)
+    return complex(mass_ratio * kde**2 / (1.0 + kde**2), 0.01 * mass_ratio)
+
+
+def _whistler_marginal_frequency(A_e: float, beta_e: float = 0.5,
+                                 mass_ratio: float = 200.0) -> float:
+    """ω_r/|Ω_ce| where the whistler growth rate crosses zero (minus branch)."""
+    disp = ParallelDispersion(beta_par_i=1.0, A_i=1.0, beta_par_e=beta_e,
+                              A_e=A_e, mass_ratio=mass_ratio, c_over_va=176.8)
+    kde = np.linspace(0.05, 2.5, 100)
+    rows = disp.scan(kde * math.sqrt(mass_ratio), "minus",
+                     guess_fn=lambda k: whistler_guess(k, mass_ratio))
+    w = np.array([r["omega_r_over_Omegai"] for r in rows]) / mass_ratio
+    g = np.array([r["gamma_over_Omegai"] for r in rows]) / mass_ratio
+    for j in range(len(g) - 1):
+        if np.isfinite(g[j]) and np.isfinite(g[j + 1]) and g[j] > 0 >= g[j + 1]:
+            f = g[j] / (g[j] - g[j + 1])
+            return float(w[j] + f * (w[j + 1] - w[j]))
+    return float("nan")
 
 
 def _firehose_threshold_numeric(A: float = 0.2, k: float = 0.10,
@@ -349,8 +403,9 @@ def main() -> int:
         os.environ["PSC_PROFILE"] = args.case
     from psc_units import (
         BETA_I_PAR, BETA_I_PERP_OVER_PAR, BETA_E_PAR, BETA_E_PERP_OVER_PAR,
-        KAPPA, MASS_RATIO, VA_OVER_C, INSTABILITY, PROFILE_LABEL,
+        KAPPA, MASS_RATIO, VA_OVER_C, INSTABILITY, PROFILE_LABEL, DRIVEN_SPECIES,
     )
+    electron_driven = DRIVEN_SPECIES == "electron"
 
     if INSTABILITY == "mirror" and not args.force:
         print("ERROR: el modo mirror es oblicuo y aperiodico; esta relacion de "
@@ -374,10 +429,23 @@ def main() -> int:
     print(f"beta_par_i={beta_par_i:.3f}  A_i={A_i:.3f}  "
           f"kappa={kappa}  m_i/m_e={MASS_RATIO}  c/v_A={1.0 / VA_OVER_C:.1f}")
 
-    k_values = np.linspace(args.k_min, args.k_max, args.n_k)
+    # The whistler lives at electron scales: k d_e ~ 0.1-2, i.e. k d_i up to
+    # 2 sqrt(mi/me), and omega ~ 0.1-0.5 |Omega_ce|. Default k range, branch and
+    # seed follow the driven species unless given explicitly.
+    sqrt_mr = math.sqrt(MASS_RATIO)
+    k_min = args.k_min if args.k_min is not None else (0.05 * sqrt_mr if electron_driven else 0.02)
+    k_max = args.k_max if args.k_max is not None else (2.0 * sqrt_mr if electron_driven else 2.0)
+    polarizations = args.polarizations or (["minus"] if electron_driven else ["plus", "minus"])
+    guess_fn = (lambda k: whistler_guess(k, MASS_RATIO)) if electron_driven else None
+    if electron_driven:
+        print("Whistler (electron-driven) branch: 'minus' channel, k d_e = "
+              f"{k_min / sqrt_mr:.3g}-{k_max / sqrt_mr:.3g}; the CSV keeps k d_i and "
+              "omega/Omega_ci (polarization_dispersion.py converts to electron units).")
+
+    k_values = np.linspace(k_min, k_max, args.n_k)
     rows = []
-    for pol in args.polarizations:
-        rows.extend(disp.scan(k_values, pol))
+    for pol in polarizations:
+        rows.extend(disp.scan(k_values, pol, guess_fn=guess_fn))
 
     finite = [r for r in rows if np.isfinite(r["gamma_over_Omegai"])]
     if finite:
@@ -413,11 +481,15 @@ def parse_args():
                    help="A = T_perp / T_par de los iones")
     p.add_argument("--kappa", type=float, default=None,
                    help="indice kappa; omitir para bi-Maxwelliana")
-    p.add_argument("--k-min", type=float, default=0.02)
-    p.add_argument("--k-max", type=float, default=2.0)
+    p.add_argument("--k-min", type=float, default=None,
+                   help="k d_i minimo (default 0.02; 0.05 sqrt(mi/me) en casos whistler)")
+    p.add_argument("--k-max", type=float, default=None,
+                   help="k d_i maximo (default 2; 2 sqrt(mi/me) en casos whistler)")
     p.add_argument("--n-k", type=int, default=60)
-    p.add_argument("--polarizations", nargs="*", default=["plus", "minus"],
-                   choices=["plus", "minus"])
+    p.add_argument("--polarizations", nargs="*", default=None,
+                   choices=["plus", "minus"],
+                   help="default: plus y minus; solo minus (rama whistler) en casos "
+                        "impulsados por electrones")
     p.add_argument("--force", action="store_true",
                    help="permite ejecutar en un caso mirror pese al aviso")
     p.add_argument("--out", default="linear_theory.csv")

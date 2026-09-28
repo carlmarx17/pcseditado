@@ -10,7 +10,11 @@ Masa artificial: mi/me = 200  =>  me = 1.0,  mi = 200.0
 
 Parámetros comunes de los ejecutables actuales de anisotropía:
   - mass_ratio = 200, B0 = 0.08, vA/c = B0/sqrt(n0*mi)
-  - dominio = 20 d_i x 20 d_i, grilla = 1024 x 1024, nicell = 1500
+  - dominio = 20 d_i x 20 d_i, grilla = 576 x 576, nicell = 1000
+    (variantes *_bigbox40: 40 d_i x 40 d_i, grilla 1152 x 1152, mismo dx)
+  - salidas cada 500 pasos (campos/momentos) y 10000 (partículas), salvo los
+    gemelos whistler moderate, que usan 100 / 2000 para resolver Omega_ce
+    (ver cosma_jobs/simulacion/sim_whistler_*_moderate.sh)
 
 Los perfiles heredados `F_*_bM`, `M_*_bM`, `W_*_bM` y `*_lite` se mantienen
 para analizar corridas antiguas.
@@ -205,9 +209,30 @@ _PROFILES = {
         "kappa": None,
         "domain_di": 20.0,
         "ngrid": 576,
-        "nmax": 1_200_000,
+        "nmax": 80_000,
         "nicell": 1000,
+        "fields_every": 100,
+        "particles_every": 2000,
         "particle_basename": "prt_whistler_bimaxwellian_moderate",
+        "instability": "whistler",
+        "driven_species": "electron",
+    },
+    "whistler_bikappa3_moderate": {
+        "label": "Whistler Moderate Bi-Kappa 3",
+        "mass_ratio": 200.0,
+        "vA_over_c": 0.08,
+        "beta_i_par": 1.0,
+        "Ti_perp_over_Ti_par": 1.0,
+        "beta_e_par": 0.5,
+        "Te_perp_over_Te_par": 2.0,
+        "kappa": 3.0,
+        "domain_di": 20.0,
+        "ngrid": 576,
+        "nmax": 80_000,
+        "nicell": 1000,
+        "fields_every": 100,
+        "particles_every": 2000,
+        "particle_basename": "prt_whistler_bikappa3_moderate",
         "instability": "whistler",
         "driven_species": "electron",
     },
@@ -262,6 +287,23 @@ _PROFILES = {
         "instability": "mirror",
         "driven_species": "ion",
     },
+    "mirror_bikappa5_moderate": {
+        "label": "Mirror Moderate Bi-Kappa 5",
+        "mass_ratio": 200.0,
+        "vA_over_c": 0.08,
+        "beta_i_par": 5.0,
+        "Ti_perp_over_Ti_par": 2.0,
+        "beta_e_par": 1.0,
+        "Te_perp_over_Te_par": 1.0,
+        "kappa": 5.0,
+        "domain_di": 20.0,
+        "ngrid": 576,
+        "nmax": 1_200_000,
+        "nicell": 1000,
+        "particle_basename": "prt_mirror_bikappa5_moderate",
+        "instability": "mirror",
+        "driven_species": "ion",
+    },
     "mirror_bikappa5": {
         "label": "Mirror Bi-Kappa 5",
         "mass_ratio": 200.0,
@@ -310,6 +352,23 @@ _PROFILES = {
         "nmax": 1_200_000,
         "nicell": 1000,
         "particle_basename": "prt_firehose_bikappa3_bigbox40",
+        "instability": "firehose",
+        "driven_species": "ion",
+    },
+    "firehose_bikappa5_bigbox40": {
+        "label": "Firehose Bi-Kappa 5 (bigbox 40 di)",
+        "mass_ratio": 200.0,
+        "vA_over_c": 0.08,
+        "beta_i_par": 10.0,
+        "Ti_perp_over_Ti_par": 0.1,
+        "beta_e_par": 1.0,
+        "Te_perp_over_Te_par": 1.0,
+        "kappa": 5.0,
+        "domain_di": 40.0,
+        "ngrid": 1152,
+        "nmax": 1_200_000,
+        "nicell": 1000,
+        "particle_basename": "prt_firehose_bikappa5_bigbox40",
         "instability": "firehose",
         "driven_species": "ion",
     },
@@ -672,7 +731,29 @@ _prt_half = int(round(0.1 * N_GRID_Y))
 _prt_center = N_GRID_Y // 2
 PRT_OUTPUT_LO = (0, _prt_center - _prt_half, _prt_center - _prt_half)
 PRT_OUTPUT_HI = (1, _prt_center + _prt_half, _prt_center + _prt_half)
-PRT_OUTPUT_EVERY = 10000
+
+# ── Cadencia de salida ───────────────────────────────────────────────────
+# Defaults of psc_anisotropy_case.hxx; the whistler moderate twins override
+# them in their job scripts. Only used for resolution reports (Nyquist of the
+# snapshot series): every time axis is built from the real step numbers.
+FIELDS_EVERY = int(_active.get("fields_every", 500))
+PARTICLES_EVERY = int(_active.get("particles_every", 10000))
+PRT_OUTPUT_EVERY = PARTICLES_EVERY
+
+# ── Especie impulsora ────────────────────────────────────────────────────
+DRIVEN_SUFFIX = "i" if DRIVEN_SPECIES == "ion" else "e"
+DRIVEN_MASS = M_ION if DRIVEN_SPECIES == "ion" else M_ELEC
+DRIVEN_BETA_PAR = BETA_I_PAR if DRIVEN_SPECIES == "ion" else BETA_E_PAR
+DRIVEN_ANISOTROPY = (BETA_I_PERP_OVER_PAR if DRIVEN_SPECIES == "ion"
+                     else BETA_E_PERP_OVER_PAR)
+
+# ── Banda de k físicamente relevante ─────────────────────────────────────
+# Ion-scale modes (mirror, firehose, EMIC) live at k d_i <~ 1; everything
+# above k d_i ~ 2 is grid noise for them. The whistler lives at k d_e ~ 0.2-1,
+# i.e. k d_i ~ sqrt(mi/me) * (0.2-1) ~ 3-14 here: an ion-scale cap removes it
+# completely. Spectral scripts take this as their default upper k bound.
+K_MAX_DI_DEFAULT = (2.0 * np.sqrt(MASS_RATIO) if DRIVEN_SPECIES == "electron"
+                    else 2.0)
 
 # ── Constantes auxiliares para análisis ─────────────────────────────────
 MU0 = 1.0
@@ -785,13 +866,14 @@ def print_units_summary():
     print(f"    vth_i⊥  = {VTH_I_PERP:.5f}  [código]  = {VTH_I_PERP/VA:.3f} vA")
     print(f"    vth_e‖  = {VTH_E_PAR:.5f}  [código]  = {VTH_E_PAR/VA:.3f} vA")
     print()
-    print(f"  Instabilidad: ", end="")
-    if BETA_I_PERP_OVER_PAR > 1.0:
-        print(f"MIRROR  (Aᵢ = {BETA_I_PERP_OVER_PAR:.1f} > 1)")
-    elif BETA_I_PERP_OVER_PAR < 1.0:
-        print(f"FIREHOSE  (Aᵢ = {BETA_I_PERP_OVER_PAR:.1f} < 1)")
-    else:
-        print("Isótropo")
+    print(f"  Inestabilidad declarada: {INSTABILITY.upper()}  "
+          f"(especie impulsora: {DRIVEN_SPECIES}, "
+          f"A_{DRIVEN_SUFFIX} = {DRIVEN_ANISOTROPY:.2f}, "
+          f"β_{DRIVEN_SUFFIX}∥ = {DRIVEN_BETA_PAR:.2f})")
+    print("  (el nombre del caso no identifica el modo que crece; ver dispersion_modes.py)")
+    print(f"  Salidas: campos cada {FIELDS_EVERY} pasos "
+          f"(Δt Ω_ce = {FIELDS_EVERY * DT_CODE * OMEGA_CE:.3g}), "
+          f"partículas cada {PARTICLES_EVERY}")
     print("=" * 68)
 
 

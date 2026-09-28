@@ -101,6 +101,7 @@ Criterion: `A_e > 1 + 0.21 / beta_e_parallel^0.6`
 | `psc_firehose_bikappa3` | `psc_firehose_bikappa3.cxx` | 3 | 10.0 | 0.1 | 1.0 | 1.0 | 576×576 |
 | `psc_firehose_bikappa5` | `psc_firehose_bikappa5.cxx` | 5 | 10.0 | 0.1 | 1.0 | 1.0 | 576×576 |
 | `psc_firehose_bikappa5_bigbox40` | `psc_firehose_bikappa5_bigbox40.cxx` | 5 | 10.0 | 0.1 | 1.0 | 1.0 | 1152×1152 (40 d_i) |
+| `psc_whistler_bikappa3_moderate` | `psc_whistler_bikappa3_moderate.cxx` | 3 | 1.0 | 1.0 | 0.5 | 2.0 | 576×576 |
 
 ## Outputs
 

@@ -585,7 +585,8 @@ def plot_goodness_of_fit(ions, outdir: str):
 
         ks_stat_kappa = np.max(np.abs(ecdf_y - kappa_cdf_vals))
         ks_p_kappa = scipy_stats.kstwobign.sf(np.sqrt(n) * ks_stat_kappa)
-        ks_res_maxw = scipy_stats.kstest(sample, "norm", args=(0.0, v_th))
+        # Frozen distribution: the ("norm", args=...) form breaks on recent SciPy.
+        ks_res_maxw = scipy_stats.kstest(sample, scipy_stats.norm(loc=0.0, scale=v_th).cdf)
         ks_stat_maxw = ks_res_maxw.statistic
         ks_p_maxw = ks_res_maxw.pvalue
 
@@ -674,7 +675,7 @@ def plot_goodness_of_fit(ions, outdir: str):
         ks_p_kappa = scipy_stats.kstwobign.sf(np.sqrt(n) * ks_stat_kappa)
 
         # ── K-S vs Maxwellian ────────────────────────────────────────────
-        ks_res_maxw = scipy_stats.kstest(sample, "norm", args=(0.0, norm_sigma))
+        ks_res_maxw = scipy_stats.kstest(sample, scipy_stats.norm(loc=0.0, scale=norm_sigma).cdf)
         ks_stat_maxw = ks_res_maxw.statistic
         ks_p_maxw = ks_res_maxw.pvalue
 

@@ -15,6 +15,7 @@ from psc_units import (
     VA, VA_OVER_C, DT_CODE, OMEGA_CI, DI,
     N0, NICELL, KAPPA, BETA_I_PAR, BETA_E_PAR,
     BETA_I_PERP_OVER_PAR, BETA_E_PERP_OVER_PAR,
+    DX_DE, FIELDS_EVERY, PARTICLES_EVERY, K_MAX_DI_DEFAULT,
 )
 
 
@@ -23,6 +24,9 @@ def main() -> None:
     parser.add_argument("--data-dir", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--case", required=True)
+    parser.add_argument("--run-tag", default="",
+                        help="Free label of this realization (seed, dt/ppc variant) used by "
+                             "convergence_study.py to group repeated runs.")
     args = parser.parse_args()
 
     discovered = PICDataReader.discover_outputs(str(args.data_dir))
@@ -60,6 +64,7 @@ def main() -> None:
     manifest = {
         "generated_utc": datetime.now(timezone.utc).isoformat(),
         "case": args.case,
+        "run_tag": args.run_tag,
         "profile": SIM_PROFILE,
         "label": PROFILE_LABEL,
         "instability": INSTABILITY,
@@ -89,7 +94,10 @@ def main() -> None:
             "last_particle_step": max(particles) if particles else None,
         },
         "physics": {
-            "analysis_conventions_version": 4,
+            # 5: gamma from the vector fluctuation |dB| (not |B|-B0), one shared
+            #    linear-phase fit with gamma_err, particle temperatures in PSC's
+            #    <u v> convention, J_dia sign fixed, third-moment heat flux.
+            "analysis_conventions_version": 5,
             "parameter_source": RUN_PARAMETER_SOURCES,
             "mass_ratio": MASS_RATIO,
             "n0": N0,
@@ -109,6 +117,10 @@ def main() -> None:
             "mirror_reference": "cold-electron bi-Maxwellian: beta_parallel*A*(A-1)=1",
             "domain_di": DOMAIN_DI,
             "grid": [N_GRID_Y, N_GRID_Z],
+            "dx_de": DX_DE,
+            "fields_every_from_profile": FIELDS_EVERY,
+            "particles_every_from_profile": PARTICLES_EVERY,
+            "k_max_di_spectral_default": K_MAX_DI_DEFAULT,
         },
     }
 

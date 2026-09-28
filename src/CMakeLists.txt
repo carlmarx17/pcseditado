@@ -41,6 +41,8 @@ add_psc_executable(psc_mirror_bikappa3)
 # Bi-Maxwelliana vs Bi-Kappa a igualdad de anisotropia.
 add_psc_executable(psc_mirror_bikappa3_moderate)
 add_psc_executable(psc_mirror_bikappa5_moderate)
+# Gemelo Bi-Kappa de psc_whistler_bimaxwellian_moderate.
+add_psc_executable(psc_whistler_bikappa3_moderate)
 add_psc_executable(psc_mirror_bikappa5)
 add_psc_executable(psc_firehose_bikappa3)
 add_psc_executable(psc_firehose_bikappa5)

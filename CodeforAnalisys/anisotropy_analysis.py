@@ -29,7 +29,12 @@ import matplotlib.cm as cm
 from pathlib import Path
 
 from data_reader import PICDataReader
-from plasma_physics import field_aligned_pressures, mirror_threshold
+from plasma_physics import (
+    field_aligned_pressures,
+    firehose_threshold,
+    mirror_threshold,
+    whistler_threshold,
+)
 from psc_units import (
     B0, BETA_E_PAR, BETA_E_PERP_OVER_PAR, BETA_I_PAR,
     BETA_I_PERP_OVER_PAR, DRIVEN_SPECIES, FIELD_FILE_PATTERN, INSTABILITY,
@@ -91,12 +96,11 @@ ACCENT   = ps.c("#58a6ff")
 
 
 # ── Umbrales de inestabilidad ─────────────────────────────────────────────────
-def firehose_threshold(b): return 1.0 - 2.0 / b
+# firehose_threshold / whistler_threshold / mirror_threshold: plasma_physics.py
 def oblique_firehose_threshold(b):
     with np.errstate(invalid="ignore", divide="ignore"):
         return np.where(b > 0.11, 1.0 - 1.4 / (b - 0.11)**0.55, np.nan)
 def ic_threshold(b):       return 1.0 + 0.43 / b**0.42
-def whistler_threshold(b): return 1.0 + 0.21 / b**0.6
 
 
 def instability_threshold(beta):
@@ -197,6 +201,9 @@ def process_snapshot(mom_file: str, bz_file: str, species: str = DRIVEN_SPECIES)
             2.0 * np.mean(P_par[mask]) / np.mean(B2[mask])
         ),
         "valid_cells": int(np.count_nonzero(mask)),
+        # Share of cells the filter above rejects: if it grows with time the
+        # trajectory is being measured on a shrinking, biased subset.
+        "filtered_fraction": float(1.0 - np.count_nonzero(mask) / mask.size),
     }
 
 
@@ -626,6 +633,7 @@ def write_summary_csv(snap_stats: list, outdir: Path):
         "anisotropy_p25", "anisotropy_p75", "beta_parallel_global",
         "beta_parallel_median", "beta_parallel_p25", "beta_parallel_p75",
         "marginal_threshold", "instability_drive", "valid_cells",
+        "filtered_fraction",
     ]
     out = output_path(outdir, "anisotropy_evolution", ".csv")
     with out.open("w", newline="", encoding="utf-8") as handle:
@@ -649,6 +657,7 @@ def write_summary_csv(snap_stats: list, outdir: Path):
                 "marginal_threshold": stat["threshold"],
                 "instability_drive": stat["drive"],
                 "valid_cells": stat["valid_cells"],
+                "filtered_fraction": stat["filtered_fraction"],
             })
     print(f"  Guardado → {out}")
 
@@ -738,6 +747,7 @@ def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
                     instability_drive(data["anisotropy_global"], threshold)
                 ),
                 "valid_cells": data["valid_cells"],
+                "filtered_fraction": data["filtered_fraction"],
             })
 
         # Guardar snapshot completo para el grid

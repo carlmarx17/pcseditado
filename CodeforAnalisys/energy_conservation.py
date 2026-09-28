@@ -76,6 +76,15 @@ def read_energy_segments(paths: list[Path]) -> tuple[list[dict], dict]:
         change = row["E_total"] - baseline
         row["relative_change"] = change / baseline
         row["change_over_initial_kinetic"] = change / kinetic_baseline if kinetic_baseline > 0 else float("nan")
+    # The relative change of E_total is diluted by the (large, constant) B0
+    # and thermal energies. The criterion that matters for the physics is
+    # whether the error is small compared with the energy the instability
+    # actually moves between reservoirs.
+    exchanged = max(max(abs(r[k] - rows[0][k]) for r in rows) for k in ("E_B", "E_i", "E_e"))
+    max_error = max(abs(r["E_total"] - baseline) for r in rows)
+    for row in rows:
+        for key in ("E_E", "E_B", "E_e", "E_i", "E_total"):
+            row[f"d{key}"] = row[key] - rows[0][key]
     summary = {
         "source_files": used, "n_samples": len(rows),
         "baseline_time_code": rows[0]["time_code"],
@@ -83,6 +92,8 @@ def read_energy_segments(paths: list[Path]) -> tuple[list[dict], dict]:
         "last_time_code": rows[-1]["time_code"],
         "max_abs_relative_change": max(abs(r["relative_change"]) for r in rows),
         "final_relative_change": rows[-1]["relative_change"],
+        "max_exchanged_energy": exchanged,
+        "max_error_over_exchanged": max_error / exchanged if exchanged > 0 else float("nan"),
         "energy_scope": "global domain, both species, electric and full magnetic field",
         "detrended": False,
     }
@@ -98,15 +109,33 @@ def write_energy_analysis(paths: list[Path], outdir: Path) -> dict:
         writer.writerows(rows)
     (outdir / "global_energy_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     time = [r["omega_ci_t"] for r in rows]
-    fig, axes = plt.subplots(2, 1, figsize=(8, 7), sharex=True)
-    for key in ("E_E", "E_B", "E_e", "E_i", "E_total"):
-        axes[0].plot(time, [r[key] for r in rows], label=key)
-    axes[0].set_ylabel("Global energy [code]")
-    axes[0].legend()
-    axes[1].plot(time, [r["relative_change"] for r in rows])
-    axes[1].axhline(0.0, color="gray", linewidth=0.7)
-    axes[1].set_ylabel(r"$(E(t)-E(t_0))/E(t_0)$")
-    axes[1].set_xlabel(r"$t\Omega_{ci}$")
+    e0 = rows[0]["E_total"]
+    fig, axes = plt.subplots(2, 1, figsize=(8.4, 7.2), sharex=True)
+    # Changes, not absolute values: the absolute energies are dominated by
+    # the constant B0^2/2 and the initial thermal energy, which hides the
+    # exchange the instability produces.
+    for key, color, label in (("dE_B", "#56d364", r"$\Delta E_B$"),
+                              ("dE_E", "#f2cc60", r"$\Delta E_E$"),
+                              ("dE_i", "#ff7b72", r"$\Delta K_i$"),
+                              ("dE_e", "#58a6ff", r"$\Delta K_e$"),
+                              ("dE_total", "#111111", r"$\Delta E_{\rm tot}$")):
+        axes[0].plot(time, [r[key] / e0 for r in rows], color=ps.c(color), label=label,
+                     lw=2.2 if key == "dE_total" else 1.6)
+    axes[0].axhline(0.0, color=ps.MUTED_CLR, linewidth=0.7)
+    axes[0].set_ylabel(r"$\Delta E(t)/E_{\rm tot}(t_0)$")
+    axes[0].set_title("Global energy budget (DiagEnergies, no detrending)", fontsize=13)
+    ps.legend(axes[0], fontsize=10, ncol=3)
+    axes[1].plot(time, [r["relative_change"] for r in rows], color=ps.c("#111111"))
+    axes[1].axhline(0.0, color=ps.MUTED_CLR, linewidth=0.7)
+    axes[1].set_ylabel(r"$(E_{\rm tot}(t)-E_{\rm tot}(t_0))/E_{\rm tot}(t_0)$")
+    axes[1].set_xlabel(r"$t\,\Omega_{ci}$")
+    ratio = summary["max_error_over_exchanged"]
+    if np.isfinite(ratio):
+        axes[1].text(0.02, 0.9, rf"max $|\Delta E_{{\rm tot}}|$ / max exchanged = {ratio:.2g}",
+                     transform=axes[1].transAxes, fontsize=10, color=ps.TEXT_CLR, zorder=5,
+                     bbox={"facecolor": ps.LEGEND_BG, "edgecolor": ps.GRID_CLR, "alpha": 0.9})
+    for ax in axes:
+        ps.style_axes(ax)
     fig.tight_layout()
     ps.save(fig, outdir / "global_energy_conservation.png")
     return summary
