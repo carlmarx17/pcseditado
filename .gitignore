@@ -182,6 +182,7 @@ desktop.ini
 # raw run data via the CodeforAnalisys/Makefile targets. Keeping them in git made
 # the history grow into the gigabytes, so the whole tree stays out.
 /analysis_results/
+/results/
 /CodeforAnalisys/downloads/
 
 # ---- graphify knowledge graph (generated) ----
