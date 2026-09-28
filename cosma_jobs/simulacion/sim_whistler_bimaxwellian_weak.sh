@@ -31,7 +31,7 @@
 #    - particles cada 20000 = 264 Omega_ce^-1 -> 15 dumps de VDF
 #      (~8 GB c/u, ~120 GB por corrida).
 #    - energies cada 20 = 0.26 Omega_ce^-1 (gamma global gratis).
-#    - checkpoint cada 150000 + el final -> 2 por corrida (~340 GB c/u).
+#    - checkpoint cada 150000 + el final -> 2 por corrida (~160 GB c/u).
 #  Presupuesto (calibrado con las corridas ionicas de 48 h en 1024
 #  ranks): ~43 h en 2304 ranks (~118k core-h por corrida).
 #  IMPORTANTE (paridad): los futuros gemelos bi-kappa weak reutilizan

@@ -174,7 +174,9 @@ particle-pushes/s/core, matching §4 of `ESCALADO_INESTABILIDADES.md`):
 The first batch (strong series: bi-Max, κ5, κ3) is **~47 000 core-h and
 ~0.6 TB durable** in total, instead of the ~354 000 core-h and ~2.1 TB
 it would have cost at a uniform 300 000 steps. Each run also writes two
-transient checkpoints of ~340 GB (mid-run + final) — except the strong
+transient checkpoints of ~160 GB (mid-run + final; measured ~30 B per
+particle on the existing 576² and bigbox40 checkpoints, 20 and 80 GB) —
+except the strong
 runs, which write only the final one: they take ~6 h inside a 12 h
 window, and the dp433 group quota on /cosma7 is nearly full (38.5 of
 40.2 TB soft quota when the first batch was prepared). Keep each final

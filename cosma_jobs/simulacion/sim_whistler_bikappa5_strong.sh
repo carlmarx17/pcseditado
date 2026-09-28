@@ -39,8 +39,8 @@
 #    - energies cada 20 = 0.26 Omega_ce^-1 (gamma global gratis).
 #    - checkpoint SOLO el final (PSC_CHECKPOINT_EVERY = nmax): la
 #      corrida dura ~6 h en una ventana de 12 h, asi que un intermedio
-#      no aporta y costaria ~340 GB de una cuota de grupo casi llena.
-#      El final (~340 GB) sirve para extender; conservarlo hasta
+#      no aporta y costaria ~160 GB de una cuota de grupo casi llena.
+#      El final (~160 GB) sirve para extender; conservarlo hasta
 #      confirmar que la relajacion esta completa. Si el job muere a
 #      medio camino, se relanza desde t=0 (~6 h).
 #  Presupuesto (calibrado con las corridas ionicas de 48 h en 1024
