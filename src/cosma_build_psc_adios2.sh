@@ -76,4 +76,4 @@ grep -n "PSC_HAVE_ADIOS2" "$BUILD_DIR/src/include/PscConfig.h"
 for target in "${TARGETS[@]}"; do
   test -x "$BUILD_DIR/src/$target"
 done
-ldd "$BUILD_DIR/src/psc_mirror_bikappa3" | grep -i adios || true
+ldd "$BUILD_DIR/src/${TARGETS[0]}" | grep -i adios || true
