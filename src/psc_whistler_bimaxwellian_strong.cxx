@@ -3,7 +3,6 @@
 //
 // beta_i_parallel=1.0, Ai=Ti_perp/Ti_parallel=1.0
 // beta_e_parallel=0.5, Ae=Te_perp/Te_parallel=3.0
-// mass_ratio=200, 1500 ppc, 1024x1024
 // ======================================================================
 
 #define PSC_CASE_LABEL "whistler_bimaxwellian_strong"

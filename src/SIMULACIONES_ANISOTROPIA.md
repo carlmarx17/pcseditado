@@ -85,6 +85,17 @@ Criterion: `beta_i_parallel * (1 - A_i) > 2`
 Electrons with excess perpendicular temperature. Isotropic ions.
 Criterion: `A_e > 1 + 0.21 / beta_e_parallel^0.6`
 
+The whistler is the only **electron-scale** instability of the matrix
+(gamma_max = 0.175 / 0.054 / 0.0075 Omega_ce and omega_r = 0.25–0.5
+Omega_ce for strong/moderate/weak, from `linear_theory.py`). The source
+files and grid are identical to the rest of the matrix, but the whistler
+job scripts override duration and output cadence by environment
+(`PSC_NMAX=150000`, `PSC_FIELDS_EVERY=50`, `PSC_PARTICLES_EVERY=5000`,
+`PSC_ENERGIES_EVERY=10`, `PSC_CHECKPOINT_EVERY=50000`): the ion-scale
+defaults alias the whistler branch (field-output Nyquist 0.24 Omega_ce)
+and run ~24× past saturation. Full parameter study, literature comparison
+and open decisions: `WHISTLER_PARAMETROS.md`.
+
 | Executable | File | Regime | beta_i_par | A_i | beta_e_par | A_e | Grid |
 |---|---|---|---:|---:|---:|---:|---:|
 | `psc_whistler_bimaxwellian_strong` | `psc_whistler_bimaxwellian_strong.cxx` | Strong | 1.0 | 1.0 | 0.5 | 3.0 | 576×576 |
