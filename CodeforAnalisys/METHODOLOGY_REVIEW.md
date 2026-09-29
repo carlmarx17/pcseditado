@@ -42,6 +42,24 @@ products with v6 and running the isotropic controls.
    case the realisation-to-realisation spread is unknown, and no difference
    between distributions is established yet.
 
+## Resolution of the maintained cases
+
+All analysis profiles in `psc_units.py` match their case files and job
+scripts (`test_profiles.py` enforces it). With the Yee CFL dt = 0.95 dx/sqrt(2):
+
+| Family (grid, ppc) | dx/d_e | dx/lambda_De | rho_i/dx | omega_pe dt | Omega_ce dt | field Nyquist | duration |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Mirror, firehose (576^2 or 1152^2 at 40 d_i, 1000) | 0.49 | 8.7 | 20–79 | 0.33 | 0.026 | 48 Omega_ci | 158 Omega_ci^-1 |
+| Whistler production (1152^2, 2000) | 0.25 | 6.1 | 41 | 0.17 | 0.013 | 2.4 Omega_ce | 2.6–20 Omega_ci^-1 |
+| Whistler mi/me = 800 (2304^2, 2000) | 0.25 | 6.1 | 82 | 0.17 | 0.013 | 2.4 Omega_ce | 0.7 Omega_ci^-1 |
+| `whistler_bikappa3_moderate` (576^2, 1000; old settings) | 0.49 | 12.3 | 20 | 0.33 | 0.026 | 1.2 Omega_ce | 10.6 Omega_ci^-1 |
+
+Ion and electron inertial scales, the time step and the output cadence are
+adequate for the physics studied. The Debye length is not resolved anywhere
+(dx/lambda_De = 6–12), which is the leading candidate for the electron heating.
+`whistler_bikappa3_moderate` is not yet the twin of the production moderate
+whistler run.
+
 ## 2. Method by method
 
 Importance: **A** = a paper conclusion rests on it; **B** = supporting evidence

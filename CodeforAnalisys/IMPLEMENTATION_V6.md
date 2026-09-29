@@ -169,6 +169,13 @@ both are environment overrides of the existing executable. A second-order shape
 - Known-answer tests: exact closure recovered, wrong control rejected,
   same-distribution preference, explicit pairing.
 
+- Analysis profiles `mirror_*_isotropic` added to `psc_units.py`. All 28
+  profiles of maintained cases were checked against their case files and job
+  scripts (beta, A, kappa, box, mi/me, grid, ppc, nmax, cadences) and match;
+  `test_profiles.py` now enforces it. A synthetic control run goes through the
+  pipeline and is paired automatically; a control that loses as much ion energy
+  as its run leaves nothing to close and is reported UNVERIFIED, not FAIL.
+
 ### Publication review of the figures
 
 - Automatic layout checks at every save: overlapping text of any kind, crowded
@@ -211,6 +218,6 @@ up to half of the perpendicular pressure by the end because of the numerical
 heating; the 20 d_i box samples only k rho_i = 0.70, 1.40, 2.11; a single
 realisation per case cannot yet establish a distribution effect.
 
-Verification: 176 tests and 14 subtests pass without warnings; the full
+Verification: 205 tests and 14 subtests pass without warnings; the full
 pipeline on the synthetic run writes 147 figures with 0 content or layout
 findings; no unused imports remain; the COSMA job was rerun locally end to end.

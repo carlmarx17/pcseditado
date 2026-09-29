@@ -376,9 +376,16 @@ def subtract_control(run: dict, control: dict, match: dict) -> dict:
     last = np.flatnonzero(ok)[-1]
     release = -float(d["E_i"][last]) if run.get("driven_species", "ion") == "ion" else -float(d["E_e"][last])
     error = float(d["E_total"][last])
-    ratio = abs(error) / release if release > 0 else float("inf")
-    status = _closure_status(ratio)
     e0 = float(gs["E_total"][0])
+    if release <= 1e-6 * abs(e0):
+        # The control lost as much driver energy as the run: after the
+        # subtraction there is no instability signal left to close.
+        out.update(status="UNVERIFIED", reason=(
+            f"Baseline-corrected with {control['run']}: no net ion energy release left "
+            "after subtracting the control, nothing to close"))
+        return out
+    ratio = abs(error) / release
+    status = _closure_status(ratio)
     out["global"] = {
         "coverage": cover, "t_end_omegaci": float(t[last]),
         "driver_release_corrected": release, "residual_total_change": error,

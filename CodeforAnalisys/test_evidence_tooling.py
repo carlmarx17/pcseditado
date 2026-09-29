@@ -367,3 +367,12 @@ def test_power_law_fit_recovers_a_cascade_and_refuses_noise():
     assert not fit(analyzer, k, noise)["accepted"]
     rising = np.where(k < 0.3, 1.0, 1e-6 * k ** 2.8)          # the noise tail of the old figure
     assert not fit(analyzer, k, rising)["accepted"]
+
+
+def test_control_with_the_same_ion_loss_leaves_nothing_to_close(tmp_path):
+    audits = [energy_audit.audit_run(fake_run(tmp_path / "run", electron_gain=2000.0, ion_loss=400.0)),
+              energy_audit.audit_run(fake_run(tmp_path / "ctrl", electron_gain=2000.0, ion_loss=400.0,
+                                              a_i=1.0, beta_i=25 / 3))]
+    energy_audit.pair_controls(audits)
+    assert audits[0]["baseline"]["status"] == "UNVERIFIED"
+    assert "no net ion energy release" in audits[0]["baseline"]["reason"]
