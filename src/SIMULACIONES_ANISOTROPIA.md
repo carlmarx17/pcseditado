@@ -146,15 +146,32 @@ distribution twin of a mirror-moderate run with `A_i = 1` and the same ion
 thermal energy, `beta_i_par (1/2 + A_i) = 12.5`, hence `beta_i_par = 25/3`:
 mirror stable, identical numerics and electrons. Its electron heating is the
 baseline that `energy_audit.py --control` subtracts from the anisotropic run.
-Run them with the production settings of their twins (`PSC_ENERGIES_EVERY=500`
-so that `diag.asc` exists), with the job scripts
+The heating is a local property of dx, dt and ppc, so each control runs in a
+10 d_i box at 288×288 (`PSC_DOMAIN_DI 10.0` in the case, `PSC_NGRID=288` in the
+job): exactly the twins' dx = 0.0347 d_i, dt and 1000 ppc, a quarter of the
+cells, compared per unit volume. Run them with the twins' cadence
+(`PSC_ENERGIES_EVERY=500` so that `diag.asc` exists), with the job scripts
 `cosma_jobs/simulacion/sim_mirror_*_isotropic.sh`.
 
-| Executable | File | κ | beta_i_par | A_i | beta_e_par | A_e | Grid | Control of |
+| Executable | File | κ | beta_i_par | A_i | beta_e_par | A_e | Grid (box) | Control of |
 |---|---|---|---:|---:|---:|---:|---:|---|
-| `psc_mirror_bimaxwellian_isotropic` | `psc_mirror_bimaxwellian_isotropic.cxx` | ∞ | 25/3 | 1.0 | 1.0 | 1.0 | 576×576 | `psc_mirror_bimaxwellian_moderate` |
-| `psc_mirror_bikappa5_isotropic` | `psc_mirror_bikappa5_isotropic.cxx` | 5 | 25/3 | 1.0 | 1.0 | 1.0 | 576×576 | `psc_mirror_bikappa5_moderate` |
-| `psc_mirror_bikappa3_isotropic` | `psc_mirror_bikappa3_isotropic.cxx` | 3 | 25/3 | 1.0 | 1.0 | 1.0 | 576×576 | `psc_mirror_bikappa3_moderate` |
+| `psc_mirror_bimaxwellian_isotropic` | `psc_mirror_bimaxwellian_isotropic.cxx` | ∞ | 25/3 | 1.0 | 1.0 | 1.0 | 288×288 (10 d_i) | `psc_mirror_bimaxwellian_moderate` |
+| `psc_mirror_bikappa5_isotropic` | `psc_mirror_bikappa5_isotropic.cxx` | 5 | 25/3 | 1.0 | 1.0 | 1.0 | 288×288 (10 d_i) | `psc_mirror_bikappa5_moderate` |
+| `psc_mirror_bikappa3_isotropic` | `psc_mirror_bikappa3_isotropic.cxx` | 3 | 25/3 | 1.0 | 1.0 | 1.0 | 288×288 (10 d_i) | `psc_mirror_bikappa3_moderate` |
+
+## Resolution test of the mirror case
+
+Two short variants of `psc_mirror_bimaxwellian_moderate` (same executable, env
+overrides only, run to t Omega_ci ~ 41, production cadence in physical time):
+
+| Job script | Change | dx/lambda_De | Steps | Expected if the heating is |
+|---|---|---:|---:|---|
+| `sim_mirror_bimaxwellian_moderate_res_ppc4000.sh` | `PSC_NICELL=4000` | 8.7 | 310 000 | particle noise: ~4x lower |
+| `sim_mirror_bimaxwellian_moderate_res_ngrid1152.sh` | `PSC_NGRID=1152` (dt/2) | 4.3 | 620 000 | finite-grid: much lower |
+
+Each writes `analysis_config.json` with the values it ran with;
+`cosma_jobs/analisis/analisis_resolution_mirror.sh` analyses both against the
+production run (heating at a common time, gamma and the convergence table).
 
 ## Outputs
 

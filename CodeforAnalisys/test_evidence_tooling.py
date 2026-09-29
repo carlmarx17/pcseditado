@@ -34,17 +34,17 @@ def write_csv(path, rows):
 
 
 def fake_run(root, kappa=None, electron_gain=0.0, ion_loss=0.0, swap=False, global_diag=True,
-             growth_series="mode", a_i=2.0, beta_i=5.0, grid=(576, 576)):
+             growth_series="mode", a_i=2.0, beta_i=5.0, grid=(576, 576), dx_de=None, volume=80000.0):
     """Result tree with DiagEnergies and window tables of a prescribed budget."""
     root.mkdir(parents=True)
-    physics = {**PHYSICS, "kappa": kappa, "A_i": a_i, "beta_i_parallel": beta_i, "grid": list(grid)}
+    physics = {**PHYSICS, "kappa": kappa, "A_i": a_i, "beta_i_parallel": beta_i, "grid": list(grid),
+               "dx_de": dx_de or PHYSICS["dx_de"], "domain_di": PHYSICS["domain_di"] * grid[0] / 576}
     (root / f"{root.name}_analysis_manifest.json").write_text(json.dumps(
         {"case": root.name, "driven_species": "ion", "physics": physics}))
     phys = root / "09_physical_diagnostics"
     b0sq_half = PHYSICS["B0"] ** 2 / 2
     t = np.linspace(0, 100, 21)
     s = t / t[-1]
-    volume = 80000.0
     if global_diag:
         e_i_ratio = beta_i * (0.5 + a_i)
         e_b, e_i0, e_e0 = b0sq_half * volume, e_i_ratio * b0sq_half * volume, 1.5 * b0sq_half * volume
@@ -332,12 +332,13 @@ def test_control_prefers_the_same_distribution_and_the_same_numerics(tmp_path):
     run = energy_audit.audit_run(fake_run(tmp_path / "k3", kappa=3.0, electron_gain=2300.0, ion_loss=400.0))
     candidates = [energy_audit.audit_run(control(tmp_path, "c_maxw")),
                   energy_audit.audit_run(control(tmp_path, "c_k3", kappa=3.0)),
-                  energy_audit.audit_run(control(tmp_path, "c_k3_coarse", kappa=3.0, grid=(288, 288)))]
+                  energy_audit.audit_run(control(tmp_path, "c_k3_coarse", kappa=3.0,
+                                                 dx_de=2 * PHYSICS["dx_de"]))]
     energy_audit.pair_controls([run, *candidates])
     assert run["baseline"]["control"] == "c_k3" and run["baseline"]["match"]["same_distribution"]
     lone = energy_audit.audit_run(fake_run(tmp_path / "maxw", electron_gain=2300.0, ion_loss=400.0))
     energy_audit.pair_controls([lone, candidates[2]])
-    assert "baseline" not in lone                            # different grid: not a control of it
+    assert "baseline" not in lone                            # different dx: not a control of it
     energy_audit.pair_controls([lone, candidates[1]], {"maxw": "c_k3"})
     assert lone["baseline"]["control"] == "c_k3" and not lone["baseline"]["match"]["same_distribution"]
     assert "another distribution" in lone["baseline"]["reason"]
@@ -376,3 +377,15 @@ def test_control_with_the_same_ion_loss_leaves_nothing_to_close(tmp_path):
     energy_audit.pair_controls(audits)
     assert audits[0]["baseline"]["status"] == "UNVERIFIED"
     assert "no net ion energy release" in audits[0]["baseline"]["reason"]
+
+
+def test_smaller_control_box_is_compared_per_unit_volume(tmp_path):
+    """A 10 d_i control (a quarter of the volume, same dx) heats per volume as its twin."""
+    run = fake_run(tmp_path / "run", electron_gain=2380.0, ion_loss=400.0)
+    small = control(tmp_path, "ctrl", gain=2000.0 / 4, grid=(288, 288), volume=80000.0 / 4)
+    audits = [energy_audit.audit_run(run), energy_audit.audit_run(small)]
+    energy_audit.pair_controls(audits)
+    b = audits[0]["baseline"]
+    assert b["volume_ratio_run_over_control"] == pytest.approx(4.0)
+    assert b["global"]["residual_over_driver_release"] == pytest.approx(20 / 400)
+    assert b["status"] == "PASS"

@@ -19,7 +19,11 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFINE = re.compile(r"#define (PSC_\w+)\s+(\S+)")
 HEADER = dict(DEFINE.findall((ROOT / "src" / "psc_anisotropy_case.hxx").read_text()))
 JOBS = {}
+# Resolution-test variants (*_res_*.sh) run a production executable with other
+# numerics on purpose; the profile describes the production job.
 for script in (ROOT / "cosma_jobs" / "simulacion").glob("*.sh"):
+    if "_res_" in script.name:
+        continue
     text = script.read_text()
     target = re.search(r"^PSC_TARGET=(\S+)", text, re.M)
     if target:

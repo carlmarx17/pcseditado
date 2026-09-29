@@ -411,7 +411,8 @@ _PROFILES = {
         "driven_species": "ion",
     },
     # Isotropic control of the moderate twin: A_i = 1 with the same ion
-    # thermal energy, beta_i_par (1/2 + A_i) = 12.5 -> beta_i_par = 25/3.
+    # thermal energy, beta_i_par (1/2 + A_i) = 12.5 -> beta_i_par = 25/3,
+    # in a 10 d_i box at 288 cells: the twin's dx, dt and ppc.
     "mirror_bimaxwellian_isotropic": {
         "label": "Mirror Isotropic Control Bi-Maxwellian",
         "mass_ratio": 200.0,
@@ -421,8 +422,8 @@ _PROFILES = {
         "beta_e_par": 1.0,
         "Te_perp_over_Te_par": 1.0,
         "kappa": None,
-        "domain_di": 20.0,
-        "ngrid": 576,
+        "domain_di": 10.0,
+        "ngrid": 288,
         "nmax": 1_200_000,
         "nicell": 1000,
         "particle_basename": "prt_mirror_bimaxwellian_isotropic",
@@ -430,7 +431,8 @@ _PROFILES = {
         "driven_species": "ion",
     },
     # Isotropic control of the moderate twin: A_i = 1 with the same ion
-    # thermal energy, beta_i_par (1/2 + A_i) = 12.5 -> beta_i_par = 25/3.
+    # thermal energy, beta_i_par (1/2 + A_i) = 12.5 -> beta_i_par = 25/3,
+    # in a 10 d_i box at 288 cells: the twin's dx, dt and ppc.
     "mirror_bikappa5_isotropic": {
         "label": "Mirror Isotropic Control Bi-Kappa 5",
         "mass_ratio": 200.0,
@@ -440,8 +442,8 @@ _PROFILES = {
         "beta_e_par": 1.0,
         "Te_perp_over_Te_par": 1.0,
         "kappa": 5.0,
-        "domain_di": 20.0,
-        "ngrid": 576,
+        "domain_di": 10.0,
+        "ngrid": 288,
         "nmax": 1_200_000,
         "nicell": 1000,
         "particle_basename": "prt_mirror_bikappa5_isotropic",
@@ -449,7 +451,8 @@ _PROFILES = {
         "driven_species": "ion",
     },
     # Isotropic control of the moderate twin: A_i = 1 with the same ion
-    # thermal energy, beta_i_par (1/2 + A_i) = 12.5 -> beta_i_par = 25/3.
+    # thermal energy, beta_i_par (1/2 + A_i) = 12.5 -> beta_i_par = 25/3,
+    # in a 10 d_i box at 288 cells: the twin's dx, dt and ppc.
     "mirror_bikappa3_isotropic": {
         "label": "Mirror Isotropic Control Bi-Kappa 3",
         "mass_ratio": 200.0,
@@ -459,8 +462,8 @@ _PROFILES = {
         "beta_e_par": 1.0,
         "Te_perp_over_Te_par": 1.0,
         "kappa": 3.0,
-        "domain_di": 20.0,
-        "ngrid": 576,
+        "domain_di": 10.0,
+        "ngrid": 288,
         "nmax": 1_200_000,
         "nicell": 1000,
         "particle_basename": "prt_mirror_bikappa3_isotropic",

@@ -22,7 +22,8 @@ Repository root on COSMA: `/cosma7/data/dp433/dc-mart18/pcseditado`
 | `sim_firehose_bimaxwellian_strong_40di.sh` | Strong bi-Maxwellian firehose, big box — the **controlled twin** of the bi-Kappa-3 run | **40 d_i** | ngrid 1152 |
 | `sim_firehose_bikappa5_40di.sh` | Bi-Kappa-5 firehose, big box — third member of the strong firehose series | **40 d_i** | ngrid 1152 |
 | `sim_mirror_bikappa5_moderate.sh` | Moderate bi-Kappa-5 mirror — third member of the moderate mirror series | 20 d_i | ngrid 576 |
-| `sim_mirror_{bimaxwellian,bikappa5,bikappa3}_isotropic.sh` | **Isotropic controls** of the moderate mirror series (A_i = 1, same ion thermal energy, beta_i_par = 25/3): their electron heating is the numerical baseline subtracted by `energy_audit.py` | 20 d_i | ngrid 576 |
+| `sim_mirror_{bimaxwellian,bikappa5,bikappa3}_isotropic.sh` | **Isotropic controls** of the moderate mirror series (A_i = 1, same ion thermal energy, beta_i_par = 25/3, same dx/dt/ppc): their electron heating is the numerical baseline subtracted per unit volume by `energy_audit.py`; 10 nodes | **10 d_i** | ngrid 288 |
+| `sim_mirror_bimaxwellian_moderate_res_{ppc4000,ngrid1152}.sh` | **Resolution test** of the moderate bi-Maxwellian mirror to t Omega_ci ~ 41: 4x ppc, or dx/2 (dt/2); 83 nodes, ~22 h and ~43 h (estimated from the 1152² whistler jobs) | 20 d_i | ngrid 576 / 1152 |
 | `sim_whistler_bimaxwellian_{strong,moderate,weak}.sh` | Bi-Maxwellian whistler (Ae = 3.0 / 2.0 / 1.5); electron-scale cadence, each only until relaxation (~6 / ~20 / ~43 h on 83 nodes) | 20 d_i | **ngrid 1152**, 2000 ppc |
 | `sim_whistler_bikappa{3,5}_strong.sh` | Bi-Kappa whistler strong (κ = 3 / 5) — distribution twins of the bi-Maxwellian strong | 20 d_i | **ngrid 1152**, 2000 ppc |
 | `sim_whistler_{bimaxwellian,bikappa3,bikappa5}_strong_mr800.sh` | Whistler strong series with **mi/me = 800** (the batch to run); ~23 h on 83 nodes each | 20 d_i = 566 d_e | **ngrid 2304**, 2000 ppc |
@@ -63,8 +64,9 @@ resume from a checkpoint if 48 h are not enough.
 The three moderate mirror runs heat their electrons x8.3–8.6, isotropically
 and to within 3 % of each other, while their total energy is not conserved
 (`CodeforAnalisys/IMPLEMENTATION_V6.md`). Each control repeats its twin with
-`A_i = 1` and the same ion thermal energy (`beta_i_par = 25/3`): same grid,
-ppc, cadence, decomposition and electrons, but mirror stable. What its
+`A_i = 1` and the same ion thermal energy (`beta_i_par = 25/3`): same dx, dt,
+ppc, cadence and electrons in a 10 d_i box (288², a quarter of the cells, 10
+nodes), but mirror stable. What its
 electrons gain is the numerical baseline that `energy_audit.py` (and the v6
 evidence report) subtract from the anisotropic run. `PSC_ENERGIES_EVERY=500`
 is mandatory: the corrected closure uses `diag.asc`.
@@ -93,6 +95,27 @@ automatically by numerics, electrons and distribution):
 ```bash
 sbatch --export=ALL,EXTRA_RUNS="mirror_bimaxwellian_isotropic:psc_mirror_bimaxwellian_isotropic_<jobid> mirror_bikappa5_isotropic:psc_mirror_bikappa5_isotropic_<jobid> mirror_bikappa3_isotropic:psc_mirror_bikappa3_isotropic_<jobid>" cosma_jobs/analisis/reanalysis_v6_all.sh
 ```
+
+### Resolution test of the moderate mirror (what drives the heating)
+
+```bash
+sbatch cosma_jobs/simulacion/sim_mirror_bimaxwellian_moderate_res_ppc4000.sh
+```
+
+```bash
+sbatch cosma_jobs/simulacion/sim_mirror_bimaxwellian_moderate_res_ngrid1152.sh
+```
+
+Both use the production executable (no new build) and stop at t Omega_ci ~ 41.
+After `reanalysis_v6_all.sh` has analysed the production run:
+
+```bash
+sbatch --export=ALL,PPC_RUN=psc_mirror_bimaxwellian_moderate_res_ppc4000_<jobid>,GRID_RUN=psc_mirror_bimaxwellian_moderate_res_ngrid1152_<jobid> cosma_jobs/analisis/analisis_resolution_mirror.sh
+```
+
+`analysis_results/v6_resolution/energy_audit/energy_audit_common_time.csv`:
+heating ~4x lower with 4x ppc -> particle noise; much lower with dx/2 ->
+finite-grid heating.
 
 ### Whistler strong series with mi/me = 800 (batch to run)
 | `sim_whistler_bikappa3_moderate.sh` | Moderate bi-Kappa-3 whistler — **still at the old 576², 1000 ppc, 80 000-step settings**: it is not the distribution twin of the production moderate run (1152², 2000 ppc, 140 000 steps) until its settings are aligned | 20 d_i | ngrid 576 |

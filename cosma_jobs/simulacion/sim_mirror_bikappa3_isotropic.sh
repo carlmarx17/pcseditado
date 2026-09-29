@@ -5,8 +5,8 @@
 #
 #  Isotropic control of psc_mirror_bikappa3_moderate: bi-kappa (kappa=3),
 #  A_i = 1 with the same ion thermal energy (beta_i_parallel = 25/3),
-#  beta_e_parallel = 1, mass_ratio = 200, grid 576x576, 1000 ppc -- the
-#  numerics, cadence and decomposition of its twin. It is mirror stable,
+#  beta_e_parallel = 1, mass_ratio = 200, 1000 ppc, in a 10 d_i box at
+#  288x288: the twin's dx, dt, ppc and cadence with a quarter of the cells. It is mirror stable,
 #  so the heating of its electrons is the numerical heating of the setup,
 #  which CodeforAnalisys/energy_audit.py subtracts from the anisotropic
 #  run. PSC_ENERGIES_EVERY=500 is required: the subtraction uses diag.asc.
@@ -28,9 +28,9 @@
 #SBATCH --job-name=psc_mirror_bikappa3_iso
 #SBATCH --partition=cosma7-rp
 #SBATCH --account=dp433
-#SBATCH --nodes=37
+#SBATCH --nodes=10
 #SBATCH --ntasks-per-node=28
-#SBATCH --ntasks=1024
+#SBATCH --ntasks=256
 #SBATCH --time=48:00:00
 #SBATCH --output=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.out
 #SBATCH --error=/cosma7/data/dp433/dc-mart18/anisotropy_adios2/%x_%j.err
@@ -50,12 +50,13 @@ PSC_TARGET=psc_mirror_bikappa3_isotropic
 RUN_TAG="${RUN_TAG:-$SLURM_JOB_ID}"
 RUN_DIR="$RUN_ROOT/${PSC_TARGET}_${RUN_TAG}"
 
-# Resolution and cadence of psc_mirror_bikappa3_moderate; do not change one
-# without the other, or the control no longer measures the twin's heating.
-PSC_NGRID="${PSC_NGRID:-576}"
+# dx, dt, ppc and cadence of psc_mirror_bikappa3_moderate (10 d_i / 288 =
+# 20 d_i / 576); do not change one without the other, or the control no longer
+# measures the twin's heating. 16x16 patches of 18x18 cells on 256 ranks.
+PSC_NGRID="${PSC_NGRID:-288}"
 PSC_NICELL="${PSC_NICELL:-1000}"
-PSC_NP_Y="${PSC_NP_Y:-32}"
-PSC_NP_Z="${PSC_NP_Z:-32}"
+PSC_NP_Y="${PSC_NP_Y:-16}"
+PSC_NP_Z="${PSC_NP_Z:-16}"
 PSC_CHECKPOINT_EVERY="${PSC_CHECKPOINT_EVERY:-150000}"
 PSC_ENERGIES_EVERY="${PSC_ENERGIES_EVERY:-500}"
 PSC_LAUNCHER="${PSC_LAUNCHER:-mpirun}"

@@ -122,7 +122,7 @@ Excepciones documentadas, solo en setup A:
 
 | Define | Cuándo |
 |---|---|
-| `PSC_DOMAIN_DI` | **solo** en variantes `*_bigbox40`, con valor `40.0` |
+| `PSC_DOMAIN_DI` | **solo** en variantes `*_bigbox40`, con valor `40.0`, y en los controles `psc_mirror_*_isotropic`, con valor `10.0` y corridos con `PSC_NGRID=288` (mismo dx y dt que sus gemelos; decision del 2026-09-29: el calentamiento numerico es local y la caja chica cuesta 1/4) |
 | `PSC_MASS_RATIO` | **solo** en variantes `*_mr<N>`, con valor `N` (hoy: `*_mr800`, serie whistler strong) |
 
 `PSC_DOMAIN_DI` y `PSC_MASS_RATIO` son las únicas excepciones porque ninguno

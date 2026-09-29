@@ -221,3 +221,20 @@ realisation per case cannot yet establish a distribution effect.
 Verification: 205 tests and 14 subtests pass without warnings; the full
 pipeline on the synthetic run writes 147 figures with 0 content or layout
 findings; no unused imports remain; the COSMA job was rerun locally end to end.
+
+## Follow-up 3 (2026-09-29): smaller control box and resolution test
+
+- The isotropic controls now run in a 10 d_i box at 288² (`PSC_DOMAIN_DI 10.0`,
+  `PSC_NGRID=288`, 256 ranks on 10 nodes): the twins' dx, dt, ppc and cadence
+  with a quarter of the cells. The energy audit pairs controls by dx, ppc and
+  electrons rather than by box, and subtracts their energy changes per unit
+  volume (ratio of E_B(0)); known-answer test with a quarter-volume control.
+  The case-integrity rule for `PSC_DOMAIN_DI` records the exception.
+- Resolution test of `psc_mirror_bimaxwellian_moderate` to t Omega_ci ~ 41:
+  `PSC_NICELL=4000` and `PSC_NGRID=1152` (dx/lambda_De 4.3, dt/2), same
+  executable, production cadence in physical time. Each job writes
+  `analysis_config.json`, which `run_pipeline.py` now uses automatically, so
+  the manifests carry the real ppc and dt (`runtime_verified`).
+  `analisis_resolution_mirror.sh` runs both variants, the energy audit with
+  labelled runs and a comparison at the last common time, and the convergence
+  table; the whole chain was run locally on synthetic variants.

@@ -146,6 +146,11 @@ def main():
         p.error('The parallel linear solver is not a mirror prediction; theory is only for parallel-propagating cases')
     data = a.data_dir.resolve(); out = (a.results_root / a.case).resolve()
     if not data.is_dir(): p.error('Data directory does not exist')
+    # A job that overrides grid, ppc, nmax or cadence writes the values it ran
+    # with next to the data (analysis_config.json); they replace the profile's.
+    runtime = data / 'analysis_config.json'
+    if runtime.is_file() and not os.environ.get('PSC_ANALYSIS_CONFIG'):
+        os.environ['PSC_ANALYSIS_CONFIG'] = str(runtime)
     prov = provenance()
     inputs = inventory_identity([x for x in data.iterdir() if x.suffix in ('.bp', '.h5', '.asc', '.out', '.log')])
     signature = {'source': prov['analysis_source_sha256'], 'input': inputs, 'case': a.case,

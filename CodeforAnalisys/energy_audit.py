@@ -39,9 +39,10 @@ Across runs that share every parameter except the velocity distribution, the
 spread of the electron heating tests whether it is common-mode (numerical
 setup) or depends on the distribution being compared.
 
-**Isotropic controls.** A run with A_i = A_e = 1 and the numerics and electrons
-of an anisotropic run (``psc_mirror_*_isotropic``) is stable, so everything its
-electrons gain is the numerical heating of that setup. Each anisotropic run is
+**Isotropic controls.** A run with A_i = A_e = 1 and the resolution, particles
+per cell and electrons of an anisotropic run (``psc_mirror_*_isotropic``, in a
+smaller box) is stable, so everything its electrons gain is the numerical
+heating of that setup; it is compared per unit volume. Each anisotropic run is
 paired with such a control, preferably of the same distribution and ion thermal
 energy, and the control's energy changes are subtracted on a common time axis
 (no extrapolation). This assumes the numerical heating is additive, i.e. not
@@ -88,9 +89,10 @@ WINDOW_GLOBAL_AGREEMENT = 0.1
 #: Parameters that must match for two runs to differ only in the distribution.
 SETUP_KEYS = ("mass_ratio", "B0", "beta_i_parallel", "A_i", "beta_e_parallel", "A_e",
               "domain_di", "grid", "nicell_from_profile", "dx_de")
-#: Parameters a control must share with the run it corrects: numerics and electrons.
-CONTROL_KEYS = ("mass_ratio", "B0", "beta_e_parallel", "A_e", "domain_di", "grid",
-                "nicell_from_profile", "dx_de")
+#: Parameters a control must share with the run it corrects: resolution (dx,
+#: hence dt), particles per cell and electrons. The box may differ: the heating
+#: is local, and a smaller control box is compared per unit volume.
+CONTROL_KEYS = ("mass_ratio", "B0", "beta_e_parallel", "A_e", "nicell_from_profile", "dx_de")
 ENERGY_COLUMNS = ("E_E", "E_B", "E_e", "E_i", "E_total")
 
 
@@ -237,12 +239,12 @@ def audit_window(rows: list[dict], p: dict) -> dict:
     }
 
 
-def audit_run(root) -> dict:
+def audit_run(root, name: str | None = None) -> dict:
     root = Path(root)
     phys = root / "09_physical_diagnostics"
     manifest = _manifest(root)
     p = manifest.get("physics", {})
-    base = {"run": root.name, "root": str(root.resolve()), "case": manifest.get("case"),
+    base = {"run": name or root.name, "root": str(root.resolve()), "case": manifest.get("case"),
             "kappa": p.get("kappa")}
     need = ("beta_i_parallel", "A_i", "beta_e_parallel", "A_e", "B0", "dx_de")
     if not all(isinstance(p.get(k), (int, float)) for k in need):
@@ -365,10 +367,15 @@ def subtract_control(run: dict, control: dict, match: dict) -> dict:
             f"Control {control['run']}: no DiagEnergies in both runs, so no baseline-corrected closure"))
         return out
     t = gs["omega_ci_t"]
+    # Per unit volume: B0 is uniform, so E_B(0) is proportional to the volume
+    # and rescales the control's changes to the run's box.
+    volume_ratio = float(gs["E_B"][0] / gc["E_B"][0])
+    out["volume_ratio_run_over_control"] = volume_ratio
     d = {}
     for k in ENERGY_COLUMNS:
         ctrl, cover = align_time(gc["omega_ci_t"], gc[k], t)
-        d[k] = (gs[k] - gs[k][0]) - (ctrl - ctrl[0]) if np.isfinite(ctrl[0]) else np.full_like(t, np.nan)
+        d[k] = ((gs[k] - gs[k][0]) - volume_ratio * (ctrl - ctrl[0]) if np.isfinite(ctrl[0])
+                else np.full_like(t, np.nan))
     ok = np.isfinite(d["E_total"])
     if ok.sum() < 2:
         out.update(status="UNVERIFIED", reason=f"Control {control['run']} does not overlap the run in time")
@@ -429,6 +436,16 @@ def _label(a: dict) -> str:
     return name + (" (isotropic control)" if a.get("role") == "isotropic_control" else "")
 
 
+def _labels(audits: list[dict]) -> dict[int, str]:
+    """Legend label per audit; runs of one distribution are told apart by name."""
+    base = {id(a): _label(a) for a in audits}
+    counts = {}
+    for text in base.values():
+        counts[text] = counts.get(text, 0) + 1
+    return {k: (f"{v} [{a['run']}]" if counts[v] > 1 else v)
+            for a in audits for k, v in [(id(a), base[id(a)])]}
+
+
 def plot(audits: list[dict], path: Path) -> None:
     import matplotlib
     matplotlib.use("Agg")
@@ -439,14 +456,20 @@ def plot(audits: list[dict], path: Path) -> None:
     with_global = [a for a in audits if (a.get("global") or {}).get("_series") and a.get("role") == "run"]
     ncol = 3 if with_global else 2
     fig, axes = plt.subplots(1, ncol, figsize=(5.2 * ncol, 4.6), constrained_layout=True)
+    names = _labels(audits)
+    styles = ["-", "--", "-.", ":"]
+    seen: dict[str, int] = {}
     for a in audits:
         s = (a.get("window") or {}).get("_series")
         if s is None:
             continue
         color = _color(a.get("kappa"))
-        style = "--" if a.get("role") == "isotropic_control" else "-"
-        axes[0].plot(s["omega_ci_t"], s["T_e_over_T_e0"], style, color=color, label=_label(a))
-        axes[1].plot(s["omega_ci_t"], s["dx_over_lambda_De"], style, color=color, label=_label(a))
+        # Runs of one distribution (resolution variants) share the colour and
+        # differ in line style; controls are dashed.
+        n = seen.get(_label(a), 0); seen[_label(a)] = n + 1
+        style = "--" if a.get("role") == "isotropic_control" else styles[n % len(styles)]
+        axes[0].plot(s["omega_ci_t"], s["T_e_over_T_e0"], style, color=color, label=names[id(a)])
+        axes[1].plot(s["omega_ci_t"], s["dx_over_lambda_De"], style, color=color, label=names[id(a)])
         end = (a.get("early_time") or {}).get("linear_phase_omegaci", [None, None])[1]
         value = (a.get("early_time") or {}).get("T_e_over_T_e0_at_end")
         if end is not None and value is not None and a.get("role") == "run":
@@ -594,6 +617,25 @@ def write_outputs(audits: list[dict], groups: list[dict], outdir: Path) -> None:
                 "baseline_residual_over_driver_release": bg.get("residual_over_driver_release"),
                 "baseline_corrected_total_relative_change": bg.get("corrected_total_relative_change"),
                 "reason": a.get("reason"), "baseline_reason": b.get("reason")})
+    # Runs of different length (production vs short resolution variants) are
+    # compared at the last time they all reach, never at their own ends.
+    ends = [float(s["omega_ci_t"][-1]) for s in
+            ((a.get("window") or {}).get("_series") for a in audits) if s is not None]
+    if len(ends) > 1:
+        common = min(ends)
+        with (outdir / "energy_audit_common_time.csv").open("w", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["run", "role", "kappa", "nicell", "dx_de", "common_omega_ci_t",
+                             "T_e_over_T_e0", "dx_over_lambda_De"])
+            for a in audits:
+                s = (a.get("window") or {}).get("_series")
+                if s is None:
+                    continue
+                setup = a.get("setup") or {}
+                writer.writerow([a["run"], a.get("role"), a.get("kappa"), setup.get("nicell_from_profile"),
+                                 setup.get("dx_de"), f"{common:.6g}",
+                                 f"{_interp(s['omega_ci_t'], s['T_e_over_T_e0'], common):.6g}",
+                                 f"{_interp(s['omega_ci_t'], s['dx_over_lambda_De'], common):.6g}"])
     with (outdir / "energy_audit_electron_heating.csv").open("w", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(["run", "role", "omega_ci_t", "T_e_over_T_e0", "dx_over_lambda_De", "beta_e",
@@ -625,7 +667,8 @@ def parse_controls(pairs: list[str]) -> dict[str, str]:
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[1],
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("runs", nargs="+", type=Path, help="Result directories of single runs, controls included")
+    p.add_argument("runs", nargs="+", help="Result directories of single runs, controls included, "
+                                           "optionally LABEL=DIR (e.g. ppc4000=.../mirror_bimaxwellian_moderate)")
     p.add_argument("--outdir", required=True, type=Path)
     p.add_argument("--control", action="append", default=[], metavar="RUN_NAME=CONTROL_NAME",
                    help="Pair a run with a control explicitly (directory names); by default every "
@@ -635,7 +678,14 @@ def main() -> int:
         explicit = parse_controls(a.control)
     except ValueError as exc:
         p.error(str(exc))
-    audits = [audit_run(r) for r in a.runs]
+    audits = []
+    for spec in a.runs:
+        label, sep, path = spec.partition("=")
+        if not sep:
+            label, path = None, spec
+        if not Path(path).is_dir():
+            p.error(f"Not a results directory: {path}")
+        audits.append(audit_run(path, label))
     try:
         pair_controls(audits, explicit)
     except ValueError as exc:
