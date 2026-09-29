@@ -92,9 +92,9 @@ output yet; the convergence, box-size and seed runs do not exist (the tool to
 evaluate them does); oblique theory (ALPS) is not installed; trajectory
 tracking for mu conservation is not instrumented in PSC; the whistler contour
 constants (0.21, 0.6) must be cited with the growth level of their source.
-Twelve C++ case headers still state 1024x1024 / 1500 ppc while the runs use
-576 / 1000 (comments only; reported by the parity checker, left for a
-separate change).
+The C++ case headers that stated 1024x1024 / 1500 ppc while the runs use
+576 / 1000 were corrected on 2026-09-29 (comments only; the parity checker
+reports no stale comment).
 
 ## Dictamen y alcance
 

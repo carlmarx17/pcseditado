@@ -68,10 +68,11 @@ import plot_style as ps
 ps.apply()
 
 import kappa_eff as ke
+from vdf_validation import mixture_tail_budget
 from data_reader import PICDataReader
 from psc_units import (
-    B0, DOMAIN_DE, DOMAIN_DI_Y, DOMAIN_DI_Z, DI, KAPPA, N_GRID_Y, N_GRID_Z,
-    PROFILE_LABEL, step_to_omegaci,
+    B0, DOMAIN_DE, DOMAIN_DI_Y, DOMAIN_DI_Z, KAPPA, N_GRID_Y, N_GRID_Z, PROFILE_LABEL,
+    VA, step_to_omegaci,
 )
 
 plt.rcParams.update({
@@ -125,7 +126,10 @@ def local_frame_velocities(part: dict, bfield: dict) -> dict:
 
     Returns v_par and the two perpendicular components (v_perp1, v_perp2) in an
     orthonormal basis tied to b = B/|B|, plus the global version (z as the
-    parallel axis) for comparison.
+    parallel axis) for comparison. PSC stores u = gamma v (c = 1); the
+    velocities are converted here, so every VDF of this module is f(v).
+    Temperatures m Var(v) differ from the initialisation's m Var(u) by
+    O(T/mc^2): negligible for ions, a few per cent for heated electrons.
     """
     iz, iy = part["iz"], part["iy"]
     bx = bfield["bx"][iz, iy]
@@ -149,7 +153,8 @@ def local_frame_velocities(part: dict, bfield: dict) -> dict:
     e1x, e1y, e1z = e1x / norm, e1y / norm, e1z / norm
     e2x, e2y, e2z = uy * e1z - uz * e1y, uz * e1x - ux * e1z, ux * e1y - uy * e1x
 
-    vx, vy, vz = part["px"], part["py"], part["pz"]
+    gamma = np.sqrt(1.0 + part["px"]**2 + part["py"]**2 + part["pz"]**2)
+    vx, vy, vz = part["px"] / gamma, part["py"] / gamma, part["pz"] / gamma
     return {
         "v_par": vx * ux + vy * uy + vz * uz,
         "v_perp1": vx * e1x + vy * e1y + vz * e1z,
@@ -314,8 +319,9 @@ def vdf_profiles(part: dict, vel: dict, groups: dict, nbins: int = 120) -> dict:
         idx = groups[name]["idx"]
         w = part["w"][idx]
         vperp = np.sqrt(vel["v_perp1"][idx]**2 + vel["v_perp2"][idx]**2)
-        h_par, _ = np.histogram(vel["v_par"][idx], bins=par_edges,
-                                weights=w, density=True)
+        # Normalised by the whole population, not by the plotted range.
+        h_par, _ = np.histogram(vel["v_par"][idx], bins=par_edges, weights=w)
+        h_par = h_par / (np.sum(w) * np.diff(par_edges))
         h_perp, _ = np.histogram(vperp, bins=perp_edges, weights=w)
         # f(v_perp) per unit area in the perpendicular plane
         area = np.pi * (perp_edges[1:]**2 - perp_edges[:-1]**2)
@@ -726,10 +732,11 @@ def plot_vdf2d_trapping(vdf2d: dict, b_ref_info: dict, step: int,
     if not present:
         return None
 
-    par_edges = vdf2d["v_par_edges"]
-    perp_edges = vdf2d["v_perp_edges"]
-    finite = np.concatenate([groups[g]["f"][np.isfinite(groups[g]["f"])]
-                             for g in present])
+    # Displayed in units of v_A; f is then a probability per v_A^3.
+    par_edges = np.asarray(vdf2d["v_par_edges"]) / VA
+    perp_edges = np.asarray(vdf2d["v_perp_edges"]) / VA
+    fields = {g: np.asarray(groups[g]["f"]) * VA**3 for g in present}
+    finite = np.concatenate([fields[g][np.isfinite(fields[g])] for g in present])
     if finite.size == 0:
         return None
     vmax = float(np.nanmax(finite))
@@ -751,7 +758,7 @@ def plot_vdf2d_trapping(vdf2d: dict, b_ref_info: dict, step: int,
     pcm = None
     for ax, name in zip(axes, present):
         g = groups[name]
-        pcm = ax.pcolormesh(par_edges, perp_edges, g["f"].T, cmap=cmap,
+        pcm = ax.pcolormesh(par_edges, perp_edges, fields[name].T, cmap=cmap,
                             norm=LogNorm(vmin=vmin, vmax=vmax), shading="auto")
 
         # the trapped wedge of the median b, with p16/p84 as dotted lines
@@ -775,17 +782,17 @@ def plot_vdf2d_trapping(vdf2d: dict, b_ref_info: dict, step: int,
                       "alpha": 0.85, "pad": 3.5})
         ax.set_xlim(par_edges[0], par_edges[-1])
         ax.set_ylim(0.0, perp_edges[-1])
-        ax.set_xlabel(r"$v_\parallel - \langle v_\parallel \rangle$ [code units]")
+        ax.set_xlabel(r"$(v_\parallel - \langle v_\parallel \rangle)/v_A$")
         ax.set_title(labels[name], fontsize=14)
-    axes[0].set_ylabel(r"$v_\perp$ [code units]")
+    axes[0].set_ylabel(r"$v_\perp/v_A$")
     axes[0].legend(loc="upper left", framealpha=0.9, fontsize=10.5)
 
     cb = fig.colorbar(pcm, ax=list(axes), pad=0.015, fraction=0.035)
-    cb.set_label(r"$f(v_\parallel, v_\perp)$  [phase-space density]", labelpad=4)
+    cb.set_label(r"$f(v_\parallel, v_\perp)$  [probability per $v_A^3$]", labelpad=4)
 
     fig.suptitle(
         rf"VDF and trapped domain — {PROFILE_LABEL}, step {step}, "
-        rf"$t \approx {toci:.1f}\,\Omega_{{ci}}^{{-1}}$,  "
+        rf"$t\Omega_{{ci}} = {toci:.1f}$,  "
         rf"$B_{{\rm ref}} = {b_ref_info['b_ref_over_B0']:.3f}\,B_0$"
         "\n" r"dotted: $b$ percentiles 16 / 84 within each population",
         y=1.06, fontsize=15)
@@ -811,7 +818,7 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
     """Snapshot of the saved region + per-macro-cell anisotropy + VDFs."""
     toci = step_to_omegaci(step)
     fig = plt.figure(figsize=(18.5, 12.0))
-    gs = fig.add_gridspec(2, 3, hspace=0.32, wspace=0.45)
+    gs = fig.add_gridspec(2, 3, hspace=0.32, wspace=0.6)
 
     z0, z1 = window["z_di"]
     y0, y1 = window["y_di"]
@@ -820,14 +827,13 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
     ax = fig.add_subplot(gs[0, 0])
     db = bfield["delta_b_over_b0"]
     lim = float(np.percentile(np.abs(db), 99))
-    im = ax.imshow(db.T, origin="lower", cmap="RdBu_r", vmin=-lim, vmax=lim,
+    im = ax.imshow(db.T, origin="lower", cmap=ps.CMAP_DIVERGING, vmin=-lim, vmax=lim,
                    aspect="equal", extent=[0, DOMAIN_DI_Z, 0, DOMAIN_DI_Y])
     ax.add_patch(Rectangle((z0, y0), z1 - z0, y1 - y0, fill=False,
                            edgecolor=ps.c("#00ff00"), lw=2.4, ls="--"))
     cb = fig.colorbar(im, ax=ax, pad=0.02)
     cb.set_label(r"$\delta |B| / B_0$", labelpad=2)
-    ax.set_xlabel(r"$Z\ [d_i]$  ($\parallel B_0$)")
-    ax.set_ylabel(r"$Y\ [d_i]$")
+    ps.spatial_axes(ax)
     ax.set_title("Full domain\n(green = prt window)")
 
     # (b) zoom into the prt window, same quantity
@@ -836,7 +842,7 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
     iy0, iy1 = window["cells_y"]
     db_win = db[iz0:iz1, iy0:iy1]
     lim_w = float(np.percentile(np.abs(db_win), 99))
-    im = ax.imshow(db_win.T, origin="lower", cmap="RdBu_r",
+    im = ax.imshow(db_win.T, origin="lower", cmap=ps.CMAP_DIVERGING,
                    vmin=-lim_w, vmax=lim_w, aspect="equal",
                    extent=[z0, z1, y0, y1])
     cb = fig.colorbar(im, ax=ax, pad=0.02)
@@ -845,8 +851,7 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
         ax.axvline(e * DOMAIN_DI_Z / N_GRID_Z, color="k", lw=0.4, alpha=0.35)
     for e in mac["edges_y"]:
         ax.axhline(e * DOMAIN_DI_Y / N_GRID_Y, color="k", lw=0.4, alpha=0.35)
-    ax.set_xlabel(r"$Z\ [d_i]$")
-    ax.set_ylabel(r"$Y\ [d_i]$")
+    ps.spatial_axes(ax, parallel_note=False)
     ax.set_title("prt window: what is saved\n(grid = macro-cells)")
 
     # (c) anisotropy per macro-cell, from the particles.
@@ -862,7 +867,7 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
         observed = float(np.nanstd(a))
         span = 3.0 * sigma if np.isfinite(sigma) and sigma > 0 else \
             (float(np.nanstd(a)) or 0.1)
-        im = ax.imshow(a.T, origin="lower", cmap="viridis", aspect="equal",
+        im = ax.imshow(a.T, origin="lower", cmap=ps.CMAP_SEQUENTIAL, aspect="equal",
                        extent=[z0, z1, y0, y1],
                        vmin=amid - span, vmax=amid + span)
         cb = fig.colorbar(im, ax=ax, pad=0.02)
@@ -873,8 +878,11 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
                      rf"spread/noise = {ratio:.1f}", fontsize=14)
     else:
         ax.set_title(r"$A$ per macro-cell ($\hat{b}$ frame)", fontsize=14)
-    ax.set_xlabel(r"$Z\ [d_i]$")
-    ax.set_ylabel(r"$Y\ [d_i]$")
+        ax.text(0.5, 0.5, "no macro-cell holds the 200 particles\nneeded for a noise-limited $A$",
+                transform=ax.transAxes, ha="center", va="center", fontsize=11, color=ps.MUTED_CLR)
+        ax.set_xlim(z0, z1)
+        ax.set_ylim(y0, y1)
+    ps.spatial_axes(ax, parallel_note=False)
 
     # (d) f(v_par) per population
     ax = fig.add_subplot(gs[1, 0])
@@ -885,10 +893,10 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
         for name, color in colors.items():
             key = f"{name}_par"
             if key in profiles:
-                ax.semilogy(profiles["v_par_centers"], profiles[key],
+                ax.semilogy(profiles["v_par_centers"] / VA, profiles[key] * VA,
                             color=color, lw=1.8, label=labels[name])
-    ax.set_xlabel(r"$v_\parallel$ [code units]")
-    ax.set_ylabel(r"$f(v_\parallel)$")
+    ax.set_xlabel(r"$v_\parallel/v_A$")
+    ax.set_ylabel(r"$f(v_\parallel)$  [per $v_A$]")
     ax.set_title(r"Parallel VDF conditioned on local $|B|$")
     ax.legend(framealpha=0.9)
 
@@ -898,10 +906,10 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
         for name, color in colors.items():
             key = f"{name}_perp"
             if key in profiles:
-                ax.semilogy(profiles["v_perp_centers"], profiles[key],
+                ax.semilogy(profiles["v_perp_centers"] / VA, profiles[key] * VA**2,
                             color=color, lw=1.8, label=labels[name])
-    ax.set_xlabel(r"$v_\perp$ [code units]")
-    ax.set_ylabel(r"$f(v_\perp)$")
+    ax.set_xlabel(r"$v_\perp/v_A$")
+    ax.set_ylabel(r"$f(v_\perp)$  [per $v_A^2$ of the $\perp$ plane]")
     ax.set_title(r"Perpendicular VDF conditioned on local $|B|$")
     ax.legend(framealpha=0.9)
 
@@ -909,7 +917,7 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
     ax = fig.add_subplot(gs[1, 2])
     ax.axis("off")
     lines = [f"{PROFILE_LABEL}", f"step {step}   " +
-             rf"$t \approx {toci:.1f}\,\Omega_{{ci}}^{{-1}}$", ""]
+             rf"$t\Omega_{{ci}} = {toci:.1f}$", ""]
     thr = groups.get("thresholds", {})
     if thr:
         lines.append(rf"cut: percentile {thr['percentile']:.0f} / "
@@ -946,7 +954,7 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
 
     fig.suptitle(
         rf"Spatially resolved VDF — {PROFILE_LABEL}, step {step}, "
-        rf"$t \approx {toci:.1f}\,\Omega_{{ci}}^{{-1}}$", y=0.98)
+        rf"$t\Omega_{{ci}} = {toci:.1f}$", y=0.98)
     out = outdir / f"{prefix}vdf_spatial_step{step:09d}.png"
     ps.save(fig, out)
     plt.close(fig)
@@ -994,6 +1002,17 @@ def summary_rows(groups: dict, mac: dict, step: int) -> list[dict]:
     mac_noise = (float(np.nanmedian(mac["A"])) *
                  anisotropy_noise_floor(typical_n)) if typical_n else float("nan")
 
+    # Spatial-mixture control of the window tail: only the whole-window
+    # population averages the macro-cells that the map resolves.
+    whole = groups.get("all") or {}
+    mixture = mixture_tail_budget(mac["T_parallel"], mac["T_perp"], mac["count"],
+                                  whole.get("kappa_eff", float("nan")),
+                                  whole.get("T_parallel", float("nan")),
+                                  whole.get("T_perp", float("nan")),
+                                  kappa_upper=whole.get("kappa_eff", np.nan) + 2 * whole.get("kappa_err", np.inf)
+                                  ) if whole else {}
+    mixture_keys = ("kappa_mixture", "mixture_fraction_of_tail", "mixture_verdict")
+
     rows = []
     for name in ("hole", "ambient", "peak", "all"):
         g = groups.get(name)
@@ -1022,6 +1041,8 @@ def summary_rows(groups: dict, mac: dict, step: int) -> list[dict]:
             "A_macrocell_noise": mac_noise,
             "A_macrocell_p10": float(np.nanpercentile(mac["A"], 10)),
             "A_macrocell_p90": float(np.nanpercentile(mac["A"], 90)),
+            **{k: (mixture.get(k, float("nan")) if name == "all" else float("nan"))
+               for k in mixture_keys},
         })
     return rows
 

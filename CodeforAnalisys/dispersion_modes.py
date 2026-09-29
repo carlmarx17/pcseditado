@@ -232,5 +232,5 @@ def plot_mode_fit(result, output):
                      rf"$|k_\perp|d_i={m['k_perp_d_i']:.3g}$", fontsize=14)
     axes[0].set_ylabel("Amplitude / maximum")
     axes[1].set_ylabel("Unwrapped phase [rad]")
-    axes[1].set_xlabel(r"$\Omega_{ci}t$")
+    axes[1].set_xlabel(r"$t\Omega_{ci}$")
     ps.save(fig, output)

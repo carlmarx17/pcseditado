@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
+from analysis_contract import strict_dumps, align_time, atomic_json
 from pathlib import Path
 
 import matplotlib
@@ -133,6 +133,8 @@ def main() -> int:
     p.add_argument("--moments", default=None)
     p.add_argument("--energy", nargs="*", default=None,
                    help="diag*.asc files for the consistency check (default: DATA_DIR/diag*.asc)")
+    p.add_argument("--time-tolerance-code", type=float, default=0.0,
+                   help="Verified diagnostic time-rounding tolerance; default 0 (no endpoint snapping)")
     p.add_argument("--outdir", default="physical_diagnostics")
     args = p.parse_args()
 
@@ -168,21 +170,38 @@ def main() -> int:
     diag = diag_energy_per_volume(energy_paths)
     summary = {"snapshots": len(rows), "cadence_steps": int(np.median(np.diff(steps))),
                "diag_available": diag is not None}
+    summary.update({"scientific_status": "UNVERIFIED", "reason": "No closure tolerance or temporal-staggering validation supplied",
+                    "current_convention": "deposited current when available; otherwise q<p>/m (u approximation)",
+                    "time_source": "step * resolved DT_CODE"})
     if diag is not None:
         for suffix in ("i", "e"):
-            dk = np.interp(t_code, diag["time_code"], diag[f"dK_{suffix}"], left=np.nan, right=np.nan)
-            for r, value in zip(rows, dk):
-                r[f"dK_diag_{suffix}"] = float(value)
-            w_end = rows[-1][f"W_total_{suffix}"]
-            summary[f"W_{suffix}_end"] = w_end
-            summary[f"dK_{suffix}_end_diag"] = float(dk[-1])
-            scale = max(abs(float(dk[-1])), abs(w_end), 1e-300)
-            summary[f"relative_mismatch_{suffix}"] = float(abs(w_end - dk[-1]) / scale)
+            dk, coverage = align_time(diag["time_code"], diag[f"dK_{suffix}"], t_code, args.time_tolerance_code)
+            work = np.array([r[f"W_total_{suffix}"] for r in rows])
+            ok = np.isfinite(dk) & np.isfinite(work)
+            # Match baselines at the first jointly supported time, including late-start series.
+            if ok.any():
+                first, last = np.flatnonzero(ok)[[0, -1]]
+                dk = dk - dk[first]
+                work = work - work[first]
+                residual = work - dk
+                scale = max(float(np.nanmax(np.abs(dk[ok]))), float(np.max(np.abs(work[ok]))), 1e-300)
+                summary.update({f"W_{suffix}_end": float(work[last]),
+                    f"dK_{suffix}_end_diag": float(dk[last]),
+                    f"relative_mismatch_{suffix}": float(abs(residual[last]) / scale),
+                    f"max_relative_closure_residual_{suffix}": float(np.max(np.abs(residual[ok])) / scale),
+                    f"closure_baseline_time_{suffix}": float(t_code[first])})
+                for r, value, res, common_work in zip(rows, dk, residual, work):
+                    r[f"W_common_{suffix}"] = float(common_work)
+                    r[f"dK_diag_{suffix}"] = float(value)
+                    r[f"closure_residual_{suffix}"] = float(res)
+            summary[f"time_alignment_{suffix}"] = coverage
         summary["volume_from_E_B0"] = diag["volume"]
+    else:
+        summary["reason"] = "Global energy diagnostic missing or invalid"
     write_csv(outdir / "energy_exchange_table.csv", rows)
-    (outdir / "energy_exchange_summary.json").write_text(json.dumps(summary, indent=2))
+    atomic_json(outdir / "energy_exchange_summary.json", summary)
     plot(rows, diag is not None, outdir)
-    print(json.dumps(summary, indent=2))
+    print(strict_dumps(summary, indent=2))
     return 0
 
 
@@ -191,8 +210,8 @@ def plot(rows: list[dict], with_diag: bool, outdir: Path):
     col = lambda k: np.array([r.get(k, np.nan) for r in rows], dtype=float)
     colors = {"i": ps.c("#ff7b72"), "e": ps.c("#58a6ff")}
 
-    fig, axes = plt.subplots(2, 1, figsize=(8.6, 7.2), sharex=True)
-    for ax, suffix in zip(axes, ("i", "e")):
+    fig, axes = plt.subplots(2, 1, figsize=(8.6, 7.2), sharex=True, layout="constrained")
+    for ax, suffix, name in zip(axes, ("i", "e"), ("(a) ions", "(b) electrons")):
         ax.plot(t, col(f"JE_{suffix}") / OMEGA_CI, "-", color=colors[suffix],
                 label=rf"$\langle J_{suffix}\cdot E\rangle$")
         ax.plot(t, col(f"JE_par_{suffix}") / OMEGA_CI, "--", color=ps.c("#56d364"),
@@ -200,17 +219,16 @@ def plot(rows: list[dict], with_diag: bool, outdir: Path):
         ax.plot(t, col(f"JE_perp_{suffix}") / OMEGA_CI, ":", color=ps.c("#d2a8ff"),
                 label=rf"$\langle J_{{\perp {suffix}}}\cdot E_\perp\rangle$")
         ax.axhline(0.0, color=ps.MUTED_CLR, lw=0.8)
-        ax.set_ylabel(r"rate $[\Omega_{ci}\ \times$ code energy density$]$")
-        ps.style_axes(ax)
+        ps.style_axes(ax, name)
         ps.legend(ax, fontsize=10)
     axes[-1].set_xlabel(r"$t\,\Omega_{ci}$")
-    axes[0].set_title(f"Field-particle energy transfer — {PROFILE_LABEL}", fontsize=13)
-    fig.tight_layout()
+    fig.supylabel(r"$\langle J_s\cdot E\rangle/\Omega_{ci}$  [code energy density]")
+    fig.suptitle(f"Field-particle energy transfer — {PROFILE_LABEL}", fontsize=13, fontweight="bold")
     ps.save(fig, outdir / "energy_exchange_rate.png")
 
     fig, ax = plt.subplots(figsize=(8.6, 5.2))
     for suffix, name in (("i", "ions"), ("e", "electrons")):
-        ax.plot(t, col(f"W_total_{suffix}"), "-", color=colors[suffix],
+        ax.plot(t, col(f"W_common_{suffix}" if f"W_common_{suffix}" in rows[0] else f"W_total_{suffix}"), "-", color=colors[suffix],
                 label=rf"$\int\langle J_{suffix}\cdot E\rangle dt$ ({name})")
         if with_diag:
             ax.plot(t, col(f"dK_diag_{suffix}"), "o", ms=3, mfc="none", color=colors[suffix],

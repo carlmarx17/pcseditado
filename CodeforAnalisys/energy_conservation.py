@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
+from analysis_contract import strict_dumps
 import warnings
 from pathlib import Path
 
@@ -96,6 +96,10 @@ def read_energy_segments(paths: list[Path]) -> tuple[list[dict], dict]:
         "max_error_over_exchanged": max_error / exchanged if exchanged > 0 else float("nan"),
         "energy_scope": "global domain, both species, electric and full magnetic field",
         "detrended": False,
+        "scientific_status": "UNVERIFIED",
+        "reason": "Measured drift; no independently justified energy tolerance supplied",
+        "species_columns": ["E_electron", "E_ion"],
+        "field_energy_factor": 0.5,
     }
     return rows, summary
 
@@ -107,7 +111,7 @@ def write_energy_analysis(paths: list[Path], outdir: Path) -> dict:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
-    (outdir / "global_energy_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (outdir / "global_energy_summary.json").write_text(strict_dumps(summary, indent=2), encoding="utf-8")
     time = [r["omega_ci_t"] for r in rows]
     e0 = rows[0]["E_total"]
     fig, axes = plt.subplots(2, 1, figsize=(8.4, 7.2), sharex=True)
@@ -130,12 +134,11 @@ def write_energy_analysis(paths: list[Path], outdir: Path) -> dict:
     axes[1].set_ylabel(r"$(E_{\rm tot}(t)-E_{\rm tot}(t_0))/E_{\rm tot}(t_0)$")
     axes[1].set_xlabel(r"$t\,\Omega_{ci}$")
     ratio = summary["max_error_over_exchanged"]
-    if np.isfinite(ratio):
-        axes[1].text(0.02, 0.9, rf"max $|\Delta E_{{\rm tot}}|$ / max exchanged = {ratio:.2g}",
-                     transform=axes[1].transAxes, fontsize=10, color=ps.TEXT_CLR, zorder=5,
-                     bbox={"facecolor": ps.LEGEND_BG, "edgecolor": ps.GRID_CLR, "alpha": 0.9})
     for ax in axes:
         ps.style_axes(ax)
+    # In the title, not in a box: a box inside the panel covers the curve.
+    axes[1].set_title("Total energy change" + (rf";  max $|\Delta E_{{\rm tot}}|$ / max exchanged = {ratio:.2g}"
+                                               if np.isfinite(ratio) else ""), fontsize=12)
     fig.tight_layout()
     ps.save(fig, outdir / "global_energy_conservation.png")
     return summary
@@ -147,7 +150,7 @@ def main() -> None:
     parser.add_argument("--outdir", type=Path, default=Path("physical_diagnostics"))
     args = parser.parse_args()
     summary = write_energy_analysis(args.files, args.outdir)
-    print(json.dumps(summary, indent=2))
+    print(strict_dumps(summary, indent=2))
 
 
 if __name__ == "__main__":

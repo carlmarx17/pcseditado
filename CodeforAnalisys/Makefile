@@ -124,13 +124,16 @@ all: analysis
 common: brazil fields particles spectral diamagnetic heatflux validate physics \
 	energy-if-present residuals structures energy-exchange estimators
 
-analysis: manifest common
+analysis: manifest
+	$(MAKE) common DATA_DIR="$(DATA_DIR)" CASE="$(CASE)" OUTPUT_DIR="$(OUTPUT_DIR)"
 
 # Everything a thesis chapter needs for one run, in dependency order: the
 # initial-condition check and manifest first, then the validation evidence
 # (energy, field residuals, estimators), then the physics.
-thesis: manifest energy-if-present residuals physics brazil spectral structures \
-	energy-exchange estimators heatflux particles validate diamagnetic fields
+thesis: manifest
+	$(MAKE) energy-if-present residuals DATA_DIR="$(DATA_DIR)" CASE="$(CASE)" OUTPUT_DIR="$(OUTPUT_DIR)"
+	$(MAKE) physics DATA_DIR="$(DATA_DIR)" CASE="$(CASE)" OUTPUT_DIR="$(OUTPUT_DIR)"
+	$(MAKE) brazil spectral structures energy-exchange estimators heatflux particles validate diamagnetic fields DATA_DIR="$(DATA_DIR)" CASE="$(CASE)" OUTPUT_DIR="$(OUTPUT_DIR)"
 	@echo "Thesis products for $(CASE) in $(abspath $(OUTPUT_DIR))"
 
 F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM W_S_bM W_M_bM W_W_bM:

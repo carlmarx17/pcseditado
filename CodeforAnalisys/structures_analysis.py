@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
+from analysis_contract import strict_dumps, magnetic_cell_centres_yz
 from pathlib import Path
 
 import matplotlib
@@ -47,6 +47,7 @@ import numpy as np
 from scipy import ndimage
 
 import plot_style as ps
+from structure_tracking import StructureTracker
 from data_reader import PICDataReader
 from plasma_physics import central_pressure_tensor, field_aligned_pressures
 from psc_units import (
@@ -62,6 +63,7 @@ def load_snapshot(field_file: str, moment_file: str | None) -> dict:
     data = PICDataReader.read_multiple_fields_3d(
         field_file, "jeh", ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"])
     snap = {c: PICDataReader.flatten_2d_slice(data[f"h{c}_fc/p0/3d"]).astype(float) for c in "xyz"}
+    snap["x"], snap["y"], snap["z"] = magnetic_cell_centres_yz(snap["x"], snap["y"], snap["z"])
     if moment_file is not None:
         for suffix, mass in (("i", M_ION), ("e", M_ELEC)):
             raw = PICDataReader.read_multiple_fields_3d(
@@ -144,19 +146,24 @@ def analyse(snap: dict, sigma_cells: float, threshold_sigma: float,
             min_amplitude: float, min_cells: int) -> tuple[dict, list[dict], dict]:
     smooth = lambda a: ndimage.gaussian_filter(a, sigma_cells, mode="wrap")
     bmag = np.sqrt(snap["x"] ** 2 + snap["y"] ** 2 + snap["z"] ** 2)
-    db = smooth(bmag) / abs(B0) - 1.0
+    db_b0 = smooth(bmag) / abs(B0) - 1.0
+    db = db_b0 - db_b0.mean()  # morphology about the instantaneous spatial background
     std = float(np.std(db))
     theta = max(threshold_sigma * std, min_amplitude)
     cell_di = DX_DE / DI
     catalog = []
-    maps = {"db": db, "theta": theta}
-    row = {"delta_B_mag_std": std, "threshold": theta,
+    maps = {"db": db, "db_b0": db_b0, "theta": theta}
+    row = {"mean_B_change_over_B0": float(db_b0.mean()),
+           "delta_B_parallel_std_over_B0": float(np.std(smooth(snap["z"])) / abs(B0)),
+           "structure_reference": "instantaneous domain mean |B|", "delta_B_mag_std": std, "threshold": theta,
            "skewness_B": float(np.mean((db - db.mean()) ** 3) / std ** 3) if std > 0 else float("nan")}
     for kind, mask in (("hole", db < -theta), ("peak", db > theta)):
         labels, count = periodic_label(mask)
         cat = [c for c in structure_catalog(db, labels, count, kind, cell_di) if c["cells"] >= min_cells]
         catalog.extend(cat)
-        maps[f"{kind}_mask"] = mask
+        kept = [c["label"] for c in cat]
+        maps[f"{kind}_mask"] = np.isin(labels, kept)
+        maps[f"{kind}_labels"] = np.where(np.isin(labels, kept), labels, 0)
         row[f"n_{kind}s"] = len(cat)
         row[f"{kind}_area_fraction"] = float(sum(c["cells"] for c in cat) / db.size)
         for key in ("amplitude", "L_parallel_di", "L_perp_di", "angle_to_B0_deg"):
@@ -170,7 +177,9 @@ def analyse(snap: dict, sigma_cells: float, threshold_sigma: float,
         if np.std(dn) > 0 and np.std(dbb) > 0:
             row["corr_n_B"] = float(np.corrcoef(dn.ravel(), dbb.ravel())[0, 1])
             row["slope_dn_dB"] = float(np.sum(dn * dbb) / np.sum(dbb * dbb))
-        pmag = 0.5 * smooth(bmag) ** 2
+        pmag_old = 0.5 * smooth(bmag) ** 2
+        pmag = smooth(0.5 * bmag ** 2)
+        row["magnetic_pressure_smoothing_difference_rms"] = float(np.sqrt(np.mean((pmag - pmag_old) ** 2)))
         pt = pmag + smooth(snap["pperp_i"]) + smooth(snap["pperp_e"])
         row["pressure_balance_ratio"] = (float(np.std(pt) / np.std(pmag))
                                          if np.std(pmag) > 0 else float("nan"))
@@ -244,23 +253,24 @@ def plot_map(maps: dict, step: int, outdir: Path):
     extent = [0, DOMAIN_DI, 0, DOMAIN_DI]
     lim = float(np.max(np.abs(maps["db"]))) or 1.0
     ax = axes[0, 0]
-    im = ax.imshow(maps["db"], origin="lower", extent=extent, cmap=ps.CMAP_DIVERGING,
+    # Maps are stored (Nz, Ny); transposed, z (along B0) runs horizontally as
+    # in every other map of the pipeline (plot_style.spatial_axes).
+    im = ax.imshow(maps["db"].T, origin="lower", extent=extent, cmap=ps.CMAP_DIVERGING,
                    vmin=-lim, vmax=lim)
     for key, color in (("hole_mask", "#0072B2"), ("peak_mask", "#D55E00")):
-        ax.contour(maps[key].astype(float), levels=[0.5], colors=[color], linewidths=0.8,
+        ax.contour(maps[key].astype(float).T, levels=[0.5], colors=[color], linewidths=0.8,
                    extent=extent, origin="lower")
     fig.colorbar(im, ax=ax, pad=0.02).set_label(r"$\delta|B|/B_0$ (smoothed)")
     ax.set_title(rf"$\delta|B|/B_0$, $\pm\theta={maps['theta']:.3g}$ contours")
     if "dn" in maps:
         ax = axes[0, 1]
         lim_n = float(np.max(np.abs(maps["dn"]))) or 1.0
-        im = ax.imshow(maps["dn"], origin="lower", extent=extent, cmap=ps.CMAP_DIVERGING,
+        im = ax.imshow(maps["dn"].T, origin="lower", extent=extent, cmap=ps.CMAP_DIVERGING,
                        vmin=-lim_n, vmax=lim_n)
         fig.colorbar(im, ax=ax, pad=0.02).set_label(r"$\delta n_i/n_i$")
         ax.set_title(r"$\delta n_i/n_i$")
     for ax in axes[0]:
-        ax.set_xlabel(r"$y\ [d_i]$")
-        ax.set_ylabel(r"$z\ [d_i]$ (along $B_0$)")
+        ps.spatial_axes(ax)
     fig.suptitle(rf"{PROFILE_LABEL} — $t\Omega_{{ci}} = {step_to_omegaci(step):.1f}$", fontsize=13)
     fig.tight_layout()
     ps.save(fig, outdir / f"structures_map_{step}.png")
@@ -309,11 +319,13 @@ def main() -> int:
     # structures (largest std of delta|B|) and the last one; only those two
     # map sets are kept in memory.
     best = last = None
+    tracker = StructureTracker()
     for step in steps:
         snap = load_snapshot(fields[step], moments.get(step))
         row, catalog, maps = analyse(snap, sigma_cells, args.threshold_sigma,
                                      args.min_amplitude, args.min_cells)
         rows.append({"step": step, "omega_ci_t": step_to_omegaci(step), **row})
+        tracker.update(step_to_omegaci(step), maps)
         if args.map_steps is not None:
             if step in args.map_steps:
                 plot_map(maps, step, outdir)
@@ -323,6 +335,18 @@ def main() -> int:
             best = (step, row["delta_B_mag_std"], maps, catalog)
         last = (step, row["delta_B_mag_std"], maps, catalog)
     write_csv(outdir / "structures_table.csv", rows)
+    write_csv(outdir / "structure_tracks.csv", tracker.rows)
+    write_csv(outdir / "structure_lifetimes.csv", tracker.summary())
+    sensitivity = []
+    for selected in sorted({steps[0], steps[-1]}):
+        snap = load_snapshot(fields[selected], moments.get(selected))
+        for smooth_factor in (.5, 1., 2.):
+            for threshold_factor in (.5, 1., 2.):
+                measured, _, _ = analyse(snap, sigma_cells*smooth_factor,
+                                         args.threshold_sigma*threshold_factor, args.min_amplitude, args.min_cells)
+                sensitivity.append({"step": selected, "sigma_di": args.sigma_di*smooth_factor,
+                                    "threshold_sigma": args.threshold_sigma*threshold_factor, **measured})
+    write_csv(outdir / "structure_sensitivity.csv", sensitivity)
     if args.map_steps is None:
         for step, _, maps, catalog in {best[0]: best, last[0]: last}.values():
             plot_map(maps, step, outdir)
@@ -332,11 +356,15 @@ def main() -> int:
                "peaks": lifetime(rows, "peak_area_fraction"),
                "sigma_di": args.sigma_di, "threshold_sigma": args.threshold_sigma,
                "min_amplitude": args.min_amplitude,
+               "structure_reference": "instantaneous spatial mean |B|",
+               "duration_definition": "population activity interval above half maximum filling fraction; not individual lifetime",
+               "scientific_status": "UNVERIFIED",
+               "reason": "Morphology does not independently identify an instability branch",
                "final_skewness_B": rows[-1]["skewness_B"],
                "final_pressure_balance_ratio": rows[-1].get("pressure_balance_ratio"),
                "final_corr_n_B": rows[-1].get("corr_n_B")}
-    (outdir / "structures_summary.json").write_text(json.dumps(summary, indent=2))
-    print(json.dumps(summary, indent=2))
+    (outdir / "structures_summary.json").write_text(strict_dumps(summary, indent=2))
+    print(strict_dumps(summary, indent=2))
     return 0
 
 

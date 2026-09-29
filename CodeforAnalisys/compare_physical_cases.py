@@ -8,6 +8,7 @@ bi-Kappa twins of the same regime.
 Every comparison follows the species that drives the instability (read from
 the analysis manifests): ions for mirror/firehose, electrons for whistler.
 The magnetic amplitude is the vector fluctuation <|dB|^2>^1/2/B0, gamma is
+the reference row of growth_rate_summary.csv (the dominant Fourier mode of dB)
 quoted with its error, the energy panel uses the global DiagEnergies budget
 when it exists, and the heat flux the third-moment table of
 heat_flux_analysis.py. The run parameters must match (``validate_comparison``)
@@ -20,6 +21,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+from analysis_contract import strict_dumps
 from pathlib import Path
 
 import matplotlib
@@ -28,6 +30,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import plot_style as ps
+from growth_fit import reference_growth_row
+from analysis_contract import gap_segments
 
 ps.apply()
 
@@ -113,10 +117,11 @@ def load_case(name: str, path: Path) -> dict:
             rows[step].update({f"{table_name}_{k}": v for k, v in row.items()})
 
     gamma_rows = _read_csv(path / "growth_rate_summary.csv")
-    total = next((r for r in gamma_rows if r.get("series", "total") == "total"), None)
+    total = reference_growth_row(gamma_rows)
     gamma_raw = _to_float(total.get("gamma")) if total else np.nan
     gamma_err = _to_float(total.get("gamma_err")) if total else np.nan
     fit_ok = bool(total) and total.get("fit_ok", "").strip().lower() in ("1", "true")
+    gamma_series = (total.get("series") or "total") if total else "none"
     gamma = gamma_raw if fit_ok else np.nan
     driven = manifest.get("driven_species", "ion")
     s = "e" if driven == "electron" else "i"
@@ -166,7 +171,7 @@ def load_case(name: str, path: Path) -> dict:
                                            heat_by_step.get(step, {}).get("abs_q_par_over_q0"))),
         })
     return {"name": name, "rows": merged, "gamma": gamma, "gamma_err": gamma_err,
-            "manifest": manifest, "driven_species": driven}
+            "gamma_series": gamma_series, "manifest": manifest, "driven_species": driven}
 
 
 def validate_comparison(cases: list[dict], mode: str = "distribution") -> list[str]:
@@ -197,6 +202,15 @@ def validate_comparison(cases: list[dict], mode: str = "distribution") -> list[s
     return errors
 
 
+def validate_estimators(cases):
+    signatures = {(c.get("gamma_series", "none"),
+                   c["manifest"].get("physics", {}).get("analysis_conventions_version"),
+                   strict_dumps(c["manifest"].get("provenance", {}).get("algorithms", {}), sort_keys=True))
+                  for c in cases}
+    if len(signatures) > 1:
+        raise ValueError("Mixed estimator or algorithm versions; regenerate all cases together")
+
+
 CASE_COLORS = ["#58a6ff", "#ff7b72", "#56d364", "#d2a8ff", "#f2cc60", "#a8d4ff"]
 LINESTYLES = ["-", "--", ":", "-."]
 
@@ -211,14 +225,19 @@ def plot_timeseries(cases: list[dict], ykeys: list[str], labels: list[str], path
         rows = case["rows"]
         if not rows:
             continue
-        t = np.array([r["omega_ci_t"] for r in rows], dtype=float)
+        t_all = np.array([r["omega_ci_t"] for r in rows], dtype=float)
         color = ps.c(CASE_COLORS[i % len(CASE_COLORS)])
         for j, (ykey, label) in enumerate(zip(ykeys, labels)):
             y = np.array([r[ykey] for r in rows], dtype=float)
-            if np.any(np.isfinite(y)):
-                ax.plot(t, y, LINESTYLES[j % len(LINESTYLES)], color=color, lw=1.7,
-                        marker="o" if len(t) < 60 else None, ms=3.5,
-                        label=f"{case['name']} {label}")
+            # Columns sampled at the particle cadence (anisotropy, heat flux)
+            # are NaN on every other field snapshot of the merged table; a
+            # line through the NaNs draws nothing, so plot the finite samples.
+            ok = np.isfinite(t_all) & np.isfinite(y)
+            if np.any(ok):
+                for segment, (ts, ys) in enumerate(gap_segments(t_all, y)):
+                    ax.plot(ts, ys, LINESTYLES[j % len(LINESTYLES)], color=color, lw=1.7,
+                            marker="o" if len(ts) < 60 else None, ms=3.5,
+                            label=f"{case['name']} {label}" if segment == 0 else None)
     if yscale:
         ax.set_yscale(yscale)
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
@@ -236,12 +255,20 @@ def plot_growth_bars(cases: list[dict], path: Path):
     fig.patch.set_facecolor(DARK_BG)
     _style(ax)
     colors = [ps.c(CASE_COLORS[i % len(CASE_COLORS)]) for i in range(len(cases))]
-    ax.bar(names, np.nan_to_num(gamma), yerr=np.where(np.isfinite(err), err, 0.0),
-           color=colors, capsize=5, ecolor=TEXT_CLR)
+    valid = np.isfinite(gamma)
+    indices = np.arange(len(names))
+    ax.bar(indices[valid], gamma[valid], yerr=np.where(np.isfinite(err[valid]), err[valid], 0.),
+           color=np.asarray(colors)[valid], capsize=5, ecolor=TEXT_CLR)
+    ax.set_xticks(indices, names)
     for i, g in enumerate(gamma):
         if not np.isfinite(g):
             ax.text(i, 0.0, "no valid fit", ha="center", va="bottom", color=TEXT_CLR, fontsize=10)
-    ax.set_ylabel(r"$\gamma/\Omega_{ci}$ (fit of $|\delta\mathbf{B}|_{\rm rms}$)", color=TEXT_CLR)
+    series = {case.get("gamma_series", "total") for case in cases}
+    amplitude = (r"dominant Fourier mode of $\delta\mathbf{B}$" if series == {"mode"}
+                 else r"$|\delta\mathbf{B}|_{\rm rms}$" if series == {"total"}
+                 else "mixed estimators: regenerate the v5 summaries")
+    ax.set_ylabel(r"$\gamma/\Omega_{ci}$", color=TEXT_CLR)
+    ax.set_xlabel(f"fit of the {amplitude}", color=TEXT_CLR)
     ax.set_title("Growth-rate comparison", color=TEXT_CLR, fontweight="bold")
     _save(fig, path)
 
@@ -256,14 +283,19 @@ def main():
     args = parser.parse_args()
 
     cases = [load_case(*parse_case_arg(raw)) for raw in args.cases]
+    validate_estimators(cases)
     issues = validate_comparison(cases, args.comparison_mode)
     if issues and not args.allow_parameter_mismatch:
         raise SystemExit("Comparison is not controlled:\n" + "\n".join(issues))
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
-    (outdir / "comparison_validation.json").write_text(json.dumps({
+    (outdir / "comparison_validation.json").write_text(strict_dumps({
         "mode": args.comparison_mode, "declared_parameters_match": not issues,
         "issues": issues, "requires_initial_moment_validation": True,
+        "scientific_status": "UNVERIFIED",
+        "reason": "Parameter parity alone does not establish energy conservation, mode classification or convergence",
+        "common_time_coverage": [max((c["rows"][0]["omega_ci_t"] for c in cases if c["rows"]), default=None),
+                                 min((c["rows"][-1]["omega_ci_t"] for c in cases if c["rows"]), default=None)],
     }, indent=2), encoding="utf-8")
     if issues:
         print("[WARN] Uncontrolled comparison:\n" + "\n".join(issues))

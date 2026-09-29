@@ -10,7 +10,6 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 
 import h5py
 import numpy as np

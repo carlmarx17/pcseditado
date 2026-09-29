@@ -38,6 +38,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import plot_style as ps
+from analysis_contract import sample_rng, effective_sample_size, magnetic_cell_centres_yz
 from data_reader import PICDataReader
 from plasma_physics import central_pressure_tensor, field_aligned_pressures, velocity_from_u
 from psc_units import (
@@ -54,7 +55,7 @@ SPECIES = {"ion": ("i", M_ION, 1.0), "electron": ("e", M_ELEC, -1.0)}
 
 def particle_estimators(path: str, species: str, bmap: dict, lo, hi,
                         nblocks: int, max_particles: int, rng) -> dict:
-    data = PICDataReader.read_particles_with_positions(path, max_particles, rng=rng)
+    data = PICDataReader.read_particles_with_positions(path, max_particles, rng=sample_rng(path, species, "estimators"))
     sel = data["q"] > 0 if species == "ion" else data["q"] < 0
     if not np.any(sel):
         return {}
@@ -83,7 +84,9 @@ def particle_estimators(path: str, species: str, bmap: dict, lo, hi,
 
     zhat = np.array([0.0, 0.0, 1.0])
     ppar, pperp, _ = pressures(np.arange(w.size), zhat)
-    out = {"A_prt_global": pperp / ppar if ppar > 0 else np.nan}
+    out = {"A_prt_global": pperp / ppar if ppar > 0 else np.nan,
+           "n_effective": effective_sample_size(w), "n_particles": int(w.size),
+           "particle_window_fraction": float(np.prod(np.asarray(hi)-lo)/(N_GRID_Y*N_GRID_Z))}
 
     zedges = np.linspace(int(lo[2]), int(hi[2]), nblocks + 1).astype(int)
     yedges = np.linspace(int(lo[1]), int(hi[1]), nblocks + 1).astype(int)
@@ -160,6 +163,7 @@ def main() -> int:
         raw = PICDataReader.read_multiple_fields_3d(
             fields[step], "jeh", ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"])
         bmap = {c: PICDataReader.flatten_2d_slice(raw[f"h{c}_fc/p0/3d"]).astype(float) for c in "xyz"}
+        bmap["x"], bmap["y"], bmap["z"] = magnetic_cell_centres_yz(bmap["x"], bmap["y"], bmap["z"])
         lo, hi = PICDataReader.read_prt_window(prt[step])
         for species in args.species:
             row = {"step": step, "omega_ci_t": step_to_omegaci(step), "species": species}

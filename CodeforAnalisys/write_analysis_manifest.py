@@ -4,10 +4,10 @@
 from __future__ import annotations
 
 import argparse
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from analysis_contract import CONVENTIONS_VERSION, provenance, inventory_identity, atomic_json
 from data_reader import PICDataReader
 from psc_units import (
     RUN_PARAMETER_SOURCES, NMAX, B0, DOMAIN_DI, DRIVEN_SPECIES, INSTABILITY, MASS_RATIO, N_GRID_Y,
@@ -63,6 +63,9 @@ def main() -> None:
 
     manifest = {
         "generated_utc": datetime.now(timezone.utc).isoformat(),
+        "provenance": provenance(),
+        "input_identity": inventory_identity([*fields.values(), *moments.values(), *particles.values()]),
+        "runtime_verified": all("verify runtime log" not in RUN_PARAMETER_SOURCES.get(k, "profile; verify runtime log") for k in ("dt_code", "nicell")),
         "case": args.case,
         "run_tag": args.run_tag,
         "profile": SIM_PROFILE,
@@ -97,7 +100,7 @@ def main() -> None:
             # 5: gamma from the vector fluctuation |dB| (not |B|-B0), one shared
             #    linear-phase fit with gamma_err, particle temperatures in PSC's
             #    <u v> convention, J_dia sign fixed, third-moment heat flux.
-            "analysis_conventions_version": 5,
+            "analysis_conventions_version": CONVENTIONS_VERSION,
             "parameter_source": RUN_PARAMETER_SOURCES,
             "mass_ratio": MASS_RATIO,
             "n0": N0,
@@ -125,7 +128,7 @@ def main() -> None:
     }
 
     path = output_dir / f"{args.case}_analysis_manifest.json"
-    path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    atomic_json(path, manifest)
     print(f"Manifest: {path}")
 
 

@@ -23,9 +23,15 @@ The fit implemented here, for an amplitude a(t) ~ exp(gamma t):
 3. The rise is the first contiguous stretch from the floor between
    ``floor + lo*(sat-floor)`` and ``floor + hi*(sat-floor)`` (default
    10 %-90 % of the rise in log amplitude).
-4. Inside the rise, the linear phase is the contiguous interval around the
+4. Inside the rise, the linear phase is a contiguous interval around a
    maximum of the local log-slope where that slope stays >= ``slope_frac``
-   (default 80 %) of its maximum. Without this step the band includes the
+   (default 80 %) of that maximum. The steepest such interval is compared
+   with the steepest one of what follows it, repeatedly, and the one with the
+   largest gain in log amplitude is kept: the PIC quiet-start build-up of the
+   noise floor is steeper than any instability but lasts ~2 Omega_ci^-1, and
+   picking the steepest interval alone returned gamma ~ 0.6 on t < 2.5 for
+   the v5 mirror runs (test_growth_fit.py reproduces it). Without the slope
+   criterion the band includes the
    saturation roll-over: for a quasi-linear (logistic-like) saturation the
    local rate at 90 % of the log-rise is already ~0.4 gamma and the band fit
    comes out ~15 % low (measured on synthetic_run.py). With the criterion
@@ -92,6 +98,25 @@ def _ols(t: np.ndarray, y: np.ndarray) -> dict:
             "r_squared": float(r2)}
 
 
+def correlated_slope_error(t, y, fit):
+    """Bartlett HAC slope error; lag is an explicit finite-sample rule, not seed spread."""
+    t, y = np.asarray(t), np.asarray(y)
+    n = len(t)
+    if n < 4:
+        return float('nan'), 0
+    x = t - t.mean()
+    sxx = np.dot(x, x)
+    if sxx <= 0:
+        return float('nan'), 0
+    residual = y - (fit['slope'] * t + fit['intercept'])
+    score = x * residual
+    lag = min(n - 2, max(1, int(4 * (n / 100) ** (2 / 9))))
+    meat = np.dot(score, score)
+    for k in range(1, lag + 1):
+        meat += 2 * (1 - k / (lag + 1)) * np.dot(score[k:], score[:-k])
+    return float(np.sqrt(max(meat, 0) * n / (n - 2)) / sxx), lag
+
+
 def _local_slope(t: np.ndarray, y: np.ndarray) -> np.ndarray:
     """d y/d t by least squares over a centred window of ~1/5 of the rise.
 
@@ -140,20 +165,37 @@ def _auto_window(ys: np.ndarray, t: np.ndarray, lo: float, hi: float,
         return start, end
     seg_t, seg_y = t[start:end + 1], ys[start:end + 1]
     slope = _local_slope(seg_t, seg_y)
-    j = int(np.argmax(slope))
-    if not slope[j] > 0:
-        return start, end
-    keep = slope >= slope_frac * slope[j]
-    a = b = j
-    while a - 1 >= 0 and keep[a - 1]:
-        a -= 1
-    while b + 1 < keep.size and keep[b + 1]:
-        b += 1
-    if b - a + 1 < 4:
+    best = None
+    lo_idx = 0
+    # The region around the steepest local slope, then the steepest region of
+    # what follows it, and so on; the one with the largest gain in log
+    # amplitude wins. A PIC quiet-start transient (the noise floor building up
+    # within ~1 Omega_ci^-1) has the steepest slope of the whole series but
+    # lasts a few snapshots; the exponential phase after the noise plateau is
+    # slower but spans several e-folds. Taking the steepest region alone put
+    # the mirror-run fits at t < 7 Omega_ci^-1 with R^2 < 0.5. Only later
+    # regions are tried, so the saturation flank of a single rise -- whose
+    # slope only falls -- never displaces the linear phase.
+    while lo_idx < slope.size:
+        j = lo_idx + int(np.argmax(slope[lo_idx:]))
+        if not slope[j] > 0:
+            break
+        keep = slope >= slope_frac * slope[j]
+        a = b = j
+        while a - 1 >= lo_idx and keep[a - 1]:
+            a -= 1
+        while b + 1 < keep.size and keep[b + 1]:
+            b += 1
+        if b - a + 1 >= 4:
+            gain = float(seg_y[b] - seg_y[a])
+            if best is None or gain > best[2]:
+                best = (a, b, gain)
+        lo_idx = b + 1
+    if best is None:
         # The slope is too noisy for the criterion to isolate a phase (a lone
         # spike): keep the whole rise, whose bias the sensitivity refits show.
         return start, end
-    return start + a, start + b
+    return start + best[0], start + best[1]
 
 
 def fit_exponential_growth(
@@ -179,7 +221,7 @@ def fit_exponential_growth(
     amplitude = np.asarray(amplitude, dtype=float)
     valid = np.isfinite(time) & np.isfinite(amplitude) & (amplitude > 0)
     empty = {
-        "gamma": float("nan"), "gamma_stderr": float("nan"),
+        "gamma": float("nan"), "gamma_stderr": float("nan"), "gamma_hac_stderr": float("nan"), "gamma_hac_lags": 0,
         "gamma_window_spread": float("nan"), "gamma_err": float("nan"),
         "intercept": float("nan"), "r_squared": float("nan"),
         "rvalue": float("nan"), "n_points": int(np.count_nonzero(valid)),
@@ -240,7 +282,8 @@ def fit_exponential_growth(
     spreads = [g for g in spreads if np.isfinite(g)]
     spread = float(np.max(np.abs(np.asarray(spreads) - main["slope"]))) if spreads else float("nan")
     stderr = main["stderr"]
-    parts = [v for v in (stderr, spread) if np.isfinite(v)]
+    hac, hac_lags = correlated_slope_error(tf, yf, main)
+    parts = [v for v in (max(stderr, hac), spread) if np.isfinite(v)]
     gamma_err = float(np.sqrt(sum(v * v for v in parts))) if parts else float("nan")
 
     gamma = main["slope"]
@@ -259,6 +302,7 @@ def fit_exponential_growth(
     return {
         "gamma": gamma,
         "gamma_stderr": stderr,
+        "gamma_hac_stderr": hac, "gamma_hac_lags": hac_lags,
         "gamma_window_spread": spread,
         "gamma_err": gamma_err,
         "intercept": main["intercept"],
@@ -279,3 +323,24 @@ def fit_exponential_growth(
         "fit_ln_amplitude": fit_ln,
         "fit_amplitude": np.exp(fit_ln),
     }
+
+
+#: The series of growth_rate_summary.csv whose gamma is quoted for a run, in
+#: order of preference: the dominant Fourier mode of dB, then (summaries made
+#: before it existed) the domain rms of the vector fluctuation.
+REFERENCE_SERIES = ("mode", "total")
+
+
+def reference_growth_row(rows: list[dict]) -> dict | None:
+    """The growth_rate_summary.csv row that holds the growth rate of a run.
+
+    Every consumer (comparisons, convergence study, kappa evolution) goes
+    through here, so a thesis table never mixes the mode fit of one run with
+    the rms fit of another. A failed reference fit is returned as such: the
+    rms series is not a silent fallback, because it is biased low.
+    """
+    by_series = {r.get("series") or "total": r for r in rows}
+    for series in REFERENCE_SERIES:
+        if series in by_series:
+            return by_series[series]
+    return rows[0] if rows else None

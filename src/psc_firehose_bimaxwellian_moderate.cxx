@@ -3,7 +3,7 @@
 //
 // beta_i_parallel=6.0, Ai=Ti_perp/Ti_parallel=0.3
 // beta_e_parallel=1.0, Ae=Te_perp/Te_parallel=1.0
-// mass_ratio=200, 1500 ppc, 1024x1024
+// mass_ratio=200, 1000 ppc, 576x576
 // ======================================================================
 
 #define PSC_CASE_LABEL "firehose_bimaxwellian_moderate"

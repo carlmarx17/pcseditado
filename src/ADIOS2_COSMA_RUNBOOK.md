@@ -278,14 +278,14 @@ For all mirror/firehose/whistler anisotropy cases:
 ```text
 fields and moments: every 500 steps
 particles:          every 10000 steps
-checkpoint:         every 5000 steps
-grid:               1024x1024
-particles/cell:     1500
-mi/me:              200
+checkpoint:         every 5000 steps (header default; ion-scale jobs use 150000)
+grid:               576x576 (1152x1152 for the 40 d_i boxes and the whistler jobs)
+particles/cell:     1000 (2000 in the whistler jobs)
+mi/me:              200 (800 in the *_mr800 cases)
 nmax:               depends on saturation; default 1200000
 load balancing:     every 2500 steps
 continuity:         every 5000 steps
-energy:             every 5000 steps in diag.asc
+energy:             every 500 steps in diag.asc
 ```
 
 Use `PSC_NMAX` in `--export` to set the step cap for each run according

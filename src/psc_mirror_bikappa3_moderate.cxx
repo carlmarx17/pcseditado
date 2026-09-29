@@ -3,7 +3,7 @@
 //
 // Mismas condiciones fisicas que psc_mirror_bimaxwellian_moderate
 // (beta_i_parallel=5.0, Ai=Ti_perp/Ti_parallel=2.0, beta_e_parallel=1.0,
-// Ae=Te_perp/Te_parallel=1.0, mass_ratio=200, 1500 ppc, 1024x1024),
+// Ae=Te_perp/Te_parallel=1.0, mass_ratio=200, 1000 ppc, 576x576),
 // unicamente cambiando la distribucion inicial de Maxwelliana a
 // Bi-Kappa con kappa=3. Pensado para comparar directamente contra
 // psc_mirror_bimaxwellian_moderate (mismo Ai, beta, grilla, resolucion

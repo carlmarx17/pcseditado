@@ -8,8 +8,9 @@ seed must be smaller than the effect being claimed (e.g. bi-Kappa vs
 bi-Maxwellian). This script collects, for any number of analysed runs, the
 observables the thesis quotes and puts them side by side:
 
-  gamma        linear growth rate of |dB| (growth_rate_summary.csv, series
-               "total") with its error gamma_err
+  gamma        linear growth rate (growth_rate_summary.csv, reference row:
+               the dominant Fourier mode of dB, or the vector |dB| rms in
+               older summaries) with its error gamma_err
   dB_sat       saturation level: max of <|dB|^2>^1/2 / B0
   t_sat        time of that maximum
   A_final      final anisotropy of the driven species (particle table)
@@ -44,6 +45,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import plot_style as ps
+from growth_fit import reference_growth_row
 
 ps.apply()
 
@@ -74,10 +76,12 @@ def load_run(label: str, root: Path) -> dict:
     run = {"label": label, "root": str(root), "run_tag": manifest.get("run_tag", ""),
            "driven_species": manifest.get("driven_species", "ion"),
            "conventions": physics.get("analysis_conventions_version"),
+           "input_identity": manifest.get("input_identity", {}).get("sha256"),
            **{k: physics.get(k) for k in NUMERICAL_KEYS + PHYSICAL_KEYS}}
 
     growth = _read_csv(phys_dir / "growth_rate_summary.csv")
-    total = next((r for r in growth if r.get("series", "total") == "total"), None)
+    total = reference_growth_row(growth)
+    run["gamma_series"] = total.get("series", "total") if total else "none"
     run["gamma"] = _f(total.get("gamma")) if total else np.nan
     run["gamma_err"] = _f(total.get("gamma_err")) if total else np.nan
     run["gamma_fit_ok"] = bool(total) and str(total.get("fit_ok", "")).strip() in ("1", "True", "true")
@@ -142,9 +146,11 @@ def main() -> int:
         runs.append(load_run(label, Path(path)))
     ref = next((r for r in runs if r["label"] == args.reference), runs[0])
     versions = {r["conventions"] for r in runs}
-    if len(versions) > 1:
-        print(f"[WARN] runs analysed with different conventions {sorted(versions, key=str)}; "
-              "re-run the analysis of the older ones before comparing.")
+    if len(versions) > 1 or len({r['gamma_series'] for r in runs}) > 1:
+        raise ValueError("Mixed conventions or growth estimators; regenerate before comparing convergence")
+    identities = [r['input_identity'] for r in runs if r['input_identity']]
+    if len(identities) != len(set(identities)):
+        raise ValueError("Duplicate input fingerprints cannot count as independent realizations")
     physical_mismatch = [r["label"] for r in runs
                          if any(str(r.get(k)) != str(ref.get(k)) for k in PHYSICAL_KEYS)]
     if physical_mismatch:

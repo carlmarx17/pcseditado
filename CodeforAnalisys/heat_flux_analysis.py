@@ -59,6 +59,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import plot_style as ps
+from analysis_contract import sample_rng, effective_sample_size, magnetic_cell_centres_yz
 from data_reader import PICDataReader
 from plasma_physics import velocity_from_u
 from psc_units import (
@@ -109,8 +110,8 @@ def load_b(field_file: str | None, shape: tuple[int, int]) -> tuple[dict, str]:
     data = PICDataReader.read_multiple_fields_3d(
         field_file, "jeh", ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"])
     flat = {k: PICDataReader.flatten_2d_slice(v).astype(float) for k, v in data.items()}
-    return ({"bx": flat["hx_fc/p0/3d"], "by": flat["hy_fc/p0/3d"], "bz": flat["hz_fc/p0/3d"]},
-            "local B")
+    bx, by, bz = magnetic_cell_centres_yz(flat["hx_fc/p0/3d"], flat["hy_fc/p0/3d"], flat["hz_fc/p0/3d"])
+    return ({"bx": bx, "by": by, "bz": bz}, "local cell-centred B")
 
 
 # ── Moments ──────────────────────────────────────────────────────────────────
@@ -126,7 +127,9 @@ def heat_flux_moments(vx, vy, vz, w, mass: float, b: np.ndarray,
     moments of the kept particles about their own mean.
     """
     nan = {"q_par_over_q0": np.nan, "q_perp_over_q0": np.nan,
-           "T_par": np.nan, "T_perp": np.nan, "count": 0}
+           "T_par": np.nan, "T_perp": np.nan, "count": 0,
+           "q_par_per_particle": np.nan, "q0_per_particle": np.nan,
+           "q_par_null_se": np.nan, "abs_q_matched_floor": np.nan, "n_effective": 0.0}
     wsum = float(np.sum(w))
     if vx.size < 10 or wsum <= 0:
         return nan
@@ -156,7 +159,16 @@ def heat_flux_moments(vx, vy, vz, w, mass: float, b: np.ndarray,
     q_par = qx * b[0] + qy * b[1] + qz * b[2]
     q_perp = float(np.sqrt(max(qx * qx + qy * qy + qz * qz - q_par * q_par, 0.0)))
     q0 = 1.5 * temp * np.sqrt(2.0 * temp / mass)
+    # Influence function of the sample-centred third moment under a symmetric null.
+    # This accounts for estimating U, unlike the raw sixth moment alone.
+    v = np.stack([dvx, dvy, dvz])
+    covariance = (v * w) @ v.T / wsum
+    influence = .5 * mass * (dv2 * dpar - np.trace(covariance) * dpar - 2 * (b @ covariance @ v)) / q0
+    null_se = float(np.sqrt(np.sum((w * influence) ** 2)) / wsum)
     return {"q_par_over_q0": q_par / q0, "q_perp_over_q0": q_perp / q0,
+            "q_par_per_particle": float(q_par), "q0_per_particle": float(q0),
+            "q_par_null_se": null_se, "abs_q_matched_floor": float(np.sqrt(2 / np.pi) * null_se),
+            "n_effective": effective_sample_size(w),
             "T_par": t_par, "T_perp": t_perp, "count": int(dvx.size)}
 
 
@@ -188,7 +200,8 @@ def block_heat_flux(part: dict, bmap: dict, lo, hi, nblocks: int,
             mom = heat_flux_moments(part["vx"][sel], part["vy"][sel], part["vz"][sel],
                                     part["w"][sel], part["mass"], b, s_max)
             rows.append({"jz": jz, "jy": jy, "weight": float(np.sum(part["w"][sel])),
-                         "B_over_B0": float(np.linalg.norm(b) / B0), **mom})
+                         "B_over_B0": float(np.linalg.norm(b) / B0),
+                         "volume_code": float((zedges[jz+1]-zedges[jz])*(yedges[jy+1]-yedges[jy])*DX_CODE**2), **mom})
     return rows
 
 
@@ -202,10 +215,19 @@ def window_mean(rows: list[dict], key: str, absolute: bool = False) -> float:
     return float(np.sum(wts[ok] * vals) / np.sum(wts[ok]))
 
 
+def integrated_flux_ratio(blocks):
+    """Integrated q / integrated q0; particle weights incorporate density and volume."""
+    valid = [r for r in blocks if np.isfinite(r.get('q_par_per_particle', np.nan))
+             and np.isfinite(r.get('q0_per_particle', np.nan)) and r['weight'] > 0]
+    den = sum(r['weight'] * r['q0_per_particle'] for r in valid)
+    return sum(r['weight'] * r['q_par_per_particle'] for r in valid) / den if den > 0 else float('nan')
+
+
 # ── Driver ───────────────────────────────────────────────────────────────────
 
 def analyse_step(step: int, prt_file: str, field_file: str | None, species: str,
                  args, rng) -> tuple[dict, list[dict]] | None:
+    rng = sample_rng(prt_file, species, "heatflux")
     part = load_species(prt_file, species, args.max_particles, rng)
     if part is None:
         return None
@@ -215,6 +237,9 @@ def analyse_step(step: int, prt_file: str, field_file: str | None, species: str,
     row = {
         "step": step, "omega_ci_t": step_to_omegaci(step), "species": species,
         "frame": frame, "n_particles": int(part["vx"].size),
+        "n_effective": effective_sample_size(part["w"]),
+        "averaging": "particle-weighted mean of local q/q0; not volume transport",
+        "sampling": "sha256 run-step-species-purpose",
         "q_par_over_q0": window_mean(blocks, "q_par_over_q0"),
         "abs_q_par_over_q0": window_mean(blocks, "q_par_over_q0", absolute=True),
         "q_perp_over_q0": window_mean(blocks, "q_perp_over_q0"),
@@ -240,12 +265,17 @@ def analyse_step(step: int, prt_file: str, field_file: str | None, species: str,
         vals = vals[np.isfinite(vals)]
         row[f"{key}_err"] = (float(np.std(vals, ddof=1) / np.sqrt(vals.size))
                              if vals.size > 1 else float("nan"))
+    reference_blocks = block_heat_flux(part, bmap, lo, hi, args.macrocells, ref)
+    row["q_integrated_over_q0_integrated"] = integrated_flux_ratio(reference_blocks)
+    row["abs_q_matched_noise_floor"] = window_mean(reference_blocks, "abs_q_matched_floor")
+    row["null_model"] = "symmetric observed distribution, central-moment influence, asymptotic normal; truncated finite-moment estimate"
+    row["null_status"] = "WARN_asymptotic_requires_calibration" if ref is not None else "UNVERIFIED_untruncated_tail_variance"
     row["error_reference_s_max"] = ref if ref is not None else float("nan")
     return row, blocks
 
 
 def plot_time(rows: list[dict], outdir: Path, s_ref: float | None):
-    fig, axes = plt.subplots(2, 1, figsize=(8.6, 7.4), sharex=True)
+    fig, axes = plt.subplots(2, 1, figsize=(10.4, 7.4), sharex=True)
     suffix = f"_smax{s_ref:g}" if s_ref is not None else ""
     for species in ("ion", "electron"):
         sr = [r for r in rows if r["species"] == species]
@@ -264,9 +294,9 @@ def plot_time(rows: list[dict], outdir: Path, s_ref: float | None):
             if np.any(np.isfinite(err)):
                 ax.fill_between(t, y - err, y + err, color=color, alpha=0.2, lw=0)
             if key == "abs_q_par_over_q0":
-                floor = np.array([r.get("abs_q_par_noise_floor", np.nan) for r in sr], dtype=float)
+                floor = np.array([r.get("abs_q_matched_noise_floor", np.nan) for r in sr], dtype=float)
                 ax.plot(t, floor, "--", lw=1.2, color=color, alpha=0.8,
-                        label=rf"sampling floor (Maxwellian), {s}")
+                        label=rf"matched symmetric-null floor (asymptotic), {s}")
     trunc = f", $|v-U|\\leq{s_ref:g}\\,(T/m)^{{1/2}}$" if s_ref is not None else ""
     axes[0].set_ylabel(r"$\langle|q_\parallel|\rangle/q_0$")
     axes[1].set_ylabel(r"$\langle q_\parallel\rangle/q_0$")
@@ -275,7 +305,8 @@ def plot_time(rows: list[dict], outdir: Path, s_ref: float | None):
     axes[0].set_title(f"Heat flux in the prt window — {PROFILE_LABEL}{trunc}", fontsize=13)
     for ax in axes:
         ps.style_axes(ax)
-        ps.legend(ax, fontsize=9, ncol=2, loc="best")
+        # Beside the panel: inside, it covers the uncertainty bands.
+        ps.legend(ax, fontsize=9, loc="upper left", bbox_to_anchor=(1.02, 1.0), borderaxespad=0.0)
     fig.tight_layout()
     ps.save(fig, outdir / "heat_flux_vs_time.png")
 
@@ -310,16 +341,16 @@ def plot_block_map(blocks: list[dict], lo, hi, nblocks: int, species: str,
     if not np.any(np.isfinite(grid)):
         return
     dx_di = DX_CODE / DI
-    extent = [lo[1] * dx_di, hi[1] * dx_di, lo[2] * dx_di, hi[2] * dx_di]
+    # grid is (block_z, block_y); transposed, z (along B0) runs horizontally.
+    extent = [lo[2] * dx_di, hi[2] * dx_di, lo[1] * dx_di, hi[1] * dx_di]
     lim = float(np.nanmax(np.abs(grid))) or 1.0
     fig, ax = plt.subplots(figsize=(6.4, 5.4))
-    im = ax.imshow(grid, origin="lower", extent=extent, cmap=ps.CMAP_DIVERGING,
+    im = ax.imshow(grid.T, origin="lower", extent=extent, cmap=ps.CMAP_DIVERGING,
                    vmin=-lim, vmax=lim, aspect="equal")
     cb = fig.colorbar(im, ax=ax, pad=0.02)
     s = SPECIES_SYMBOL[species]
     cb.set_label(rf"$q_{{\parallel {s}}}/q_{{0{s}}}$")
-    ax.set_xlabel(r"$y\ [d_i]$")
-    ax.set_ylabel(r"$z\ [d_i]$ (along $B_0$)")
+    ps.spatial_axes(ax)
     ax.set_title(rf"$q_{{\parallel {s}}}/q_0$ per block — $t\Omega_{{ci}}={step_to_omegaci(step):.1f}$",
                  fontsize=12)
     ps.save(fig, outdir / f"heat_flux_map_{s}_{step}.png")

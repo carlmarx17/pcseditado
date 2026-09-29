@@ -417,19 +417,27 @@ def plot_mode_growth(
         ax.text(0.5, 0.5, "no measurable power in this mode", transform=ax.transAxes,
                 ha="center", va="center", color=TEXT_CLR, fontsize=13)
     else:
-        ax.semilogy(times_norm[valid], power[valid], "o", color=ps.c("#58a6ff"), markersize=5, label="PIC $P_n(t)$")
+        # A log axis over less than a decade only prints one mantissa many times.
+        spread = float(np.max(power[valid]) / np.min(power[valid]))
+        draw = ax.semilogy if spread > 10 else ax.plot
+        draw(times_norm[valid], power[valid], "o", color=ps.c("#58a6ff"), markersize=5, label="PIC $P_n(t)$")
         if np.isfinite(fit["gamma"]):
             lo, hi = fit["fit_time_range"]
+            r2 = fit["rvalue"] ** 2 if np.isfinite(fit["rvalue"]) else float("nan")
+            accepted = np.isfinite(r2) and r2 >= MIN_FIT_R2 and fit["gamma"] > 0
             ax.axvspan(lo, hi, color=GRID_CLR, alpha=0.4, label="fit window")
-            ax.semilogy(fit["fit_time"], fit["fit_amplitude"] ** 2, "--", color=ps.c("#f0883e"), lw=2.0,
-                        label=fr"PIC fit $\gamma={fit['gamma']:.3g}$ (R$^2$={fit['rvalue']**2:.2f})")
+            # A rejected fit stays visible but cannot be mistaken for a growth rate.
+            draw(fit["fit_time"], fit["fit_amplitude"] ** 2, "--",
+                 color=ps.c("#f0883e") if accepted else ps.MUTED_CLR, lw=2.0,
+                 label=(fr"PIC fit $\gamma={fit['gamma']:.3g}$ (R$^2$={r2:.2f})" if accepted else
+                        fr"no exponential growth: fit rejected (R$^2$={r2:.2f})"))
             _, gamma_theory = interp_theory(theory, k_val)
             if np.isfinite(gamma_theory):
                 t0 = fit["fit_time"][0]
                 p0 = fit["fit_amplitude"][0] ** 2
                 theory_curve = p0 * np.exp(2.0 * gamma_theory * (fit["fit_time"] - t0))
-                ax.semilogy(fit["fit_time"], theory_curve, ":", color=ps.c("#d2a8ff"), lw=2.0,
-                            label=fr"theory $\gamma={gamma_theory:.3g}$")
+                draw(fit["fit_time"], theory_curve, ":", color=ps.c("#d2a8ff"), lw=2.0,
+                     label=fr"theory $\gamma={gamma_theory:.3g}$")
     ax.set_xlabel(fr"${time_unit}$")
     ax.set_ylabel(r"$P_n(t) = |\psi_" + polarization + r"(k,t)|^2$")
     ax.set_title(fr"Mode growth $\psi_{polarization}$, $k\,{length_unit}={k_val:.3g}$, {PROFILE_LABEL}", fontsize=15)
@@ -446,14 +454,15 @@ def plot_mirror_bparallel(
     normalized = avg_power / max(float(np.max(avg_power)), np.finfo(float).tiny)
     log_power = np.log10(normalized + 1e-12)
     fig, ax = _new_dark_fig((8.5, 7.0))
-    mesh = ax.pcolormesh(k1, k0, log_power, shading="auto", cmap="inferno", vmin=-6, vmax=0)
-    ax.plot(k1[peak_idx[1]], k0[peak_idx[0]], "x", color=ps.c("#3fb950"), markersize=12, mew=2.5, label="peak mode")
+    # k_parallel horizontal and k_perp vertical, as in the gamma(k) maps.
+    mesh = ax.pcolormesh(k0, k1, log_power.T, shading="auto", cmap=ps.CMAP_SEQUENTIAL, vmin=-6, vmax=0)
+    ax.plot(k0[peak_idx[0]], k1[peak_idx[1]], "x", color=ps.c("#ff7b72"), markersize=12, mew=2.5, label="peak mode")
     cb = fig.colorbar(mesh, ax=ax)
     cb.set_label(r"$\log_{10}(|\delta B_z/B_0|^2 / \max)$", color=TEXT_CLR)
     cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
     plt.setp(plt.getp(cb.ax, "yticklabels"), color=TEXT_CLR)
-    ax.set_xlabel(r"$k_\perp\,d_i$")
-    ax.set_ylabel(r"$k_\parallel\,d_i$")
+    ax.set_xlabel(r"$k_\parallel\,d_i$")
+    ax.set_ylabel(r"$k_\perp\,d_i$")
     ax.set_title(f"Mirror $\\delta B_z$ oblique spectrum, {PROFILE_LABEL}", fontsize=16)
     ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
 
@@ -467,8 +476,8 @@ def plot_mirror_bparallel(
     if zoom < 0.9 * max(float(np.max(np.abs(k0))), float(np.max(np.abs(k1)))):
         axins = ax.inset_axes([0.60, 0.60, 0.38, 0.38])
         axins.set_facecolor(PANEL_BG)
-        axins.pcolormesh(k1, k0, log_power, shading="auto", cmap="inferno", vmin=-6, vmax=0)
-        axins.plot(k_perp_peak, k_par_peak, "x", color=ps.c("#3fb950"), markersize=10, mew=2.2)
+        axins.pcolormesh(k0, k1, log_power.T, shading="auto", cmap=ps.CMAP_SEQUENTIAL, vmin=-6, vmax=0)
+        axins.plot(k_par_peak, k_perp_peak, "x", color=ps.c("#ff7b72"), markersize=10, mew=2.2)
         axins.set_xlim(-zoom, zoom)
         axins.set_ylim(-zoom, zoom)
         axins.tick_params(colors=TEXT_CLR, labelsize=8)

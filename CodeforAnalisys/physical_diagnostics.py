@@ -16,7 +16,6 @@ from __future__ import annotations
 import argparse
 import csv
 import math
-import re
 import os
 import concurrent.futures
 from dataclasses import dataclass
@@ -43,6 +42,8 @@ except ImportError:  # pragma: no cover - requirements include scipy
     curve_fit = None
 
 from data_reader import PICDataReader
+from vdf_validation import predictive_check
+from analysis_contract import sample_rng, stable_rng, cylindrical_density, atomic_json, effective_sample_size
 from growth_fit import fit_exponential_growth
 from plasma_physics import (
     central_pressure_tensor,
@@ -56,7 +57,6 @@ from spectral_analysis import SpectralAnalyzer
 from psc_units import (
     B0,
     BETA_I_PAR,
-    BETA_I_PERP_OVER_PAR,
     DI,
     DOMAIN_DI_Y,
     DOMAIN_DI_Z,
@@ -65,7 +65,7 @@ from psc_units import (
     DX_DE,
     INSTABILITY,
     KAPPA,
-    MASS_RATIO,
+    K_MAX_DI_DEFAULT,
     M_ELEC,
     M_ION,
     N_GRID_Y,
@@ -73,8 +73,6 @@ from psc_units import (
     PROFILE_LABEL,
     PRT_OUTPUT_HI,
     PRT_OUTPUT_LO,
-    TE_PAR,
-    TE_PERP,
     TI_PAR,
     TI_PERP,
     VA,
@@ -86,7 +84,11 @@ DARK_BG = ps.c("#0d1117")
 PANEL_BG = ps.c("#161b22")
 TEXT_CLR = ps.c("#e6edf3")
 GRID_CLR = ps.c("#30363d")
-RNG = np.random.default_rng(20260623)
+
+#: Upper bound of the fitted kappa. A fit that ends there found no measurable
+#: tail: it is Maxwellian-consistent, not a measurement of kappa = KAPPA_FIT_MAX.
+KAPPA_FIT_MAX = 80.0
+
 
 # Dominio común de ajuste de la VDF, en unidades de sigma0 (velocidad térmica
 # paralela medida). Fijarlo hace que error_maxwellian, error_kappa y sus
@@ -214,7 +216,7 @@ def _write_csv(path: Path, rows: list[dict], fieldnames: list[str] | None = None
     if not rows:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    columns = fieldnames or list(rows[0].keys())
+    columns = fieldnames or list(dict.fromkeys(k for row in rows for k in row))
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
@@ -279,7 +281,7 @@ def _select_steps_by_cadence(
 def _read_particle_snapshot(path: str, max_particles: int) -> ParticleSnapshot:
     step = _extract_step(path)
     q, m, px, py, pz, w = PICDataReader.read_particles_snapshot(
-        path, max_particles=max_particles, rng=RNG
+        path, max_particles=max_particles, rng=sample_rng(path, "both", "physical-particles")
     )
     return ParticleSnapshot(step, step_to_omegaci(step), q, m, px, py, pz, w)
 
@@ -539,21 +541,29 @@ def _window_field_scalars(bx, by, bz, lo, hi, b0: float) -> dict:
         "prt_B_min_over_B0": float(np.nanmin(bmag) / b0_abs),
         "prt_B_max_over_B0": float(np.nanmax(bmag) / b0_abs),
         "prt_mirror_depth": float(1.0 - np.nanmin(bmag) / b0_abs),
-        "prt_mirror_area_fraction": float(np.nanmean(bmag < (b0 - sigma_b))),
+        # Scale-free: the threshold is the fluctuation's own std, so this is
+        # ~16-25 % for any amplitude and is NOT a mirror-hole area
+        # (hole populations with absolute thresholds: structures_analysis.py).
+        "prt_fraction_below_B0_minus_std": float(np.nanmean(bmag < (b0 - sigma_b))),
         "prt_magnetic_energy_fluct": float(0.5 * np.nanmean(dbx**2 + dby**2 + dbz**2)),
         "prt_cells": int(bmag.size),
     }
 
 
 def field_metrics(field_file: str, b0: float = B0,
-                  prt_window: tuple | None = None) -> dict:
+                  prt_window: tuple | None = None,
+                  modes: list[tuple[int, int]] | None = None) -> dict:
     """Métricas de |B| sobre todo el dominio.
 
     Con ``prt_window=(lo, hi)`` añade las mismas métricas escalares medidas
     sólo dentro de la ventana de salida de partículas, con prefijo ``prt_``.
+    Con ``modes`` (índices FFT de ``mode_candidates``) añade ``mode_power``,
+    el <|dB|^2> de cada modo, para el ajuste de gamma del modo dominante.
     """
     fld = load_fields(field_file)
     bx, by, bz = fld["Bx"], fld["By"], fld["Bz"]
+    power = (mode_power(_fluctuation_plane(bx, by, bz)[0], modes)
+             if modes else np.zeros(0))
     bmag = np.sqrt(bx**2 + by**2 + bz**2)
     delta_b = bmag - b0
     dbx = bx - np.nanmean(bx)
@@ -567,6 +577,7 @@ def field_metrics(field_file: str, b0: float = B0,
     )
     return {
         **window_scalars,
+        "mode_power": power,
         "B_magnitude": bmag,
         "delta_B": delta_b,
         "delta_B_over_B0": delta_b / b0_abs,
@@ -589,7 +600,8 @@ def field_metrics(field_file: str, b0: float = B0,
         "delta_B_vec_rms_over_B0": float(np.sqrt(np.nanmean(dbx**2 + dby**2 + dbz**2)) / b0_abs),
         "B_min": float(np.nanmin(bmag)),
         "mirror_depth": float(1.0 - np.nanmin(bmag) / b0_abs),
-        "mirror_area_fraction": float(np.nanmean(bmag < (b0 - sigma_b))),
+        # See prt_fraction_below_B0_minus_std: a statistic, not a hole area.
+        "fraction_below_B0_minus_std": float(np.nanmean(bmag < (b0 - sigma_b))),
         # Full fluctuation energy density 0.5<|dB|^2>: using only the
         # magnitude fluctuation (|B|-B0) drops the perpendicular components,
         # which dominate by ~an order of magnitude in these runs.
@@ -664,6 +676,101 @@ def magnetic_perpendicular_spectrum(field_file: str) -> dict:
     }
 
 
+# ── Dominant Fourier mode: the reference growth rate ─────────────────────────
+#
+# The domain rms <|dB|^2>^1/2 is a poor growth amplitude: it sums the PIC noise
+# of every k with the unstable mode, the noise itself grows with the secular
+# heating, and its log-slope stays below gamma until the mode dwarfs the noise,
+# which happens only near saturation. On the v5 mirror runs it returned
+# gamma ~ 0.056-0.065 where the dominant mode grows at ~0.11-0.12. The
+# reference gamma is therefore the fit of one Fourier mode of dB: the mode
+# with the largest amplitude over the run, followed through every snapshot.
+
+#: Modes taken from each candidate snapshot when choosing which Fourier modes
+#: of dB to follow through the run.
+MODE_CANDIDATES_PER_SNAPSHOT = 8
+#: Fractions of the run at which the candidate snapshots are read.
+MODE_CANDIDATE_FRACTIONS = tuple(np.unique(np.r_[np.geomspace(0.001, 0.25, 12), 0.5, 0.75, 1.0]))
+
+
+def _fluctuation_plane(bx, by, bz) -> tuple[np.ndarray, tuple[str, str], tuple[float, float]]:
+    """dB on the simulation plane as (3, n0, n1), with its axes and spacing in d_i."""
+    bx, by, bz = (np.asarray(v, dtype=float) for v in (bx, by, bz))
+    probe = SpectralAnalyzer(outdir="/tmp/psc_spectral_probe", parallel_axis="z")
+    plane = probe._get_plane_slice(bx, by, bz, _spectral_plane(bx.shape))
+    comps = np.stack([np.atleast_2d(plane[c]) for c in ("bx", "by", "bz")]).astype(float)
+    comps -= comps.mean(axis=(1, 2), keepdims=True)
+    lengths = {"x": 1.0, "y": DOMAIN_DI_Y, "z": DOMAIN_DI_Z}
+    axes = plane["axes"]
+    spacing = (lengths[axes[0]] / comps.shape[1], lengths[axes[1]] / comps.shape[2])
+    return comps, axes, spacing
+
+
+def _mode_power_map(comps: np.ndarray) -> np.ndarray:
+    """Mean-square contribution of each Fourier mode, summed over components.
+
+    Normalised with Parseval, so that summing it over the non-redundant half
+    plane, doubled, gives <|dB|^2>.
+    """
+    n = comps.shape[1] * comps.shape[2]
+    return np.sum(np.abs(np.fft.fft2(comps, axes=(1, 2))) ** 2, axis=0) / n ** 2
+
+
+def mode_power(comps: np.ndarray, modes: list[tuple[int, int]]) -> np.ndarray:
+    """<|dB|^2> carried by each (+k, -k) pair in ``modes`` (unshifted FFT indices)."""
+    if not modes:
+        return np.zeros(0)
+    power = _mode_power_map(comps)
+    i0, i1 = zip(*modes)
+    self_conjugate = ((2 * np.asarray(i0)) % comps.shape[1] == 0) & ((2 * np.asarray(i1)) % comps.shape[2] == 0)
+    return np.where(self_conjugate, 1.0, 2.0) * power[list(i0), list(i1)]
+
+
+def mode_candidates(field_files: dict[int, str], kmax_di: float,
+                    per_snapshot: int = MODE_CANDIDATES_PER_SNAPSHOT) -> list[dict]:
+    """Fourier modes of dB worth following: the strongest at a few snapshots.
+
+    Reading every snapshot twice to find the dominant mode first would double
+    the cost of the field pass; the union of the ``per_snapshot`` strongest
+    modes with |k| d_i <= ``kmax_di`` at 25/50/75/100 % of the run contains it
+    (it is the largest amplitude during the late linear phase and saturation)
+    while keeping the per-snapshot output to a few dozen numbers. Each +k/-k
+    pair of the real field is one mode, kept in the half plane with k0 > 0.
+    """
+    steps = sorted(field_files)
+    if not steps:
+        return []
+    picks = sorted({steps[max(0, int(round(f * len(steps))) - 1)] for f in MODE_CANDIDATE_FRACTIONS})
+    chosen: dict[tuple[int, int], None] = {}
+    axes = spacing = shape = None
+    for step in picks:
+        fld = load_fields(field_files[step])
+        comps, axes, spacing = _fluctuation_plane(fld["Bx"], fld["By"], fld["Bz"])
+        shape = comps.shape[1:]
+        k0 = 2.0 * np.pi * np.fft.fftfreq(shape[0], d=spacing[0])
+        k1 = 2.0 * np.pi * np.fft.fftfreq(shape[1], d=spacing[1])
+        K0, K1 = np.meshgrid(k0, k1, indexing="ij")
+        allowed = ((K0 ** 2 + K1 ** 2 <= kmax_di ** 2)
+                   & ((K0 > 0) | ((K0 == 0) & (K1 > 0))))
+        flat = np.flatnonzero(allowed)
+        power = _mode_power_map(comps).ravel()
+        for f in flat[np.argsort(power[flat])[::-1][:per_snapshot]]:
+            chosen[tuple(int(v) for v in np.unravel_index(f, shape))] = None
+    k0 = 2.0 * np.pi * np.fft.fftfreq(shape[0], d=spacing[0])
+    k1 = 2.0 * np.pi * np.fft.fftfreq(shape[1], d=spacing[1])
+    par_first = axes[0] == "z"
+    modes = []
+    for i0, i1 in sorted(chosen):
+        k_par, k_perp = (k0[i0], k1[i1]) if par_first else (k1[i1], k0[i0])
+        modes.append({
+            "i0": i0, "i1": i1,
+            "k_parallel_di": float(k_par), "k_perp_di": float(k_perp),
+            "k_di": float(np.hypot(k_par, k_perp)),
+            "theta_kB_deg": float(np.degrees(np.arctan2(abs(k_perp), abs(k_par)))),
+        })
+    return modes
+
+
 def plot_magnetic_spectrum(spectrum: dict, step: int, outdir: Path):
     k = np.asarray(spectrum["k"], dtype=float)
     power = np.asarray(spectrum["power"], dtype=float)
@@ -674,7 +781,7 @@ def plot_magnetic_spectrum(spectrum: dict, step: int, outdir: Path):
     _style_axes(ax)
     ax.loglog(k, power, color=ps.c("#58a6ff"), lw=2.0, label=r"$E_{B_\perp}(k)$")
     fit = spectrum["fit"]
-    if fit is not None and len(fit["k_fit"]) >= 3:
+    if fit is not None and fit.get("accepted"):
         fit_power = 10 ** (
             fit["intercept"] + fit["slope"] * np.log10(fit["k_fit"])
         )
@@ -686,15 +793,15 @@ def plot_magnetic_spectrum(spectrum: dict, step: int, outdir: Path):
             lw=1.8,
             label=rf"fit: $k^{{{fit['slope']:.2f}}}$",
         )
-    if len(k) > 8:
-        ref = slice(len(k) // 4, 3 * len(k) // 4)
-        k_ref = k[ref]
-        p_ref = power[ref]
-        valid = (k_ref > 0) & (p_ref > 0)
-        if np.any(valid):
-            first = np.flatnonzero(valid)[0]
-            kolmogorov = p_ref[first] * (k_ref / k_ref[first]) ** (-5.0 / 3.0)
-            ax.loglog(k_ref, kolmogorov, ":", color=ps.c("#f2cc60"), label=r"$k^{-5/3}$")
+        # Reference slope over the same range, anchored where the fit starts.
+        k_ref = fit["k_fit"]
+        ax.loglog(k_ref, fit_power[0] * (k_ref / k_ref[0]) ** (-5.0 / 3.0), ":",
+                  color=ps.c("#f2cc60"), label=r"$k^{-5/3}$ (reference)")
+    elif fit is not None:
+        ax.text(0.97, 0.05, fit["reason"], transform=ax.transAxes, ha="right", va="bottom",
+                fontsize=10, color=ps.MUTED_CLR)
+    if fit is not None and np.isfinite(fit.get("noise_floor", np.nan)):
+        ax.axhline(fit["noise_floor"], color=ps.MUTED_CLR, lw=0.8, ls="--", label="noise floor")
     ax.set_xlabel(r"$k\,[d_i^{-1}]$", color=TEXT_CLR)
     ax.set_ylabel(r"$E_{B_\perp}(k)$", color=TEXT_CLR)
     ax.set_title(
@@ -702,6 +809,7 @@ def plot_magnetic_spectrum(spectrum: dict, step: int, outdir: Path):
         color=TEXT_CLR,
         fontweight="bold",
     )
+    ps.plain_log_axis(ax)
     ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
     _savefig(fig, outdir / f"magnetic_spectrum_step_{step}.png")
 
@@ -731,7 +839,7 @@ def _grid_fit_distribution(x: np.ndarray, y: np.ndarray, sigma0: float) -> tuple
     best_k = (np.inf, (float(np.nanmax(y)), sigma0, 80.0))
 
     def log_error(model):
-        return float(np.sqrt(np.nanmean((np.log10(y) - np.log10(model + 1e-300)) ** 2)))
+        return float(np.sqrt(np.mean((y - model) ** 2)))
 
     for sigma in sigma_grid:
         shape_m = np.exp(-0.5 * (x / sigma) ** 2)
@@ -752,6 +860,20 @@ def _grid_fit_distribution(x: np.ndarray, y: np.ndarray, sigma0: float) -> tuple
             if err_k < best_k[0]:
                 best_k = (err_k, (amp_k, float(sigma), float(kappa)))
     return best_m[1], best_k[1]
+
+
+def _fit_density_models(x, y, sigma0):
+    """Same linear-density least-squares objective for SciPy and grid solvers."""
+    if curve_fit is None:
+        return _grid_fit_distribution(x, y, sigma0)
+    try:
+        m, _ = curve_fit(maxwellian_pdf, x, y, p0=(float(np.max(y)), sigma0),
+                         bounds=([0., sigma0*.05], [np.inf, sigma0*20]), maxfev=20000)
+        k, _ = curve_fit(kappa_pdf_shape, x, y, p0=(float(np.max(y)), sigma0, KAPPA or 5.),
+                         bounds=([0., sigma0*.05, 1.51], [np.inf, sigma0*20, KAPPA_FIT_MAX]), maxfev=30000)
+        return m,k
+    except (RuntimeError, ValueError, FloatingPointError):
+        return _grid_fit_distribution(x,y,sigma0)
 
 
 def fit_distribution(snapshot: ParticleSnapshot, species: str = "ion") -> dict:
@@ -785,7 +907,10 @@ def fit_distribution(snapshot: ParticleSnapshot, species: str = "ion") -> dict:
     # vacíos del extremo dominan la métrica y error_maxwellian se dispara por
     # ruido de disparo, no por desajuste. Se registra hasta dónde llega la
     # estadística útil para que el rango efectivo sea auditable.
-    valid = np.isfinite(hist) & (counts >= MIN_BIN_COUNTS)
+    raw_counts, _ = np.histogram(centered, bins=edges)
+    weight2, _ = np.histogram(centered, bins=edges, weights=weights ** 2)
+    n_eff = np.divide(counts ** 2, weight2, out=np.zeros_like(counts), where=weight2 > 0)
+    valid = np.isfinite(hist) & (raw_counts >= MIN_BIN_COUNTS) & (n_eff >= MIN_BIN_COUNTS)
     if np.count_nonzero(valid) < 12:
         return {}
 
@@ -793,7 +918,10 @@ def fit_distribution(snapshot: ParticleSnapshot, species: str = "ion") -> dict:
     y = hist[valid]
     v_reliable_over_sigma = float(np.max(np.abs(x)) / sigma0)
     amp0 = float(np.nanmax(y))
+    fit_solver, fallback_reason = "scipy_curve_fit", ""
+    kappa_stderr = np.nan
     if curve_fit is None:
+        fit_solver, fallback_reason = "grid", "scipy unavailable"
         popt_m, popt_k = _grid_fit_distribution(x, y, sigma0)
     else:
         try:
@@ -802,12 +930,14 @@ def fit_distribution(snapshot: ParticleSnapshot, species: str = "ion") -> dict:
                 bounds=([0.0, sigma0 * 0.05], [np.inf, sigma0 * 20.0]),
                 maxfev=20000,
             )
-            popt_k, _ = curve_fit(
+            popt_k, covariance_k = curve_fit(
                 kappa_pdf_shape, x, y, p0=(amp0, sigma0, KAPPA or 5.0),
-                bounds=([0.0, sigma0 * 0.05, 1.51], [np.inf, sigma0 * 20.0, 80.0]),
+                bounds=([0.0, sigma0 * 0.05, 1.51], [np.inf, sigma0 * 20.0, KAPPA_FIT_MAX]),
                 maxfev=30000,
             )
-        except Exception:
+            kappa_stderr = float(np.sqrt(max(covariance_k[2, 2], 0.)))
+        except (RuntimeError, ValueError, FloatingPointError) as exc:
+            fit_solver, fallback_reason = "grid", str(exc)
             popt_m, popt_k = _grid_fit_distribution(x, y, sigma0)
 
     y_m = maxwellian_pdf(x, *popt_m)
@@ -824,10 +954,20 @@ def fit_distribution(snapshot: ParticleSnapshot, species: str = "ion") -> dict:
     supra = float(np.sum(weights[np.abs(centered) > TAIL_SIGMA * sigma0])
                   / max(np.sum(weights), 1e-30))
 
+    predictive = predictive_check(vz, weights, stable_rng(PROFILE_LABEL, snapshot.step, species, "vdf-heldout"), _fit_density_models)
     return {
+        **predictive,
         "step": snapshot.step,
         "omega_ci_t": snapshot.time,
+        "kappa_fit_stderr_conditional": kappa_stderr,
         "kappa_fit": float(popt_k[2]),
+        "fit_coordinate": "u_parallel",
+        "fit_frame": "global B0; window mean drift",
+        "fit_objective": "unweighted density least squares",
+        "fit_solver": fit_solver, "fit_fallback_reason": fallback_reason,
+        "kappa_identifiability": "upper_bound_unresolved" if popt_k[2] >= 79.9 else "not_yet_model_selected",
+        "n_effective": effective_sample_size(weights),
+        "retained_probability": float(counts.sum() / total),
         "maxwellian_sigma": float(popt_m[1]),
         "kappa_sigma": float(popt_k[1]),
         "error_maxwellian": err_m,
@@ -891,22 +1031,25 @@ def plot_validation(rows: list[dict], outdir: Path):
     if not rows:
         return
     first = rows[0]
+    # Measured over initialised, so quantities with different units share one
+    # dimensionless axis (raw T ~ 1e-2 next to beta ~ 5 made the T bars vanish).
+    a0 = TI_PERP / TI_PAR
+    labels = [r"$T_{\parallel i}$", r"$T_{\perp i}$", r"$A_i$", r"$R_i$", r"$\beta_{\parallel i}$"]
+    ratios = np.array([first["T_parallel_i"] / TI_PAR, first["T_perp_i"] / TI_PERP,
+                       first["A_i"] / a0, first["R_i"] * a0, first["beta_parallel_i"] / BETA_I_PAR])
     fig, ax = plt.subplots(figsize=(7.5, 5.5))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    labels = [r"$T_{\parallel i}$", r"$T_{\perp i}$", r"$A_i$", r"$R_i$", r"$\beta_{\parallel i}$"]
-    values = [
-        first["T_parallel_i"],
-        first["T_perp_i"],
-        first["A_i"],
-        first["R_i"],
-        first["beta_parallel_i"],
-    ]
     colors = [ps.c("#58a6ff"), ps.c("#ff7b72"), ps.c("#f2cc60"), ps.c("#d2a8ff"), ps.c("#56d364")]
-    ax.bar(labels, values, color=colors, alpha=0.9)
-    ax.axhline(1.0, color=TEXT_CLR, linestyle=":", alpha=0.45)
-    ax.set_title(f"Initial validation - {PROFILE_LABEL}", color=TEXT_CLR, fontsize=15, fontweight="bold")
-    ax.set_ylabel("code units / dimensionless", color=TEXT_CLR)
+    ax.bar(labels, ratios - 1.0, bottom=1.0, color=colors, alpha=0.9)
+    ax.axhspan(0.98, 1.02, color=ps.MUTED_CLR, alpha=0.12, lw=0, label=r"$\pm 2\,\%$")
+    ax.axhline(1.0, color=TEXT_CLR, linestyle=":", alpha=0.6)
+    span = max(0.05, 1.3 * float(np.nanmax(np.abs(ratios - 1.0))))
+    ax.set_ylim(1.0 - span, 1.0 + span)
+    ax.set_title(f"Initial state: measured / initialised — {PROFILE_LABEL}", color=TEXT_CLR,
+                 fontsize=14, fontweight="bold")
+    ax.set_ylabel(r"measured / profile value ($t = 0$)", color=TEXT_CLR)
+    ps.legend(ax, loc="upper right", fontsize=11)
     _savefig(fig, outdir / "A_i_initial_check.png")
 
 
@@ -960,7 +1103,7 @@ def plot_vdf2d(
     mask = _species_mask(snapshot, species)
     if not np.any(mask):
         return None
-    vx, vy, vz = snapshot.px[mask], snapshot.py[mask], snapshot.pz[mask]
+    vx, vy, vz, _ = velocity_from_u(snapshot.px[mask], snapshot.py[mask], snapshot.pz[mask])
     weights = snapshot.w[mask]
     vpar = (vz - _weighted_mean(vz, weights)) / VA
     vx_centered = (vx - _weighted_mean(vx, weights)) / VA
@@ -972,13 +1115,13 @@ def plot_vdf2d(
         return None
     bins = (220, 150)
     hist_range = ((-par_abs, par_abs), (0.0, perp_hi))
-    hist, xedges, yedges = np.histogram2d(
-        vpar, vperp, bins=bins, weights=weights, range=hist_range, density=True,
-    )
+    xedges = np.linspace(*hist_range[0], bins[0] + 1)
+    yedges = np.linspace(*hist_range[1], bins[1] + 1)
+    hist, metadata = cylindrical_density(vpar, vperp, weights, xedges, yedges)
+    atomic_json(outdir / f"vdf_2d_{species}_step_{snapshot.step}_metadata.json", metadata)
     counts, _, _ = np.histogram2d(vpar, vperp, bins=bins, range=hist_range)
     if gaussian_filter is not None:
-        hist = gaussian_filter(hist.astype(float), sigma=0.8)
-        counts = gaussian_filter(counts.astype(float), sigma=0.8)
+        counts = counts.astype(float)  # raw occupancy; no smoothing across unequal annular volumes
     hist = np.where(counts >= min_counts, hist, np.nan)
 
     finite_hist = hist[np.isfinite(hist) & (hist > 0)]
@@ -1009,7 +1152,7 @@ def plot_vdf2d(
             alpha=0.6,
         )
     cb = fig.colorbar(pcm, ax=ax, pad=0.02)
-    cb.set_label(r"$f(v_\parallel,v_\perp)$ [PDF]", fontsize=13, color=TEXT_CLR)
+    cb.set_label(r"$f(v_\parallel,v_\perp)$ [probability / $(v/v_A)^3$]", fontsize=13, color=TEXT_CLR)
     cb.ax.tick_params(which="both", direction="in", labelsize=12, colors=TEXT_CLR)
     plt.setp(plt.getp(cb.ax, "yticklabels"), color=TEXT_CLR)
     ax.axvline(0.0, color=TEXT_CLR, lw=0.8, ls=":", alpha=0.6)
@@ -1034,7 +1177,7 @@ def plot_vdf3d(
     mask = _species_mask(snapshot, species)
     if not np.any(mask):
         return None
-    vx, vy, vz = snapshot.px[mask], snapshot.py[mask], snapshot.pz[mask]
+    vx, vy, vz, _ = velocity_from_u(snapshot.px[mask], snapshot.py[mask], snapshot.pz[mask])
     weights = snapshot.w[mask]
     vx = (vx - _weighted_mean(vx, weights)) / VA
     vy = (vy - _weighted_mean(vy, weights)) / VA
@@ -1066,7 +1209,7 @@ def plot_vdf3d(
 
     if vx.size > max_points:
         prob = point_density / point_density.sum()
-        idx = RNG.choice(vx.size, size=max_points, replace=False, p=prob)
+        idx = stable_rng(PROFILE_LABEL, snapshot.step, species, "vdf3d-display").choice(vx.size, size=max_points, replace=False, p=prob)
         vx, vy, vz, point_density = vx[idx], vy[idx], vz[idx], point_density[idx]
 
     order = np.argsort(point_density)  # draw the densest points last (on top)
@@ -1119,16 +1262,31 @@ def plot_fit_metrics(rows: list[dict], outdir: Path):
     kfit = np.array([r["kappa_fit"] for r in rows], dtype=float)
     supra = np.array([r["suprathermal_fraction"] for r in rows], dtype=float)
 
+    # 1/kappa, so the Maxwellian limit is 0 instead of an arbitrary large
+    # number; fits pinned at the upper bound are drawn open and labelled.
+    at_bound = kfit >= 0.99 * KAPPA_FIT_MAX
+    inv = np.where(at_bound, 0.0, 1.0 / kfit)
     fig, ax = plt.subplots(figsize=(8.5, 5))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    ax.plot(t, kfit, color=ps.c("#d2a8ff"), **_series_style(len(t)))
+    # Conditional fit error propagated to 1/kappa: sigma(1/k) = sigma_k / k^2.
+    err = np.array([r.get("kappa_fit_stderr_conditional", np.nan) for r in rows], dtype=float)
+    inv_err = np.where(at_bound | ~np.isfinite(err), np.nan, err / kfit ** 2)
+    ax.plot(t, inv, color=ps.c("#d2a8ff"), lw=1.2, alpha=0.6)
+    ax.errorbar(t[~at_bound], inv[~at_bound], yerr=inv_err[~at_bound], fmt="o", capsize=3,
+                color=ps.c("#d2a8ff"), label=r"fitted ($\pm 1\sigma$, conditional)")
+    if at_bound.any():
+        ax.plot(t[at_bound], inv[at_bound], "o", mfc="none", color=ps.c("#d2a8ff"),
+                label=rf"at fit bound $\kappa={KAPPA_FIT_MAX:g}$: Maxwellian-consistent")
     if KAPPA:
-        ax.axhline(KAPPA, color=ps.c("#f2cc60"), alpha=0.6, linestyle="--", label=rf"$\kappa_0={KAPPA:g}$")
-        ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
+        ax.axhline(1.0 / KAPPA, color=ps.c("#f2cc60"), alpha=0.8, linestyle="--",
+                   label=rf"initial $\kappa_0={KAPPA:g}$")
+    ax.axhline(0.0, color=ps.MUTED_CLR, lw=0.8)
+    ax.set_ylim(bottom=-0.02)
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
-    ax.set_ylabel(r"$\kappa_{\rm fit}$", color=TEXT_CLR)
-    ax.set_title("Kappa fit vs time", color=TEXT_CLR, fontweight="bold")
+    ax.set_ylabel(r"$1/\kappa_{\rm fit}$  (0 = Maxwellian)", color=TEXT_CLR)
+    ax.set_title("Fitted kappa index of the window VDF", color=TEXT_CLR, fontweight="bold")
+    ps.legend(ax, loc="best", fontsize=10)
     _savefig(fig, outdir / "kappa_fit_vs_time.png")
 
     fig, ax = plt.subplots(figsize=(8.5, 5))
@@ -1136,7 +1294,7 @@ def plot_fit_metrics(rows: list[dict], outdir: Path):
     _style_axes(ax)
     ax.plot(t, supra, color=ps.c("#ff7b72"), **_series_style(len(t)))
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
-    ax.set_ylabel(r"$F_{\rm supra}(|v|>3v_{th})$", color=TEXT_CLR)
+    ax.set_ylabel(r"$P(|u_\parallel-\langle u_\parallel\rangle|>3\sigma_u)$", color=TEXT_CLR)
     ax.set_title("Suprathermal fraction vs time", color=TEXT_CLR, fontweight="bold")
     _savefig(fig, outdir / "suprathermal_fraction_vs_time.png")
 
@@ -1152,12 +1310,15 @@ def plot_distribution_fit(fit: dict, outdir: Path):
     ax.plot(x, maxwellian_pdf(x, *fit["maxwellian_params"]), "--", color=ps.c("#58a6ff"), lw=2.0,
             label="Maxwellian fit")
     ax.plot(x, kappa_pdf_shape(x, *fit["kappa_params"]), "-", color=ps.c("#d2a8ff"), lw=2.0,
-            label=rf"Kappa fit, $\kappa={fit['kappa_fit']:.2f}$")
+            label=(rf"Kappa fit at its bound $\kappa={KAPPA_FIT_MAX:g}$ (Maxwellian-consistent)"
+                   if fit["kappa_fit"] >= 0.99 * KAPPA_FIT_MAX else rf"Kappa fit, $\kappa={fit['kappa_fit']:.2f}$"))
     ax.set_yscale("log")
-    ax.set_xlabel(r"$v_\parallel-\langle v_\parallel\rangle$", color=TEXT_CLR)
+    ax.set_xlabel(r"$u_\parallel-\langle u_\parallel\rangle$", color=TEXT_CLR)
     ax.set_ylabel("PDF", color=TEXT_CLR)
-    ax.set_title(f"Kappa vs Maxwellian - step {fit['step']}", color=TEXT_CLR, fontweight="bold")
-    ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
+    ax.set_title(rf"Kappa vs Maxwellian — $t\Omega_{{ci}} = {step_to_omegaci(fit['step']):.1f}$",
+                 color=TEXT_CLR, fontweight="bold")
+    # Under the axes: the curves span the whole panel, tails included.
+    ps.legend(ax, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2, fontsize=10, frameon=False)
     _savefig(fig, outdir / f"kappa_vs_maxwellian_step_{fit['step']}.png")
 
 
@@ -1203,10 +1364,10 @@ def plot_map(
         y0, y1 = ext["y_di"]
         ax.add_patch(Rectangle((z0, y0), z1 - z0, y1 - y0, fill=False,
                                edgecolor=ps.c("#00c000"), lw=2.0, ls="--",
-                               label="prt window (VDF)"))
-        ps.legend(ax, loc="upper right", fontsize=10)
-    ax.set_xlabel(r"Z [$d_i$]", color=TEXT_CLR)
-    ax.set_ylabel(r"Y [$d_i$]", color=TEXT_CLR)
+                               label="prt window (particles for the VDFs)"))
+        # Under the map, where it hides no data.
+        ps.legend(ax, loc="upper center", bbox_to_anchor=(0.5, -0.2), fontsize=10, frameon=False)
+    ps.spatial_axes(ax, color=TEXT_CLR)
     ax.set_title(title, color=TEXT_CLR, fontweight="bold")
     _savefig(fig, path)
 
@@ -1255,6 +1416,8 @@ def growth_rate(time: np.ndarray, delta_b: np.ndarray,
         "gamma": fit["gamma"],
         "gamma_stderr": fit["gamma_stderr"],
         "gamma_window_spread": fit["gamma_window_spread"],
+        "gamma_hac_stderr": fit.get("gamma_hac_stderr", np.nan),
+        "gamma_hac_lags": fit.get("gamma_hac_lags", 0),
         "gamma_err": fit["gamma_err"],
         "intercept": fit["intercept"],
         "linear_phase_start": fit["linear_phase_start"],
@@ -1280,10 +1443,9 @@ def plot_field_time(rows: list[dict], outdir: Path):
     par = np.array([r["delta_B_parallel_rms_over_B0"] for r in rows], dtype=float)
     perp = np.array([r["delta_B_perp_rms_over_B0"] for r in rows], dtype=float)
     depth = np.array([r["mirror_depth"] for r in rows], dtype=float)
-    area = np.array([r["mirror_area_fraction"] for r in rows], dtype=float)
     plot_mask = np.isfinite(t) & (t > 0.0)
-    t, rms, par, perp, depth, area = (
-        arr[plot_mask] for arr in (t, rms, par, perp, depth, area)
+    t, rms, par, perp, depth = (
+        arr[plot_mask] for arr in (t, rms, par, perp, depth)
     )
     if len(t) == 0:
         return
@@ -1313,13 +1475,13 @@ def plot_field_time(rows: list[dict], outdir: Path):
     fig, ax = plt.subplots(figsize=(8.5, 5.2))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    ax.plot(t, depth, color=ps.c("#d2a8ff"), label="depth", **_series_style(len(t)))
-    ax.plot(t, area, color=ps.c("#f2cc60"), label="area fraction", **_series_style(len(t), "s"))
+    ax.plot(t, depth, color=ps.c("#d2a8ff"), **_series_style(len(t)))
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
-    ax.set_ylabel("mirror-hole metric", color=TEXT_CLR)
-    ax.set_title("Mirror-hole depth and area fraction", color=TEXT_CLR, fontweight="bold")
-    ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
-    _savefig_many(fig, [outdir / "mirror_depth_area_vs_time.png"])
+    ax.set_ylabel(r"$1 - \min|B|/B_0$", color=TEXT_CLR)
+    ax.set_title("Deepest magnetic depression (single-cell extreme)", color=TEXT_CLR, fontweight="bold")
+    ax.text(0.02, 0.96, "hole populations, areas and thresholds: 07_structures",
+            transform=ax.transAxes, va="top", fontsize=10, color=ps.MUTED_CLR)
+    _savefig_many(fig, [outdir / "mirror_depth_vs_time.png"])
 
     plot_prt_window_field_time(rows, outdir)
 
@@ -1471,12 +1633,14 @@ def secular_heating(rows: list[dict], anisotropy_rows: list[dict] | None = None)
 
     linear = np.isfinite(r2) and r2 > 0.9
     isotropic = np.isfinite(a_e_mean) and abs(a_e_mean - 1.0) < 0.1
+    # A high R^2 does not make the trend linear: the heating of the delivered
+    # runs accelerates (energy_audit.py reports its curvature and budget).
     if linear and isotropic:
-        verdict = "tendencia lineal e isotropa; origen fisico/numerico no determinado"
+        verdict = "isotropic trend, linear fit R2>0.9; physical/numerical origin not determined"
     elif linear:
-        verdict = "tendencia lineal; origen fisico/numerico no determinado"
+        verdict = "linear fit R2>0.9; physical/numerical origin not determined"
     else:
-        verdict = "ajuste lineal insuficiente; origen fisico/numerico no determinado"
+        verdict = "linear fit inadequate; physical/numerical origin not determined"
 
     e_e0 = float(intercept)
     return {
@@ -1535,20 +1699,35 @@ def correlations(a_map: np.ndarray, delta_b: np.ndarray, bmag: np.ndarray,
     }
 
 
-def plot_scatter(x, y, path: Path, xlabel: str, ylabel: str, title: str):
-    x = np.asarray(x, dtype=float).ravel()
-    y = np.asarray(y, dtype=float).ravel()
-    valid = np.isfinite(x) & np.isfinite(y)
-    if np.count_nonzero(valid) < 3:
+def plot_scatter_series(series: list[tuple[float, np.ndarray, np.ndarray]], path: Path,
+                        xlabel: str, ylabel: str, title: str, max_points: int = 40_000):
+    """Cell-by-cell scatter of every map snapshot, coloured by time.
+
+    Each snapshot is thinned to at most `max_points` cells with a fixed stride
+    (deterministic, independent of the other snapshots).
+    """
+    from matplotlib import ticker
+    usable = []
+    for toci, x, y in series:
+        x, y = np.asarray(x, dtype=float).ravel(), np.asarray(y, dtype=float).ravel()
+        idx = np.flatnonzero(np.isfinite(x) & np.isfinite(y))
+        if idx.size >= 3:
+            usable.append((toci, x[idx[::max(1, idx.size // max_points)]], y[idx[::max(1, idx.size // max_points)]]))
+    if not usable:
         return
-    if np.count_nonzero(valid) > 120_000:
-        idx = RNG.choice(np.where(valid)[0], 120_000, replace=False)
-    else:
-        idx = np.where(valid)[0]
+    times = [t for t, _, _ in usable]
+    norm = matplotlib.colors.Normalize(min(times), max(times) if max(times) > min(times) else min(times) + 1)
+    cmap = plt.get_cmap(ps.CMAP_SEQUENTIAL)
     fig, ax = plt.subplots(figsize=(7.2, 5.8))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    ax.scatter(x[idx], y[idx], s=2, alpha=0.18, color=ps.c("#58a6ff"))
+    for toci, x, y in usable:
+        ax.scatter(x, y, s=2, alpha=0.25, color=cmap(norm(toci)), rasterized=True)
+    mappable = matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap)
+    cb = fig.colorbar(mappable, ax=ax, pad=0.02)
+    cb.set_label(r"$t\Omega_{ci}$", color=TEXT_CLR)
+    for axis in (ax.xaxis, ax.yaxis):
+        axis.set_major_locator(ticker.MaxNLocator(nbins=5))
     ax.set_xlabel(xlabel, color=TEXT_CLR)
     ax.set_ylabel(ylabel, color=TEXT_CLR)
     ax.set_title(title, color=TEXT_CLR, fontweight="bold")
@@ -1609,13 +1788,13 @@ def _process_particle_step_worker(args):
 
 
 def _field_metrics_worker(args):
-    step, field_file, b0, prt_window = args
-    metrics = field_metrics(field_file, b0, prt_window)
+    step, field_file, b0, prt_window, modes = args
+    metrics = field_metrics(field_file, b0, prt_window, modes)
     return step, {
         "step": step,
         "omega_ci_t": step_to_omegaci(step),
         **{k: v for k, v in metrics.items() if np.isscalar(v)},
-    }
+    }, metrics["mode_power"]
 
 
 def _magnetic_spectrum_worker(args):
@@ -1633,8 +1812,10 @@ def _magnetic_spectrum_worker(args):
         "delta_axis1": spectrum["spacing"][1],
         "peak_k": spectrum["peak_k"],
         "peak_power": spectrum["peak_power"],
-        "power_law_slope": np.nan if fit is None else fit["slope"],
-        "power_law_rvalue": np.nan if fit is None else fit["rvalue"],
+        # Only an accepted fit yields a citable index (spectral_analysis._fit_power_law).
+        "power_law_slope": fit["slope"] if fit and fit.get("accepted") else np.nan,
+        "power_law_rvalue": fit["rvalue"] if fit and fit.get("accepted") else np.nan,
+        "power_law_status": "no fit" if fit is None else ("accepted" if fit["accepted"] else fit["reason"]),
     }
 
 
@@ -1824,15 +2005,18 @@ class PhysicalDiagnostics:
                 if first_fit is None:
                     first_fit = fit
                 fit_rows.append({
-                    key: fit[key] for key in [
+                    **{key: value for key, value in fit.items() if key.startswith("heldout_") or key == "mixture_ambiguity"},
+                    **{key: fit[key] for key in [
                         "step", "omega_ci_t", "kappa_fit", "maxwellian_sigma",
                         "kappa_sigma", "error_maxwellian", "error_kappa",
                         "error_tail_maxwellian", "error_tail_kappa",
                         "suprathermal_fraction",
                         # Hasta dónde llegó la estadística útil: sin esto no se
                         # puede saber si dos casos compararon la misma cola.
-                        "tail_bins", "v_reliable_over_sigma",
-                    ]
+                        "tail_bins", "v_reliable_over_sigma", "fit_coordinate", "fit_frame",
+                        "fit_objective", "fit_solver", "fit_fallback_reason", "kappa_identifiability",
+                        "n_effective", "retained_probability", "kappa_fit_stderr_conditional", "model_validation_status",
+                    ]}
                 })
 
         # anisotropy_table.csv is the single canonical per-step table; the
@@ -1885,43 +2069,116 @@ class PhysicalDiagnostics:
             return []
         steps = sorted(self.field_files)
         window = self.prt_window()
-        tasks = [(step, self.field_files[step], B0, window) for step in steps]
+        try:
+            modes = mode_candidates(self.field_files, K_MAX_DI_DEFAULT)
+        except Exception as exc:  # the rms fits below still run
+            print(f"  [WARN] dominant-mode candidates unavailable: {exc}")
+            modes = []
+        mode_index = [(m["i0"], m["i1"]) for m in modes]
+        tasks = [(step, self.field_files[step], B0, window, mode_index) for step in steps]
         results = _run_step_tasks(_field_metrics_worker, tasks, self.jobs, "Field diagnostics")
-        rows = [row for _, row in results]
+        rows = [row for _, row, _ in results]
         _write_csv(self.outdir / "field_fluctuation_table.csv", rows)
         plot_field_time(rows, self.outdir)
-        # gamma from the full vector fluctuation (valid for every branch) and,
-        # separately, from its compressive and transverse parts: which one
-        # grows first is part of the mode identification.
         t = np.array([r["omega_ci_t"] for r in rows])
         summary_rows = []
+        fit_keys = ("gamma", "gamma_err", "gamma_stderr", "gamma_window_spread",
+                    "linear_phase_start", "linear_phase_end", "r_squared",
+                    "amplitude_gain", "series_start", "window_source",
+                    "fit_ok", "fit_reject_reason")
+
+        # 1. Reference: the dominant Fourier mode of dB (see mode_candidates).
+        reference = None
+        if modes and len(results) == len(steps):
+            amplitude = np.sqrt(np.clip(np.array([p for _, _, p in results], dtype=float), 0.0, None))
+            reference = self.fit_mode_growth(t, modes, amplitude)
+        if reference is not None:
+            summary_rows.append({"series": "mode", "amplitude": reference["amplitude_name"],
+                                 **{key: reference[key] for key in fit_keys}})
+            if not reference["fit_ok"]:
+                print(f"  [WARN] dominant-mode growth rate NOT valid: "
+                      f"{reference['fit_reject_reason']}")
+
+        # 2. The domain rms of dB and of its compressive / transverse parts:
+        # which one grows is part of the mode identification. They are fitted
+        # on the reference linear phase, so the three numbers and the mode
+        # gamma describe the same time interval; the rms includes the noise
+        # of every k and comes out lower than the mode gamma.
+        t_start, t_end = self.growth_window
+        shared = (t_start is None and t_end is None and reference is not None
+                  and reference["fit_ok"])
+        if shared:
+            t_start, t_end = reference["linear_phase_start"], reference["linear_phase_end"]
         for series, column, label, figure in (
             ("total", "delta_B_vec_rms", r"|\delta\mathbf{B}|_{\rm rms}", "growth_rate_fit.png"),
             ("parallel", "delta_B_parallel_rms", r"\delta B_{\parallel,\rm rms}", "growth_rate_fit_parallel.png"),
             ("perp", "delta_B_perp_rms", r"\delta B_{\perp,\rm rms}", "growth_rate_fit_perp.png"),
         ):
             growth = growth_rate(t, np.array([r[column] for r in rows]),
-                                 t_start=self.growth_window[0], t_end=self.growth_window[1])
+                                 t_start=t_start, t_end=t_end)
             if not growth:
                 continue
+            if shared:
+                growth["window_source"] = "dominant-mode"
             growth.update(series_label=label, figure_name=figure)
             plot_growth(growth, self.outdir)
-            summary_rows.append({
-                "series": series,
-                "amplitude": column,
-                **{key: growth[key] for key in (
-                    "gamma", "gamma_err", "gamma_stderr", "gamma_window_spread",
-                    "linear_phase_start", "linear_phase_end", "r_squared",
-                    "amplitude_gain", "series_start", "window_source",
-                    "fit_ok", "fit_reject_reason")},
-            })
-            if series == "total" and not growth["fit_ok"]:
-                print(f"  [WARN] tasa de crecimiento global NO valida: "
-                      f"{growth['fit_reject_reason']}")
+            summary_rows.append({"series": series, "amplitude": column,
+                                 **{key: growth[key] for key in fit_keys}})
         _write_csv(self.outdir / "growth_rate_summary.csv", summary_rows)
         self.plot_field_maps()
         self.run_magnetic_spectra()
         return rows
+
+    def fit_mode_growth(self, t: np.ndarray, modes: list[dict],
+                        amplitude: np.ndarray) -> dict | None:
+        """gamma of every followed mode; returns the fit of the dominant one.
+
+        ``amplitude`` is (n_steps, n_modes), the rms of dB carried by each
+        mode. The dominant mode is the one with the largest amplitude over the
+        run. Every mode is fitted on its own linear phase and tabulated in
+        mode_growth_table.csv, so a faster but weaker mode stays visible.
+        """
+        t_start, t_end = self.growth_window
+        table, fits = [], []
+        for j, mode in enumerate(modes):
+            fit = growth_rate(t, amplitude[:, j], t_start=t_start, t_end=t_end)
+            fits.append(fit)
+            table.append({
+                "k_parallel_di": mode["k_parallel_di"], "k_perp_di": mode["k_perp_di"],
+                "k_di": mode["k_di"], "theta_kB_deg": mode["theta_kB_deg"],
+                "max_amplitude_over_B0": float(np.nanmax(amplitude[:, j]) / abs(B0)),
+                "t_max_amplitude": float(t[int(np.nanargmax(amplitude[:, j]))]),
+                **{key: fit.get(key, np.nan) for key in (
+                    "gamma", "gamma_err", "linear_phase_start", "linear_phase_end",
+                    "r_squared", "amplitude_gain", "fit_ok", "fit_reject_reason")},
+            })
+        dominant = int(np.nanargmax(np.nanmax(amplitude, axis=0)))
+        for j, row in enumerate(table):
+            row["dominant"] = int(j == dominant)
+            row["fastest_accepted"] = int(bool(row["fit_ok"]) and row["gamma"] == max((r["gamma"] for r in table if r["fit_ok"]), default=float("nan")))
+            row["classification"] = "unclassified; consult dispersion mode evidence"
+            row["candidate_snapshot_fractions"] = ";".join(map(str, MODE_CANDIDATE_FRACTIONS))
+        table.sort(key=lambda r: -r["max_amplitude_over_B0"])
+        _write_csv(self.outdir / "mode_growth_table.csv", table)
+        atomic_json(self.outdir / "linear_phase.json", {
+            "status": "PASS" if fits[dominant]["fit_ok"] else "UNVERIFIED",
+            "source": "strongest-power Fourier mode", "mode": modes[dominant],
+            "start": fits[dominant]["linear_phase_start"], "end": fits[dominant]["linear_phase_end"],
+            "classification": "unclassified", "reason": fits[dominant].get("fit_reject_reason", "")})
+        fit = fits[dominant]
+        if not fit:
+            return None
+        mode = modes[dominant]
+        kpar, kperp = mode["k_parallel_di"], mode["k_perp_di"]
+        fit.update(
+            amplitude_name=(f"dominant mode k_par d_i={kpar:.3f}, k_perp d_i={kperp:.3f}, "
+                            f"theta={mode['theta_kB_deg']:.0f} deg"),
+            series_label=(rf"|\delta\hat{{\mathbf{{B}}}}(k_\parallel d_i={kpar:.2f},"
+                          rf"\,k_\perp d_i={kperp:.2f})|"),
+            figure_name="growth_rate_fit_mode.png",
+        )
+        plot_growth(fit, self.outdir)
+        return fit
 
     def run_magnetic_spectra(self):
         """Generate transverse P(k) within the integrated diagnostics run."""
@@ -2003,6 +2260,10 @@ class PhysicalDiagnostics:
         for step, corr_row in corr_results:
             corr_rows.append(corr_row)
 
+        # One scatter per field quantity with every map snapshot, coloured by
+        # time (these files used to be rewritten at each step, silently
+        # keeping only the last one). |B| is shown relative to B0.
+        scatter = {"deltaB": [], "B": [], "Jdia": []}
         for step in [s for s in steps_for_maps if s in common]:
             maps = moment_thermal_maps(self.moment_files[step], self.field_files[step], species)
             fmet = field_metrics(self.field_files[step], B0)
@@ -2013,15 +2274,15 @@ class PhysicalDiagnostics:
                 plot_map(jdia[key], self.outdir / f"{key}_map_step_{step}.png",
                          rf"${label}$ — $t\Omega_{{ci}} = {toci:.1f}$",
                          rf"${label}$ [code units]", cmap=ps.CMAP_DIVERGING, symmetric=True)
-            plot_scatter(maps["A"], PICDataReader.flatten_2d_slice(fmet["delta_B"]),
-                         self.outdir / f"A_{s}_vs_deltaB_scatter.png", rf"$A_{s}$",
-                         r"$|B|-B_0$", "Spatial correlation: anisotropy vs |B| - B0")
-            plot_scatter(maps["A"], PICDataReader.flatten_2d_slice(fmet["B_magnitude"]),
-                         self.outdir / f"A_{s}_vs_B_scatter.png", rf"$A_{s}$", r"$|B|$",
-                         "Spatial correlation: anisotropy vs |B|")
-            plot_scatter(maps["A"], jdia["J_dia_total"],
-                         self.outdir / f"A_{s}_vs_Jdia_scatter.png", rf"$A_{s}$",
-                         r"$J_{{\rm dia},x}$", "Spatial correlation: anisotropy vs J_dia")
+            scatter["deltaB"].append((toci, maps["A"], PICDataReader.flatten_2d_slice(fmet["delta_B_over_B0"])))
+            scatter["B"].append((toci, maps["A"], PICDataReader.flatten_2d_slice(fmet["B_magnitude"]) / abs(B0)))
+            scatter["Jdia"].append((toci, maps["A"], jdia["J_dia_total"]))
+        plot_scatter_series(scatter["deltaB"], self.outdir / f"A_{s}_vs_deltaB_scatter.png", rf"$A_{s}$",
+                            r"$(|B|-B_0)/B_0$", "Anisotropy vs local field change")
+        plot_scatter_series(scatter["B"], self.outdir / f"A_{s}_vs_B_scatter.png", rf"$A_{s}$",
+                            r"$|B|/B_0$", "Anisotropy vs local field strength")
+        plot_scatter_series(scatter["Jdia"], self.outdir / f"A_{s}_vs_Jdia_scatter.png", rf"$A_{s}$",
+                            r"$J_{{\rm dia},x}$ [code units]", "Anisotropy vs diamagnetic current")
 
         _write_csv(self.outdir / "anisotropy_spatial_stats.csv", rows)
         _write_csv(self.outdir / "spatial_correlations.csv", corr_rows)
@@ -2152,7 +2413,7 @@ class PhysicalDiagnostics:
         _write_csv(self.outdir / "energy_table.csv", rows)
         if heating:
             _write_csv(self.outdir / "electron_energy_trend.csv", [heating])
-            print(f"  calentamiento electrónico secular: "
+            print(f"  secular electron heating: "
                   f"dEe/dt = {heating['slope_per_omegaci']:.3e} por Omega_ci^-1, "
                   f"R2 = {heating['r_squared']:.4f}, "
                   f"A_e medio = {heating['A_e_mean']:.3f} "

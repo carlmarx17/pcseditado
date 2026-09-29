@@ -333,6 +333,14 @@ def write_x_csv(profiles: dict[str, dict], path: Path) -> Path:
     return path
 
 
+def _note_maxwellian(ax, label: str) -> None:
+    """A closure whose kappa_eff is infinite everywhere: say so, draw nothing."""
+    notes = [t for t in ax.texts if getattr(t, "_maxwellian_note", False)]
+    text = ax.text(0.03, 0.95 - 0.07 * len(notes), label + r": $\kappa_{\rm eff}=\infty$ (Maxwellian)",
+                   transform=ax.transAxes, fontsize=10, va="top", color="0.35")
+    text._maxwellian_note = True
+
+
 def make_x_figure(kappa0, A0: float, a: float, kappa_t, outdir: Path,
                   s_max: float, n_x: int = 41, x_max: float = 3.0,
                   L: float = 1.0, quiet: bool = False) -> tuple[Path, Path]:
@@ -383,6 +391,9 @@ def make_x_figure(kappa0, A0: float, a: float, kappa_t, outdir: Path,
                "Spectral index"))
     for ax, key, ylabel, title in panels:
         for c in CLOSURES:
+            if not np.any(np.isfinite(profs[c][key])):
+                _note_maxwellian(ax, labels[c])
+                continue
             ax.plot(x, profs[c][key], color=colors[c], lw=2.0, label=labels[c])
             if key != "kappa_eff":
                 ax.plot(x, prof_max[c][key], color=colors[c], lw=1.1, ls=":",
@@ -632,6 +643,9 @@ def make_figure(kappa0, A0: float, kappa_t, outdir: Path,
               ("kappa_eff", r"$\kappa_{\rm eff}$ (truncated moments)", True))
     for ax, (key, ylabel, is_kappa) in zip(axes.ravel(), panels):
         for c in CLOSURES:
+            if not np.any(np.isfinite(profs[c][key])):
+                _note_maxwellian(ax, labels[c])
+                continue
             ax.plot(b, profs[c][key], color=colors[c], lw=2.0,
                     label=labels[c])
             if not is_kappa:

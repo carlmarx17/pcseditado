@@ -25,7 +25,6 @@ import plot_style as ps
 
 ps.apply()
 import matplotlib.colors as mcolors
-import matplotlib.cm as cm
 from pathlib import Path
 
 from data_reader import PICDataReader
@@ -406,7 +405,9 @@ def plot_brazil_accumulated(
                    color=ps.c("#2ecc71"), edgecolor="white", zorder=12, label="Measured start")
         ax.scatter(beta_med[-1], aniso_med[-1], marker="*", s=190,
                    color=ps.c("#f1c40f"), edgecolor="white", zorder=12, label="Measured end")
-        for idx in np.unique(np.linspace(0, len(beta_med) - 1, min(6, len(beta_med)), dtype=int)):
+        ps.plain_log_axis(ax)
+        candidates = np.unique(np.linspace(0, len(beta_med) - 1, min(6, len(beta_med)), dtype=int))
+        for idx in ps.spaced_indices(ax, beta_med, aniso_med, candidates):
             ax.annotate(
                 rf"{time_med[idx]:.2f}",
                 (beta_med[idx], aniso_med[idx]),
@@ -416,13 +417,20 @@ def plot_brazil_accumulated(
 
     _style_ax(ax, rf"Brazil Plot — {PROFILE_LABEL}  ($m_i/m_e={int(MASS_RATIO)}$)",
               tick_size=BRAZIL_TICK, title_size=BRAZIL_TITLE)
+    ps.plain_log_axis(ax)
+    # Leave one annotation line between the title and the frame.
+    ax.set_title(ax.get_title(), fontsize=BRAZIL_TITLE, fontweight="bold", color=TEXT_CLR,
+                 pad=1.8 * BRAZIL_ANNOT + 8)
 
+    # Run summary between the title and the frame, where it cannot cover the
+    # thresholds or the data; the numbers on the trajectory are t Omega_ci.
     t_max_oci = step_to_omegaci(steps[-1]) if steps else 0
-    ax.text(0.98, 0.02,
+    ax.text(0.5, 1.012,
             f"{len(bv):,} points  |  {len(steps)} snapshots  |  "
-            rf"$t_{{max}} = {t_max_oci:.1f}\,\Omega_{{ci}}^{{-1}}$",
-            transform=ax.transAxes, ha="right", va="bottom",
-            fontsize=BRAZIL_ANNOT, color=ps.c("#8b949e"))
+            rf"$t_{{max}} = {t_max_oci:.1f}\,\Omega_{{ci}}^{{-1}}$  |  "
+            r"labels on the trajectory: $t\,\Omega_{ci}$",
+            transform=ax.transAxes, ha="center", va="bottom",
+            fontsize=BRAZIL_ANNOT, color=ps.MUTED_CLR)
 
     ax.legend(fontsize=BRAZIL_LEGEND, framealpha=0.55,
               facecolor=ps.c("#1c2128"), edgecolor=ps.c("#30363d"), labelcolor=TEXT_CLR,
@@ -496,6 +504,11 @@ def plot_temporal_evolution(snap_data: list, outdir: Path):
         label=r"global $\langle P_\parallel\rangle/\langle P_\perp\rangle$",
     )
     ax_inv.axhline(1.0, color=TEXT_CLR, alpha=0.3, lw=0.9, ls="--")
+    finite_inv = inverse_global[np.isfinite(inverse_global)]
+    if finite_inv.size:
+        lo, hi = min(finite_inv.min(), 1.0), max(finite_inv.max(), 1.0)
+        pad = 0.08 * (hi - lo) if hi > lo else 0.1
+        ax_inv.set_ylim(lo - pad, hi + pad)
     ax_inv.set_ylabel(r"$T_\parallel/T_\perp$", fontsize=POSTER_LABEL, color=TEXT_CLR)
     ax_inv.set_xlabel(r"$t\,\Omega_{ci}$", fontsize=POSTER_LABEL, color=TEXT_CLR, labelpad=6)
     _style_ax(ax_inv)
@@ -511,7 +524,13 @@ def plot_temporal_evolution(snap_data: list, outdir: Path):
              label="per-cell median")
     ax2.set_ylabel(r"$\beta_{i\parallel}$", fontsize=POSTER_LABEL, color=TEXT_CLR)
     ax2.set_xlabel(r"$t\,\Omega_{ci}$", fontsize=POSTER_LABEL, color=TEXT_CLR, labelpad=6)
-    ax2.set_yscale("log")
+    # Log only when beta spans more than a decade; otherwise a log axis just
+    # prints "5 x 10^0"-style labels on an almost flat curve.
+    finite_b = np.concatenate([b_p25, b_p75, b_global])
+    finite_b = finite_b[np.isfinite(finite_b) & (finite_b > 0)]
+    if finite_b.size and finite_b.max() / finite_b.min() > 10:
+        ax2.set_yscale("log")
+        ps.plain_log_axis(ax2, "y")
     _style_ax(ax2)
     ax2.legend(fontsize=POSTER_LEGEND, framealpha=0.5,
                facecolor=ps.c("#1c2128"), edgecolor=ps.c("#30363d"), labelcolor=TEXT_CLR)
@@ -556,10 +575,6 @@ def plot_brazil_grid(snap_list: list, outdir: Path, b0_ref: float, n_cols=4):
     all_aniso = np.concatenate([s["anisotropy"] for s in snap_list])
     xmin, xmax, ymin, ymax = _robust_plot_ranges(all_beta, all_aniso)
 
-    cmap_time = cm.plasma
-    t_all = np.array([s["toci"] for s in snap_list])
-    t_norm = mcolors.Normalize(vmin=t_all.min(), vmax=t_all.max())
-
     beta_init = ACTIVE_BETA_INITIAL
     aniso_init = ACTIVE_ANISOTROPY_INITIAL
 
@@ -589,11 +604,11 @@ def plot_brazil_grid(snap_list: list, outdir: Path, b0_ref: float, n_cols=4):
 
         ax.set_xscale("log"); ax.set_yscale("log")
         ax.set_xlim(xmin, xmax); ax.set_ylim(ymin, ymax)
+        ps.plain_log_axis(ax)
 
         toci = snap["toci"]
-        color = cmap_time(t_norm(toci))
         ax.set_title(rf"$t\,\Omega_{{ci}} = {toci:.2f}$",
-                     fontsize=BRAZIL_GRID_TITLE, fontweight="bold", color=color, pad=5)
+                     fontsize=BRAZIL_GRID_TITLE, fontweight="bold", color=TEXT_CLR, pad=5)
 
         ax.tick_params(which="both", colors=TEXT_CLR, direction="in",
                        labelsize=BRAZIL_GRID_TICK, top=True, right=True)
@@ -614,7 +629,7 @@ def plot_brazil_grid(snap_list: list, outdir: Path, b0_ref: float, n_cols=4):
 
     fig.suptitle(
         rf"Brazil Plots per Snapshot — {PROFILE_LABEL}  ($m_i/m_e={int(MASS_RATIO)}$)",
-        fontsize=BRAZIL_TITLE + 2, fontweight="bold", color=TEXT_CLR, y=1.01
+        fontsize=BRAZIL_TITLE + 2, fontweight="bold", color=TEXT_CLR
     )
 
     out = output_path(outdir, "brazil_snapshots")

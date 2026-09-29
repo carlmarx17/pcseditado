@@ -39,6 +39,27 @@ before this date must be regenerated; the manifest records the version.
   balance, \(J_s\cdot E\) energy exchange, estimator comparison and
   convergence/realization study (see "Thesis workflow" below).
 
+**Follow-up (after the first v5 reanalysis, job 12069106).** gamma changes
+again; regenerate `09_physical_diagnostics` and `04_spectra`.
+
+- The reference gamma of a run is now the fit of its **dominant Fourier mode**
+  of \(\delta\mathbf B\) (`growth_rate_summary.csv`, series `mode`;
+  `mode_growth_table.csv`; `growth_rate_fit_mode.png`). The domain rms mixes
+  the noise of every k with the mode and its log-slope was ~half the mode's
+  (mirror moderate: 0.056-0.065 vs ~0.11-0.12). The rms series (`total`,
+  `parallel`, `perp`) are fitted on the mode's linear phase. Comparisons,
+  convergence study and `kappa_evolution.py` all read the `mode` row
+  (`growth_fit.reference_growth_row`).
+- The automatic window no longer locks onto the PIC quiet-start build-up of
+  the noise floor (the first ~2 \(\Omega_{ci}^{-1}\), steeper than any
+  instability): the spectral, polarization and dispersion fits of the v5 run
+  sat at \(t<7\,\Omega_{ci}^{-1}\), one with \(\gamma\approx0.6\) flagged valid.
+- `growth_rate_map.py` fits every mode on the linear phase of its dominant mode
+  instead of 10-60 % of the run, which reached into saturation
+  (`fit_window_source` in the JSON; `--fit-lo/--fit-hi` keep the old choice).
+- `compare_physical_cases.py` drew empty anisotropy and heat-flux panels: those
+  columns only exist at the particle cadence and the line broke at every NaN.
+
 ## Thesis workflow
 
 One command produces every product of one run, in dependency order
@@ -312,8 +333,10 @@ checklist: `validation_table.csv`, `validation_summary.txt`,
 `growth_rate_summary.csv`, `anisotropy_spatial_stats.csv`,
 `spatial_correlations.csv`, `energy_table.csv`, plus `T_parallel/T_perp/A`
 maps of the driven species, `deltaB`, `mirror_holes` and `J_dia` maps, 2D
-VDFs, Maxwellian/Kappa fits, growth rate (total, parallel and perpendicular
-amplitude, with `gamma_err`), correlations and energy. The same folder
+VDFs, Maxwellian/Kappa fits, growth rate (the dominant Fourier mode, which is
+the reference, and the total, parallel and perpendicular rms on its linear
+phase, with `gamma_err`; every followed mode in `mode_growth_table.csv`),
+correlations and energy. The same folder
 receives `global_energy_*` (`make energy`), `field_residuals*`
 (`make residuals`), `energy_exchange*` (`make energy-exchange`) and
 `estimator_consistency*` (`make estimators`).
@@ -623,10 +646,21 @@ Not \(|B|-B_0\): for a transverse mode \(|B|-B_0\simeq\delta B_\perp^2/2B_0\) an
 its log-slope is \(2\gamma\). The compressive (\(\delta B_\parallel\)) and
 transverse (\(\delta B_\perp\)) amplitudes are fitted too.
 
+The rms sums the PIC noise of every k with the unstable mode, so its
+log-slope only reaches \(\gamma\) once the mode dwarfs the noise, i.e. near
+saturation. The **reference** \(\gamma\) is therefore that of a single Fourier
+mode, \(|\delta\hat{\mathbf B}(\mathbf k^*,t)|\), with \(\mathbf k^*\) the mode of
+largest amplitude over the run (candidates: the strongest modes with
+\(|k|d_i\le\) `K_MAX_DI_DEFAULT` at 25/50/75/100 % of the run). The rms series
+are fitted on its linear phase.
+
 The linear phase (`growth_fit.py`, shared by every script) is located on a
 running median of \(\ln\delta B\): noise floor = minimum before the saturation
-maximum, rise = 10-90 % of the log-rise, and inside it the contiguous interval
-where the local slope stays above 80 % of its maximum. Ordinary least squares
+maximum, rise = 10-90 % of the log-rise, and inside it a contiguous interval
+where the local slope stays above 80 % of its peak; of the interval around the
+steepest slope and those around the steepest slope of what follows, the one
+with the largest gain in e-folds wins. That skips the quiet-start build-up of
+the noise floor, steeper than any instability but only ~2 \(\Omega_{ci}^{-1}\) long. Ordinary least squares
 gives \(\gamma\) and its standard error; refits with other band edges and slope
 fractions give the window sensitivity, and `gamma_err` combines both. On a
 smoothly saturating (logistic) synthetic series the automatic fit is within
@@ -1392,3 +1426,182 @@ script, see:
 ```text
 CodeforAnalisys/ANALISIS_ESTRUCTURA.md
 ```
+
+## Revision 6: evidence and estimator contracts (2026-09-28)
+
+Use a **new results directory**. Revision 6 changes VDF display coordinates,
+structure definitions, growth uncertainty and metadata. Preserve v5 as the
+historical baseline. Existing local modal-growth fixes are retained.
+
+The ordered runner isolates each stage, promotes its products only after the
+command succeeds, and writes atomic completion records with source/input/output
+fingerprints, configuration, logs, elapsed time and peak memory. It runs the
+initial-state preflight before anything else and passes an accepted modal phase
+to the spectral stages (recorded as `window_source` in `pipeline.json`). A stage
+may never overwrite a product of another stage: `physics` already writes the
+DiagEnergies budget, so `energy-if-present` is only accepted for a run analysed
+without `physics` (the two used to overwrite each other, and every `--resume`
+then re-ran both). A completion marker describes execution success; the report
+separately assesses scientific evidence. No run is certified from an exit code
+alone.
+
+From the repository root:
+
+```bash
+.venv/bin/python CodeforAnalisys/run_pipeline.py \
+  --data-dir /path/to/raw/run --case mirror_bimaxwellian_moderate \
+  --results-root "$PWD/analysis_results/v6"
+```
+
+Add `--resume` only for the same source, inputs and configuration; a re-run
+stage also re-runs the stages ordered after it (`spectral` after `physics`). To
+select a subset, use e.g. `--stages manifest physics spectral`; manifest remains
+a required preflight. Optional stages: `theory` (parallel linear theory for the
+polarization overlay; refused for mirror cases), `theory-liouville` and
+`energy-if-present`.
+
+`--jobs N` runs up to N independent stages at once (longest first; `spectral`
+waits for `physics`). `--launcher 'srun --nodes=1 --ntasks=1 --exclusive'`
+puts each stage on its own node while the bookkeeping stays in one process;
+`cosma_jobs/analisis/reanalysis_v6_all.sh` uses exactly this. `--keep-going`
+still runs the stages independent of a failed one; the report is always
+written, and the exit code is non-zero if anything failed or did not run. `--make-option LOGS=/path/to/run.out` passes the actual runtime log.
+`PSC_ANALYSIS_CONFIG=/path/to/runtime.json` supplies verified run values through
+the existing geometry resolver; values are not inferred from the desired result.
+The runner caps numerical-library threads at one per process to prevent nested
+oversubscription; benchmark worker counts on production data separately.
+
+Audit an existing delivery without reprocessing its snapshots:
+
+```bash
+.venv/bin/python CodeforAnalisys/quality_report.py \
+  results/v5/mirror_bimaxwellian_moderate \
+  results/v5/mirror_bikappa5_moderate \
+  results/v5/mirror_bikappa3_moderate \
+  --outdir analysis_results/v6_audit
+```
+
+The report contains HTML figure links and a CSV/JSON evidence matrix. The optional
+`--energy-tolerance` must come from an independently justified numerical error
+budget. Without it, a measured energy drift is **UNVERIFIED**, not automatically
+accepted, unless the energy audit below finds it FAILS on its own terms. Missing
+logs, initial data, mode evidence and independent convergence remain explicit. No
+tolerance is selected to make a result pass. A growth rate is PASS only for an
+accepted **modal** fit: the legacy `total` series (domain rms of dB, biased low)
+stays UNVERIFIED even when its fit was accepted.
+
+**Energy audit** (`energy_audit.py`, also run by the report into
+`<outdir>/energy_audit/`). From existing products only, per run: (1) the
+DiagEnergies columns at t = 0 must reproduce E_s/E_B = beta_s,par (1/2 + A_s),
+which checks species order, the 1/2 field factor and the volume; (2) a change of
+the total energy, which a periodic box without sources cannot have, is compared
+with the energy released by the driving species and FAILS at half of it; (3)
+without DiagEnergies the prt-window moments FAIL when the electrons gain more
+than twice what ions and magnetic fluctuations release there; (4) dx/lambda_De(t),
+beta_e(t) and T_e/T_e0 at the end of the fitted linear phase. Across runs that
+differ only in the distribution it reports whether the electron heating is
+common-mode. It assigns no mechanism.
+
+```bash
+.venv/bin/python CodeforAnalisys/energy_audit.py results/v5/mirror_* \
+  --outdir analysis_results/v6_audit/energy_audit
+```
+
+**Isotropic controls.** `energy_audit.py` pairs every anisotropic run with an
+isotropic control among the given runs (same numerics and electrons, A_i = 1,
+preferably the same distribution and ion thermal energy; `--control RUN=CTRL`
+forces a pair) and subtracts the control's energy changes on a common time
+axis: the electron heating without the numerical baseline and the
+baseline-corrected closure (PASS <= 0.1, FAIL >= 0.5 of the ion release). The
+subtraction assumes the numerical heating is not changed by the instability;
+the raw budget keeps its own status. The controls are the cases
+`psc_mirror_*_isotropic` (`src/SIMULACIONES_ANISOTROPIA.md`).
+
+```bash
+.venv/bin/python CodeforAnalisys/energy_audit.py analysis_results/v6/mirror_* \
+  --outdir analysis_results/v6/quality_report/energy_audit
+```
+
+**Figure conventions** (all through `plot_style`): paper theme, 300 dpi PNG plus
+PDF; spatial maps with z (along B0) horizontal, y vertical, equal aspect and
+integer d_i ticks (`plot_style.spatial_axes`); k_parallel horizontal in every
+k-space map; time as t Omega_ci; velocities as v/v_A after converting PSC's
+u = gamma v; log axes labelled at 1-2-5 values (`plain_log_axis`); a power of
+ten goes into the axis or colour-bar label instead of a floating offset; one
+diverging (RdBu_r) and one sequential (viridis) colour map; Okabe-Ito series
+colours.
+
+**Figure content check.** `plot_style.save` records, next to every figure, what
+each panel actually draws (`figure_qa_<script>.jsonl`): series that draw nothing
+(e.g. samples isolated between NaNs with no marker — the v5 comparison of A(t)),
+maps with no finite value, empty panels, and layout defects: overlapping text
+(titles, labels, ticks, annotations, colour bars, legends) and legends or
+annotations covering data. The report's `figures` check lists them (WARN). A
+successful `savefig` is not evidence that anything was plotted or legible.
+
+Changes to measurement conventions:
+
+- VDF displays use converted **v**; the analytic initialization-distribution fit
+  deliberately remains in **u = gamma v**, with corrected labels and CSV fields.
+  A model in u is not silently reused as a model in v. Gyrotropic 2D densities use
+  exact annular bin volumes and record probability excluded by the display range.
+- SciPy and fallback fits use the same linear-density least-squares objective.
+  Solver/fallback reasons, effective counts, conditional parameter error and
+  held-out particle scores are exported. Predictive improvement does not identify
+  a physical kappa population or exclude a mixture of local populations.
+- Mode discovery includes early logarithmically spaced snapshots. Modal tables
+  retain the strongest-power reference and separately flag the fastest accepted
+  candidate; this is not automatic branch identification. Growth errors include
+  an explicitly recorded HAC estimate for correlated residuals and window spread.
+- Structure morphology is relative to the instantaneous mean magnitude; the
+  change relative to B0 is retained separately. Thermal pressure uses co-located
+  B, and magnetic pressure is smoothed after squaring. Threshold/smoothing
+  sensitivity, overlap tracks, split/merge events and censored durations are
+  exported. Fast advection can break a pixel-overlap track.
+- Heat flux exports both a particle-weighted mean of local normalized values
+  and a ratio of integrated moments. Its matched symmetric-null floor is an
+  asymptotic influence-function estimate on the truncated distribution, not an
+  exact detection threshold for arbitrary kappa tails. The old Maxwellian
+  reference remains in the table for comparison.
+- Energy closure reports common time coverage and the entire cumulative residual.
+  `energy_exchange.py --time-tolerance-code VALUE` permits only explicit bounded
+  endpoint snapping for verified output rounding (default zero). It does not
+  repair energy drift, extrapolate distant data or validate temporal staggering.
+- Comparisons reject mixed estimators/algorithm versions and avoid connecting
+  large gaps or drawing an invalid growth rate as a zero-valued measurement.
+- The gamma(k_par, k_perp) display zoom (`--display-kperp-max`, 0.9 d_i^-1 by
+  default for ion-scale cases) is widened whenever an accepted growing cell lies
+  outside it, with a note on the figure; it previously hid the only growing mode
+  of the synthetic run. The axes follow the computed bins, not the angle guides.
+- Initial-state validation allows max(fixed tolerance, 4 sampling standard
+  errors), the latter from the measured fourth moment (kappa tails make it far
+  larger than the Gaussian sqrt(2/N)). Production windows (~10^7 particles) are
+  unaffected; a correctly initialised small sample no longer FAILS.
+- The PSC log counts as covering the run when its last check lies within one
+  check cadence of nmax (checks run every `continuity_every` steps).
+- Particle VDFs in `plot_prt.py` and `vdf_spatial.py` convert u = gamma v to v
+  (the labels said v while u was binned), are weighted and normalised by the
+  whole population rather than the plotted range. The |v_perp| distribution is
+  compared with the 2-D Maxwellian (Rayleigh) of the t = 0 variance; it used to
+  be compared with a 1-D Gaussian, the wrong reference.
+- Spectral indices are fitted only over a decaying range above twice the peak
+  and 10x above the noise floor (>= 5 points, >= 0.3 decades, R^2 >= 0.9);
+  otherwise the figure says so and `power_law_slope` is empty. The old fixed
+  middle-half fit reported noise slopes such as k^+2.8.
+- A kappa fit at its upper bound (80) is Maxwellian-consistent, not a
+  measurement: the time series shows 1/kappa with such fits marked.
+- `mirror_area_fraction` was the fraction of cells below B0 - std(|B|), ~16-25 %
+  for any amplitude; it is renamed `fraction_below_B0_minus_std` and no longer
+  plotted as a hole area (hole populations: `07_structures`).
+- The magnetic-energy panel of `plot_prt.py` plotted (dB/B0)^2/2 labelled in
+  units of B0^2/2, a factor 2 low; it now plots (dB/B0)^2 = E_dB/(B0^2/2).
+- `vdf_spatial.py` adds a spatial-mixture control of the window kappa tail:
+  a kappa is exactly a Gamma mixture of Maxwellian temperatures, so the
+  macro-cell temperature spread alone gives kappa_mix = 5/2 + 1/CV^2(tau) for the
+  whitened estimator. `mixture_fraction_of_tail` and `mixture_verdict`
+  (`mixture_explains_tail` >= 0.75, `intrinsic_at_macrocell_scale` <= 0.25,
+  `partial_mixture`, `no_significant_tail`) are written on the `all` rows.
+
+See `RESULTS_V5_IMPROVEMENT_PLAN.md` section 9 for implementation status and
+remaining production/research validation. Standalone diagnostic scripts remain
+available; the ordered runner is the recommended reproducible workflow.

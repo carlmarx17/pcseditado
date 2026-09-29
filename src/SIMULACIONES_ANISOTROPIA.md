@@ -46,9 +46,9 @@ same grid, outputs and intervals, unless overridden via the environment.
 | Boundaries | Periodic |
 | Fields/moments | every 500 steps |
 | Particles | every 10,000 steps |
-| ADIOS2 checkpoint | every 5000 steps |
+| ADIOS2 checkpoint | every 5000 steps (header default; ion-scale jobs use 150,000) |
 | Continuity check | every 5000 steps |
-| Energy diagnostic | every 5000 steps (`diag.asc`) |
+| Energy diagnostic | every 500 steps (`diag.asc`) |
 | Load balancing | every 2500 steps |
 
 The parallel field is `z`:
@@ -128,11 +128,33 @@ box); each is identical to its mi/me = 200 base except that define.
 | `psc_whistler_bikappa5_strong` | `psc_whistler_bikappa5_strong.cxx` | 5 | 1.0 | 1.0 | 0.5 | 3.0 | 1152×1152 |
 | `psc_mirror_bikappa3` | `psc_mirror_bikappa3.cxx` | 3 | 5.0 | 3.0 | 1.0 | 1.0 | 576×576 |
 | `psc_mirror_bikappa5` | `psc_mirror_bikappa5.cxx` | 5 | 5.0 | 3.0 | 1.0 | 1.0 | 576×576 |
+| `psc_mirror_bikappa3_moderate` | `psc_mirror_bikappa3_moderate.cxx` | 3 | 5.0 | 2.0 | 1.0 | 1.0 | 576×576 |
 | `psc_mirror_bikappa5_moderate` | `psc_mirror_bikappa5_moderate.cxx` | 5 | 5.0 | 2.0 | 1.0 | 1.0 | 576×576 |
 | `psc_firehose_bikappa3` | `psc_firehose_bikappa3.cxx` | 3 | 10.0 | 0.1 | 1.0 | 1.0 | 576×576 |
 | `psc_firehose_bikappa5` | `psc_firehose_bikappa5.cxx` | 5 | 10.0 | 0.1 | 1.0 | 1.0 | 576×576 |
 | `psc_firehose_bikappa5_bigbox40` | `psc_firehose_bikappa5_bigbox40.cxx` | 5 | 10.0 | 0.1 | 1.0 | 1.0 | 1152×1152 (40 d_i) |
 | `psc_whistler_bikappa3_moderate` | `psc_whistler_bikappa3_moderate.cxx` | 3 | 1.0 | 1.0 | 0.5 | 2.0 | 576×576 |
+
+## Isotropic controls (numerical heating)
+
+The three mirror-moderate runs heat their electrons x8.3–8.6 by the end,
+isotropically and to within 3 % of each other, and their total energy is not
+conserved (+64.6 % in the bi-kappa 5 DiagEnergies budget; see
+`CodeforAnalisys/IMPLEMENTATION_V6.md`). With `dx/lambda_De = 8.68` this is a
+property of the numerical setup, not of the distribution. Each control is the
+distribution twin of a mirror-moderate run with `A_i = 1` and the same ion
+thermal energy, `beta_i_par (1/2 + A_i) = 12.5`, hence `beta_i_par = 25/3`:
+mirror stable, identical numerics and electrons. Its electron heating is the
+baseline that `energy_audit.py --control` subtracts from the anisotropic run.
+Run them with the production settings of their twins (`PSC_ENERGIES_EVERY=500`
+so that `diag.asc` exists), with the job scripts
+`cosma_jobs/simulacion/sim_mirror_*_isotropic.sh`.
+
+| Executable | File | κ | beta_i_par | A_i | beta_e_par | A_e | Grid | Control of |
+|---|---|---|---:|---:|---:|---:|---:|---|
+| `psc_mirror_bimaxwellian_isotropic` | `psc_mirror_bimaxwellian_isotropic.cxx` | ∞ | 25/3 | 1.0 | 1.0 | 1.0 | 576×576 | `psc_mirror_bimaxwellian_moderate` |
+| `psc_mirror_bikappa5_isotropic` | `psc_mirror_bikappa5_isotropic.cxx` | 5 | 25/3 | 1.0 | 1.0 | 1.0 | 576×576 | `psc_mirror_bikappa5_moderate` |
+| `psc_mirror_bikappa3_isotropic` | `psc_mirror_bikappa3_isotropic.cxx` | 3 | 25/3 | 1.0 | 1.0 | 1.0 | 576×576 | `psc_mirror_bikappa3_moderate` |
 
 ## Outputs
 

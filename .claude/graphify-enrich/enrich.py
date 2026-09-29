@@ -593,7 +593,12 @@ def stage_report(graph: dict) -> str:
         if (OUT / "manifest.json").exists() else {}
 
     G = nx.node_link_graph(graph, edges="links")
-    communities = {int(k): v for k, v in analysis["communities"].items()}
+    # `graphify update` can keep community members whose ids no longer exist
+    # (rationale ids carry line numbers, which move with every edit); the
+    # report generator indexes every member, so drop them first.
+    communities = {int(k): [n for n in v if n in G] for k, v in analysis["communities"].items()}
+    communities = {k: v for k, v in communities.items() if v}
+    analysis["communities"] = {str(k): v for k, v in communities.items()}
     cohesion = score_all(G, communities)
 
     md_files = sorted({n["source_file"] for n in graph["nodes"]

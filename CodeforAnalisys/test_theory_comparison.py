@@ -1,6 +1,5 @@
 """Prevent mixing polarization branches or citing rejected growth fits."""
 
-import csv
 import tempfile
 import unittest
 from pathlib import Path

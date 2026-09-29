@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
+from analysis_contract import strict_dumps
 import os
 from pathlib import Path
 
@@ -1214,8 +1214,11 @@ def plot_density(
     if omega_max_ci is not None:
         axis.set_xlim(0, omega_max_ci)
     elif autocrop and omega_signal is not None:
-        axis.set_xlim(0, float(omega_signal.max()) * 1.3)
+        # Never beyond the computed frequencies (the Nyquist limit): that
+        # strip would be blank and read as zero power.
+        axis.set_xlim(0, min(float(omega_signal.max()) * 1.3, float(result["omega_edges"][-1])))
 
+    v_top = float(np.max(np.abs(result["velocity_edges"])))
     if vph_max is not None:
         if result["absolute_velocity"]:
             axis.set_ylim(0, vph_max)
@@ -1223,10 +1226,10 @@ def plot_density(
             axis.set_ylim(-vph_max, vph_max)
     elif autocrop and velocity_signal is not None:
         if result["absolute_velocity"]:
-            axis.set_ylim(0, float(velocity_signal.max()) * 1.3)
+            axis.set_ylim(0, min(float(velocity_signal.max()) * 1.3, v_top))
         else:
             extent = max(abs(float(velocity_signal.min())), abs(float(velocity_signal.max()))) * 1.3
-            axis.set_ylim(-extent, extent)
+            axis.set_ylim(-min(extent, v_top), min(extent, v_top))
 
     colorbar = fig.colorbar(image, ax=axis)
     colorbar_label = (
@@ -1345,16 +1348,21 @@ def plot_omega_k_dispersion(
         # When the velocities are unsigned, k has already been folded onto the
         # positive half, so a symmetric x range would be half empty.
         k_low = -1.0 if signed else 0.0
+        # Autocrop never extends past the computed grid (outer bin edges):
+        # the strip beyond would be blank and read as zero power.
+        half = lambda c: 0.5 * float(np.median(np.diff(c))) if len(c) > 1 else 0.0
+        k_top = float(np.max(np.abs(kc_wp))) + half(kc_wp)
+        w_top = float(np.max(w_wp)) + half(w_wp)
         if kpar_max_di is not None:
             axis.set_xlim(k_low * kpar_max_di, kpar_max_di)
         elif autocrop and has_k_signal:
-            extent = float(np.max(np.abs(kc_signal))) * 1.3
+            extent = min(float(np.max(np.abs(kc_signal))) * 1.3, k_top)
             axis.set_xlim(k_low * extent, extent)
         if omega_max_ci is not None:
             axis.set_ylim(0, omega_max_ci * va_over_c)
         elif autocrop and has_w_signal:
-            axis.set_ylim(0, max(float(w_wp_signal.max()) * 1.3,
-                                  2 * result["omega_resolution"] * va_over_c))
+            axis.set_ylim(0, min(max(float(w_wp_signal.max()) * 1.3,
+                                     2 * result["omega_resolution"] * va_over_c), w_top))
     else:
         x_coord, y_coord = np.log10(kc_wp), np.log10(w_wp)
         image = axis.pcolormesh(
@@ -1743,7 +1751,7 @@ def main() -> int:
         "settings": vars(args),
         "limitations": "Single-complex-exponential characterization in the selected interval and retained k band; unresolved/aliased frequencies and multiple branches require further data. No instability species is inferred.",
     }
-    (outdir / f"{stem}.json").write_text(json.dumps(mode_report, indent=2, allow_nan=False))
+    (outdir / f"{stem}.json").write_text(strict_dumps(mode_report, indent=2, allow_nan=False))
     plot_mode_summary(result, outdir / f"{stem}.png")
     plot_mode_fit(result, outdir / f"{stem}_fit.png")
     if dominant is not None:
@@ -1782,7 +1790,7 @@ def main() -> int:
         "omega_scale": args.omega_scale,
     }
     report_path = outdir / f"dispersion_resolution_{metadata['plane']}_{args.component}.json"
-    report_path.write_text(json.dumps(report, indent=2, default=float))
+    report_path.write_text(strict_dumps(report, indent=2, default=float))
 
     print(f"Processed {series.shape[1]} snapshots on plane {metadata['plane']}, "
           f"t in [{times.min():.3f}, {times.max():.3f}] Omega_ci^-1.")

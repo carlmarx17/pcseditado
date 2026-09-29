@@ -191,7 +191,7 @@ def plot_series(times, series, noise_window, avg_window, averages, b0,
     ax_b.plot(times, series["B_rms"] / b0, color=ps.c("#2ca02c"), lw=1.4,
               ls="--", label=r"$B_{\rm rms}/B_0$")
     ax_b.set_ylabel(r"$B/B_0$")
-    ax_b.set_xlabel(r"$\Omega_{ci} t$")
+    ax_b.set_xlabel(r"$t\Omega_{ci}$")
     ax_b.legend(loc="best", framealpha=0.85)
 
     for ax in (ax_db, ax_b):

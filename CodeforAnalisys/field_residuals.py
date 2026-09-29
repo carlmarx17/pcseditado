@@ -37,7 +37,7 @@ from __future__ import annotations
 import argparse
 import csv
 import glob
-import json
+from analysis_contract import strict_dumps
 import re
 from pathlib import Path
 
@@ -115,7 +115,14 @@ def summarize(div_rows: list[dict], log_rows: list[dict], meta: dict,
         vals = vals[np.isfinite(vals)]
         return float(np.max(vals)) if vals.size else None
     last_step = log_rows[-1]["step"] if log_rows else None
+    nmax = meta.get("nmax_from_log")
+    # PSC runs the checks every `continuity_every` steps, so the last check of a
+    # finished run is the last multiple of that cadence, not necessarily nmax.
+    steps = np.array([r["step"] for r in log_rows], dtype=float)
+    cadence = float(np.median(np.diff(steps))) if steps.size > 1 else None
     return {
+        "scientific_status": "UNVERIFIED",
+        "reason": "Assess each residual against its declared threshold and complete log coverage; divB tolerance not specified",
         "divB_snapshots": len(div_rows),
         "divB_max_dx_over_B0": peak(div_rows, "divB_max_dx_over_B0"),
         "log_files": [str(p) for p in log_paths],
@@ -126,8 +133,10 @@ def summarize(div_rows: list[dict], log_rows: list[dict], meta: dict,
         "thresholds": meta.get("thresholds", {}),
         "last_logged_step": last_step,
         "nmax_from_log": meta.get("nmax_from_log"),
-        "log_reaches_nmax": bool(last_step is not None and meta.get("nmax_from_log")
-                                 and last_step >= meta["nmax_from_log"]),
+        "check_cadence_steps": cadence,
+        "log_reaches_nmax": bool(last_step is not None and nmax
+                                 and (last_step >= nmax
+                                      or (cadence is not None and last_step + cadence > nmax))),
     }
 
 
@@ -208,9 +217,9 @@ def main() -> int:
     write_csv(outdir / "field_residuals_divB.csv", div_rows)
     write_csv(outdir / "field_residuals_log.csv", log_rows)
     summary = summarize(div_rows, log_rows, meta, log_paths)
-    (outdir / "field_residuals_summary.json").write_text(json.dumps(summary, indent=2))
+    (outdir / "field_residuals_summary.json").write_text(strict_dumps(summary, indent=2))
     plot(div_rows, log_rows, meta, outdir)
-    print(json.dumps(summary, indent=2))
+    print(strict_dumps(summary, indent=2))
     return 0
 
 

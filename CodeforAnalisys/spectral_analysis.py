@@ -351,24 +351,36 @@ class SpectralAnalyzer:
         )
         return sums
 
+    #: A spectral index is only reported over a range that is physically a
+    #: cascade/decay range: above twice the spectral peak, at least 10x above
+    #: the noise floor (median of the highest-k quarter), >= 5 points over
+    #: >= 0.3 decades, negative slope and R^2 >= 0.9.
+    POWER_LAW_MIN_POINTS = 5
+    POWER_LAW_MIN_DECADES = 0.3
+    POWER_LAW_MIN_R2 = 0.9
+    POWER_LAW_FLOOR_FACTOR = 10.0
+
     def _fit_power_law(self, k: np.ndarray, e_k: np.ndarray) -> dict | None:
-        if len(k) < 6:
+        k, e_k = np.asarray(k, dtype=float), np.asarray(e_k, dtype=float)
+        ok = np.isfinite(k) & np.isfinite(e_k) & (k > 0) & (e_k > 0)
+        if np.count_nonzero(ok) < 6:
             return None
-
-        fit_slice = slice(len(k) // 4, max(3 * len(k) // 4, len(k) // 4 + 3))
-        k_fit = k[fit_slice]
-        e_fit = e_k[fit_slice]
-        valid = (k_fit > 0) & (e_fit > 0)
-        if np.count_nonzero(valid) < 3:
-            return None
-
-        result = linregress(np.log10(k_fit[valid]), np.log10(e_fit[valid]))
-        return {
-            "slope": result.slope,
-            "intercept": result.intercept,
-            "rvalue": result.rvalue,
-            "k_fit": k_fit[valid],
-        }
+        k, e_k = k[ok], e_k[ok]
+        floor = float(np.median(e_k[-max(3, len(k) // 4):]))
+        peak = int(np.argmax(e_k))
+        band = (k >= 2.0 * k[peak]) & (e_k >= self.POWER_LAW_FLOOR_FACTOR * floor)
+        out = {"accepted": False, "noise_floor": floor, "slope": float("nan"),
+               "intercept": float("nan"), "rvalue": float("nan"), "k_fit": k[band]}
+        if np.count_nonzero(band) < self.POWER_LAW_MIN_POINTS or \
+                np.log10(k[band].max() / k[band].min()) < self.POWER_LAW_MIN_DECADES:
+            return {**out, "reason": "no power-law range above the noise floor"}
+        result = linregress(np.log10(k[band]), np.log10(e_k[band]))
+        out.update(slope=float(result.slope), intercept=float(result.intercept),
+                   rvalue=float(result.rvalue))
+        if result.slope >= 0 or result.rvalue ** 2 < self.POWER_LAW_MIN_R2:
+            return {**out, "reason": f"not a decaying power law (slope {result.slope:.2f}, "
+                                     f"R2 {result.rvalue ** 2:.2f})"}
+        return {**out, "accepted": True, "reason": ""}
 
     @staticmethod
     def _peak_index(psd_2d: np.ndarray, k_grids: dict) -> tuple[int, int] | None:
@@ -695,9 +707,11 @@ class SpectralAnalyzer:
         cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
         plt.setp(plt.getp(cb.ax, "yticklabels"), color=TEXT_CLR)
         ax.set_yscale("log")
-        ax.set_xlabel(r"$\Omega_{ci} t$")
+        ps.plain_log_axis(ax, "y")
+        ax.set_xlabel(r"$t\Omega_{ci}$")
         ax.set_ylabel(r"$k\,d_i$")
-        ax.set_title(f"E(k,t) — {component} ({_CHANNEL_HINT[component]}, {PROFILE_LABEL}, {plane})", fontsize=POSTER_TITLE)
+        ax.set_title(f"E(k,t) — {component} ({_CHANNEL_HINT[component]})\n{PROFILE_LABEL}, {plane} plane",
+                     fontsize=POSTER_TITLE)
         out_file = self.outdir / f"energy_kt_{component}_{plane}.png"
         ps.save(fig, out_file)
         print(f"Saved E(k,t) map: {out_file}")
@@ -728,7 +742,7 @@ class SpectralAnalyzer:
                 ax.axvspan(lo, hi, color=GRID_CLR, alpha=0.4, label="fit window")
                 ax.semilogy(fit["fit_time"], fit["fit_amplitude"], "--", color="#f0883e", lw=2.0,
                             label=fr"fit $\gamma={fit['gamma']:.3g}\,\Omega_{{ci}}$ (r={fit['rvalue']:.2f})")
-        ax.set_xlabel(r"$\Omega_{ci} t$")
+        ax.set_xlabel(r"$t\Omega_{ci}$")
         ax.set_ylabel(r"$\sqrt{E(k,t)}$  (field amplitude, a.u.)")
         ax.set_title(
             f"Growth curve — {component} ({_CHANNEL_HINT[component]}), "
@@ -773,9 +787,16 @@ class SpectralAnalyzer:
             ax.plot(k[~sig_par], gamma_par[~sig_par], "s", markersize=4,
                     color=ps.c("#f0883e"), alpha=0.25, markeredgecolor="none")
         if np.any(~sig_perp) or np.any(~sig_par):
-            ax.plot([], [], "x", color=TEXT_CLR, alpha=0.4,
-                    label=f"below {significance_threshold:.0e}$\\times$peak energy (noise floor)")
+            # Legend proxy drawn like the faded points it stands for.
+            ax.plot([], [], "o", ls="none", markersize=4, color=ps.MUTED_CLR, alpha=0.35,
+                    markeredgecolor="none",
+                    label=f"faded: below {significance_threshold:.0e}$\\times$peak energy (noise floor)")
         ax.set_xscale("log")
+        ps.plain_log_axis(ax, "x")
+        # Room above the fastest mode: a point on the frame reads as clipped.
+        finite = np.concatenate([gamma_perp[np.isfinite(gamma_perp)], gamma_par[np.isfinite(gamma_par)], [0.0]])
+        top, bottom = float(finite.max()), float(finite.min())
+        ax.set_ylim(bottom - 0.05 * (top - bottom or 1.0), top + 0.25 * (top - bottom or 1.0))
         ax.set_xlabel(r"$k\,d_i$")
         ax.set_ylabel(r"$\gamma\ [\Omega_{ci}]$")
         ax.set_title(f"Mode-resolved growth rate — {PROFILE_LABEL} ({plane})", fontsize=POSTER_TITLE)
@@ -788,7 +809,7 @@ class SpectralAnalyzer:
         fig, ax = _new_dark_fig((9, 5.2))
         ax.plot(times, compressibility, lw=2.2, color=ps.c("#f85149"))
         ax.set_ylim(0.0, 1.0)
-        ax.set_xlabel(r"$\Omega_{ci} t$")
+        ax.set_xlabel(r"$t\Omega_{ci}$")
         ax.set_ylabel(r"$\delta B_\parallel^2 / (\delta B_\parallel^2+\delta B_\perp^2)$")
         ax.set_title(f"Magnetic compressibility — {PROFILE_LABEL} ({plane})", fontsize=POSTER_TITLE)
         out_file = self.outdir / f"compressibility_vs_time_{plane}.png"
@@ -809,6 +830,7 @@ class SpectralAnalyzer:
             ax.text(0.5, 0.5, "no measurable helicity (zero power in both transverse components)",
                     transform=ax.transAxes, ha="center", va="center", color=TEXT_CLR, fontsize=13)
         ax.set_xscale("log")
+        ps.plain_log_axis(ax, "x")
         ax.set_ylim(-1.05, 1.05)
         ax.set_xlabel(r"$k\,d_i$")
         ax.set_ylabel(r"$\sigma_m(k)$")

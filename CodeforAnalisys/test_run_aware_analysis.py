@@ -1,6 +1,4 @@
 """Regression tests for real box geometry, window density and streamed spectra."""
-import contextlib
-import io
 import json
 import os
 import tempfile
@@ -14,7 +12,6 @@ from streaming_fields import SnapshotSeries, spatial_spectra
 from validate_moments import measure_particles, validation_rows, M_ION, M_ELEC
 from polarization_dispersion import stream_polarization, build_psi, spatial_fft_kpar0
 from growth_rate_map import compute_growth_rate_map
-from dispersion_analysis import compute_phase_velocity_density
 
 
 class RunAwareTests(unittest.TestCase):

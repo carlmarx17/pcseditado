@@ -33,7 +33,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.ticker import AutoMinorLocator
 from scipy.ndimage import gaussian_filter
 
 import plot_style as ps
@@ -282,15 +281,12 @@ class DiamagneticCurrentAnalyzer:
             cb.set_label(lbl, fontsize=14, color=TEXT_CLR)
             cb.ax.yaxis.set_tick_params(color=TEXT_CLR, labelsize=13)
             plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
-            ax.set_xlabel(r"Z  [$d_i$]", fontsize=15, color=TEXT_CLR)
-            ax.set_ylabel(r"Y  [$d_i$]", fontsize=15, color=TEXT_CLR)
+            ps.spatial_axes(ax, fontsize=15, color=TEXT_CLR)
             ax.set_title(
-                rf"{title} - step {step}, $t \approx {step_to_omegaci(step):.2f}\,\Omega_{{ci}}^{{-1}}$",
-                fontsize=16, color=TEXT_CLR, pad=8,
+                rf"{title} — $t\Omega_{{ci}} = {step_to_omegaci(step):.1f}$ (step {step})",
+                fontsize=16, color=TEXT_CLR,
             )
             ax.tick_params(colors=TEXT_CLR, direction="in", which="both", top=True, right=True)
-            ax.xaxis.set_minor_locator(AutoMinorLocator())
-            ax.yaxis.set_minor_locator(AutoMinorLocator())
             for spine in ax.spines.values():
                 spine.set_edgecolor(GRID_CLR)
             out_file = self.outdir / f"jdia_{slug}_step{step:06d}.png"
@@ -362,17 +358,14 @@ class DiamagneticCurrentAnalyzer:
             cb.ax.yaxis.set_tick_params(color=TEXT_CLR, labelsize=13)
             plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
 
-            ax.set_xlabel(r"Z  [$d_i$]", fontsize=15, color=TEXT_CLR)
-            ax.set_ylabel(r"Y  [$d_i$]", fontsize=15, color=TEXT_CLR)
-            ax.set_title(title, fontsize=16, color=TEXT_CLR, pad=8)
+            ps.spatial_axes(ax, fontsize=15, color=TEXT_CLR)
+            ax.set_title(title, fontsize=16, color=TEXT_CLR)
             ax.tick_params(colors=TEXT_CLR, direction="in", which="both", top=True, right=True)
-            ax.xaxis.set_minor_locator(AutoMinorLocator())
-            ax.yaxis.set_minor_locator(AutoMinorLocator())
             for spine in ax.spines.values():
                 spine.set_edgecolor(GRID_CLR)
 
         fig.suptitle(
-            rf"Diamagnetic Current  —  $t \approx {step_to_omegaci(step):.2f}\,\Omega_{{ci}}^{{-1}}$  (step {step})"
+            rf"Diamagnetic current — $t\Omega_{{ci}} = {step_to_omegaci(step):.1f}$ (step {step})"
             "\n"
             rf"{PROFILE_LABEL}  (contours: $|B|$)",
             fontsize=17, color=TEXT_CLR, fontweight="bold",

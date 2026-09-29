@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
+from analysis_contract import strict_dumps
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 from streaming_fields import SnapshotSeries, spatial_spectra, retained_slice
+from growth_fit import fit_exponential_growth
 
 import plot_style as ps
 
@@ -51,7 +52,7 @@ def compute_growth_rate_map(
     kpar_max: float | None = None,
     kperp_max: float | None = None,
     min_rvalue: float = 0.0,
-    fit_frac: tuple[float, float] = (0.1, 0.6),
+    fit_frac: tuple[float, float] | None = None,
     fold_negative_k: bool = False,
 ) -> dict:
     """Return gamma(k_parallel, k_perp) fitted from the linear growth phase.
@@ -59,6 +60,15 @@ def compute_growth_rate_map(
     ``field_series`` has shape ``(n_components, nt, n0, n1)``. Time is
     ``Omega_ci t`` and spacing is measured in ``d_i``. The returned k axes are
     therefore in ``k d_i`` and gamma is in ``Omega_ci``.
+
+    Every mode is fitted on one common window, so the map compares growth
+    rates over the same interval. By default (``fit_frac=None``) that window is
+    the linear phase of the mode with the largest amplitude over the run,
+    located by growth_fit (the fit quoted as gamma elsewhere). The previous
+    default, 10-60 % of the run, reached ~95 Omega_ci^-1 in the v5 mirror runs,
+    well into saturation, and returned a peak gamma of ~0.08 for a mode that
+    grows at ~0.11. ``fit_frac=(lo, hi)`` restores a fixed fraction of the run;
+    it is also the fallback when the dominant mode has no valid fit.
 
     Modes separate by geometry: a gamma peak on the k_parallel axis
     (k_perp ~ 0) indicates a parallel mode (EMIC / parallel firehose), while
@@ -85,7 +95,7 @@ def compute_growth_rate_map(
         raise ValueError("At least four snapshots are required")
     if axes[0] != parallel_axis and axes[1] != parallel_axis:
         raise ValueError(f"Plane axes {axes} do not contain parallel axis {parallel_axis!r}")
-    if not (0.0 <= fit_frac[0] < fit_frac[1] <= 1.0):
+    if fit_frac is not None and not (0.0 <= fit_frac[0] < fit_frac[1] <= 1.0):
         raise ValueError("fit_frac must satisfy 0 <= lo < hi <= 1")
 
     _, nt, n0, n1 = fields.shape
@@ -127,8 +137,22 @@ def compute_growth_rate_map(
         energy = energy[:, :, keep]
 
     t0, t1 = float(times[0]), float(times[-1])
-    fit_lo = t0 + fit_frac[0] * (t1 - t0)
-    fit_hi = t0 + fit_frac[1] * (t1 - t0)
+    peak = np.nanmax(energy, axis=0)
+    i_dom, j_dom = np.unravel_index(int(np.nanargmax(peak)), peak.shape)
+    dominant = {"k_parallel_di": float(kpar_pos[i_dom]), "k_perp_di": float(kperp_pos[j_dom])}
+    window_source = "fraction"
+    if fit_frac is None:
+        dom_fit = fit_exponential_growth(times, np.sqrt(energy[:, i_dom, j_dom]))
+        dominant.update(gamma=float(dom_fit["gamma"]), fit_ok=int(dom_fit["fit_ok"]),
+                        fit_reject_reason=dom_fit["fit_reject_reason"])
+        if dom_fit["fit_ok"]:
+            fit_lo, fit_hi = dom_fit["linear_phase_start"], dom_fit["linear_phase_end"]
+            window_source = "dominant-mode"
+        else:
+            fit_frac, window_source = (0.1, 0.6), "fraction-fallback"
+    if fit_frac is not None:
+        fit_lo = t0 + fit_frac[0] * (t1 - t0)
+        fit_hi = t0 + fit_frac[1] * (t1 - t0)
     fit_mask = (times >= fit_lo) & (times <= fit_hi)
     if np.count_nonzero(fit_mask) < 3:
         raise ValueError("Fit window contains fewer than three snapshots")
@@ -163,6 +187,8 @@ def compute_growth_rate_map(
         "kpar": kpar_pos,
         "kperp": kperp_pos,
         "fit_window": (fit_lo, fit_hi),
+        "window_source": window_source,
+        "dominant_mode": dominant,
         "min_rvalue": min_rvalue,
         "fold_negative_k": fold_negative_k,
         "diagnostics": {
@@ -217,12 +243,29 @@ def plot_growth_rate_map(
     contour_count: int = 6,
     angle_step: int = 15,
 ):
+    minr = float(result["min_rvalue"])
+    # Acceptance on the full computed map, as in the CSV: the power floor must
+    # not depend on how much of the map is displayed.
+    full_power = np.asarray(result["final_power"], dtype=float)
+    floor = np.nanmax(full_power) * 1e-3 if np.any(np.isfinite(full_power)) else np.inf
+    full_gamma = np.asarray(result["gamma"], dtype=float)
+    accepted = np.isfinite(full_gamma) & (full_gamma > 0.0) & (full_power >= floor)
+    if minr > 0:
+        accepted &= np.asarray(result["rvalue"], dtype=float) >= minr
+    # A display zoom is a convenience; it must never hide an accepted growing
+    # cell (a 0.9 d_i^-1 k_perp zoom once hid the only growing mode).
+    extended = False
+    if accepted.any():
+        need_par = float(np.max(np.abs(np.asarray(result["kpar"])[accepted.any(axis=1)])))
+        need_perp = float(np.max(np.asarray(result["kperp"])[accepted.any(axis=0)]))
+        if display_kpar_max is not None and need_par > display_kpar_max:
+            display_kpar_max, extended = need_par, True
+        if display_kperp_max is not None and need_perp > display_kperp_max:
+            display_kperp_max, extended = need_perp, True
     kpar, kperp, gamma, rvalue, final_power = _display_crop(
         result, display_kpar_max, display_kperp_max
     )
-    minr = float(result["min_rvalue"])
 
-    floor = np.nanmax(final_power) * 1e-3 if np.any(np.isfinite(final_power)) else np.inf
     mask = ~np.isfinite(gamma) | (gamma <= 0.0) | (final_power < floor)
     if minr > 0:
         mask |= rvalue < minr
@@ -235,6 +278,10 @@ def plot_growth_rate_map(
         kpar, kperp, display.T, shading=shading, cmap=ps.CMAP_SEQUENTIAL,
         vmin=0.0, vmax=gmax, rasterized=True,
     )
+    axis.text(0.02, 0.02, "Blank bins: rejected or below power floor; not zero growth"
+              + ("\nZoom widened to show every accepted cell" if extended else ""),
+              transform=axis.transAxes, fontsize=7, va="bottom")
+    data_limits = axis.get_xlim(), axis.get_ylim()
     colorbar = fig.colorbar(image, ax=axis, pad=0.02)
     colorbar.set_label(r"growth rate $\gamma\ [\Omega_{ci}]$")
     colorbar.ax.tick_params(which="both", direction="in")
@@ -306,8 +353,10 @@ def plot_growth_rate_map(
                 fr"($\theta$={theta:.0f}$\degree$)"
             ),
         )
-        ps.legend(axis, loc="upper right", fontsize=9)
+        ps.legend(axis, loc="upper center", bbox_to_anchor=(0.5, -0.13), fontsize=9)
 
+    # The angle guides must not stretch the axes beyond the computed bins.
+    axis.set_xlim(data_limits[0]); axis.set_ylim(data_limits[1])
     axis.set_xlabel(r"$k_\parallel\,d_i$")
     axis.set_ylabel(r"$k_\perp\,d_i$")
     axis.set_title(fr"Growth-rate map $\gamma(k_\parallel,k_\perp)$ — {component}")
@@ -400,8 +449,11 @@ def main() -> int:
     parser.add_argument("--min-rvalue", type=float, default=0.7)
     parser.add_argument("--t-start", type=float)
     parser.add_argument("--t-end", type=float)
-    parser.add_argument("--fit-lo", type=float, default=0.1)
-    parser.add_argument("--fit-hi", type=float, default=0.6)
+    parser.add_argument("--fit-lo", type=float, default=None,
+                        help="Fixed fit window as a fraction of the run (with --fit-hi). Default: the "
+                             "linear phase of the dominant mode; the whole [--t-start, --t-end] range "
+                             "when those are given.")
+    parser.add_argument("--fit-hi", type=float, default=None)
     parser.add_argument("--fold-negative-k", action="store_true",
                         help="Fold +/-k_parallel onto |k_parallel| too (in addition to the always-folded "
                              "k_perp). Off by default: folding k_parallel sums forward- and backward-"
@@ -443,7 +495,10 @@ def main() -> int:
         kpar_max=args.kpar_max,
         kperp_max=args.kperp_max,
         min_rvalue=args.min_rvalue,
-        fit_frac=(args.fit_lo, args.fit_hi),
+        fit_frac=((args.fit_lo if args.fit_lo is not None else 0.0,
+                   args.fit_hi if args.fit_hi is not None else 1.0)
+                  if (args.fit_lo is not None or args.fit_hi is not None
+                      or args.t_start is not None or args.t_end is not None) else None),
         fold_negative_k=args.fold_negative_k,
     )
     png = outdir / f"growth_rate_map_{metadata['plane']}_{args.component}.png"
@@ -460,8 +515,10 @@ def main() -> int:
         angle_step=args.angle_step,
     )
     write_csv(result, csv_path)
-    csv_path.with_suffix(".json").write_text(json.dumps({
+    csv_path.with_suffix(".json").write_text(strict_dumps({
         "fit_window_omega_ci": result["fit_window"],
+        "fit_window_source": result["window_source"],
+        "dominant_mode": result["dominant_mode"],
         "time_range_omega_ci": [float(times[0]),float(times[-1])],
         "includes_initial_snapshot": bool(times[0]==0),
         "spatial_window": "none", "storage": "streaming",

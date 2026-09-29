@@ -7,7 +7,7 @@ Reads HDF5 particle files and generates publication-quality diagnostics:
   2. Goodness-of-fit tests (Anderson-Darling & Kolmogorov-Smirnov)
   3. 1D distribution temporal evolution (heatmap + suprathermal-tail overlay)
   4. Magnetic-fluctuation time series
-  5. Energy partition and heat-flux diagnostics
+  5. Energy partition (the heat flux is heat_flux_analysis.py)
 
 2D/3D VDF snapshots and the T_perp/T_par ("Brazil") evolution are no longer
 generated here -- physical_diagnostics.py (09_physical_diagnostics/) and
@@ -33,9 +33,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
-import matplotlib.colors as mcolors
-from matplotlib.lines import Line2D
-from matplotlib.patches import FancyBboxPatch
 try:
     from scipy.special import gamma as gamma_func
     from scipy import stats as scipy_stats
@@ -47,27 +44,19 @@ try:
     from data_reader import PICDataReader
 except ImportError:
     PICDataReader = None
+from plasma_physics import velocity_from_u
 from psc_units import (
-    B0, KAPPA, MASS_RATIO, TI_PAR, TI_PERP, VA_OVER_C, ZI,
-    BETA_I_PAR as _BETA_I_PAR_SIM,
-    BETA_I_PERP_OVER_PAR as _TI_RATIO_SIM,
-    DRIVEN_SPECIES, INSTABILITY, M_ION, M_ELEC, PROFILE_LABEL,
-    step_to_omegaci,
+    B0, KAPPA, TI_PAR, TI_PERP, VA_OVER_C, ZI, BETA_I_PAR as _BETA_I_PAR_SIM,
+    BETA_I_PERP_OVER_PAR as _TI_RATIO_SIM, M_ION, PROFILE_LABEL, step_to_omegaci,
 )
 
-plt.rcParams.update({
-    "font.size": 15,
-    "axes.labelsize": 18,
-    "axes.titlesize": 19,
-    "xtick.labelsize": 15,
-    "ytick.labelsize": 15,
-    "legend.fontsize": 14,
-    "figure.titlesize": 20,
-})
+import plot_style as ps
+
+# Shared theme (paper: 300 dpi, PDF copy, content check at every save).
+ps.apply()
 
 # ── Configuration ────────────────────────────────────────────────────────────
 OUTPUT_DIR = "prt_plots"
-DPI = 150          # reducido de 200 para menor uso de RAM en savefig
 MAX_EVOLUTION_FILES = 12
 MAX_PARTICLES = 500_000  # submuestreo global si hay más partículas
 RNG_SEED = 20260612
@@ -86,8 +75,7 @@ def _style_paper_axes(ax):
 
 
 def _save_paper_figure(fig, path: str):
-    fig.savefig(path, dpi=220, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
+    ps.save(fig, path)
     print(f"  Saved: {path}")
 
 
@@ -163,6 +151,8 @@ def load_particle_phase_space(filepath: str,
         px = dset["px"][idx].astype(np.float32)
         py = dset["py"][idx].astype(np.float32)
         pz = dset["pz"][idx].astype(np.float32)
+        w = (dset["w"][idx].astype(np.float64) if "w" in (dset.dtype.names or ())
+             else np.ones(q.shape[0]))
 
     ion_mask  = q > 0
     elec_mask = q < 0
@@ -171,12 +161,14 @@ def load_particle_phase_space(filepath: str,
         "ions_py":        py[ion_mask],
         "ions_pz":        pz[ion_mask],
         "ions_perp":      np.sqrt(px[ion_mask]**2 + py[ion_mask]**2),
+        "ions_w":         w[ion_mask],
         "electrons_px":   px[elec_mask],
         "electrons_py":   py[elec_mask],
         "electrons_pz":   pz[elec_mask],
         "electrons_perp": np.sqrt(px[elec_mask]**2 + py[elec_mask]**2),
+        "electrons_w":    w[elec_mask],
     }
-    del q, px, py, pz, ion_mask, elec_mask
+    del q, px, py, pz, w, ion_mask, elec_mask
     gc.collect()
     return result
 
@@ -346,10 +338,10 @@ def plot_kappa_comparison(ions, outdir: str):
 
         fig, ax = plt.subplots(figsize=(7.2, 5.2))
         _style_paper_axes(ax)
-        ax.step(bin_centers, hist_plot, where="mid", color="#c0392b", linewidth=1.5, label="Ion data")
-        ax.semilogy(v_range, kappa_1d(v_range, kappa, v_th), "-", color="#27ae60", linewidth=2.2,
+        ax.step(bin_centers, hist_plot, where="mid", color="#D55E00", linewidth=1.5, label="Ion data")
+        ax.semilogy(v_range, kappa_1d(v_range, kappa, v_th), "-", color="#009E73", linewidth=2.2,
                     label=rf"Kappa ($\kappa$={kappa})")
-        ax.semilogy(v_range, maxwellian_1d(v_range, v_th), "--", color="#8e44ad", linewidth=2.2,
+        ax.semilogy(v_range, maxwellian_1d(v_range, v_th), "--", color="#0072B2", linewidth=2.2,
                     label="Maxwellian")
         ax.set_xlabel(xlabel, fontsize=15)
         ax.set_ylabel(r"$f(u)$ [PDF]", fontsize=15)
@@ -364,11 +356,11 @@ def plot_kappa_comparison(ions, outdir: str):
         p2_centers = bin_centers**2
         p2_range = v_range**2
         sort_idx = np.argsort(p2_range)
-        ax.step(p2_centers, hist_plot, where="mid", color="#c0392b", linewidth=1.5, label="Ion data")
+        ax.step(p2_centers, hist_plot, where="mid", color="#D55E00", linewidth=1.5, label="Ion data")
         ax.semilogy(p2_range[sort_idx], kappa_1d(v_range[sort_idx], kappa, v_th), "-",
-                    color="#27ae60", linewidth=2.2, label=rf"Kappa ($\kappa$={kappa})")
+                    color="#009E73", linewidth=2.2, label=rf"Kappa ($\kappa$={kappa})")
         ax.semilogy(p2_range[sort_idx], maxwellian_1d(v_range[sort_idx], v_th), "--",
-                    color="#8e44ad", linewidth=2.2, label="Maxwellian")
+                    color="#0072B2", linewidth=2.2, label="Maxwellian")
         ax.set_xlabel(rf"{short}$^2$ [$v_A^2$]", fontsize=15)
         ax.set_ylabel(r"$f(u)$ [PDF]", fontsize=15)
         ax.set_title(rf"Maxwellian linearisation: {short}$^2$", fontsize=15, fontweight="bold")
@@ -382,13 +374,13 @@ def plot_kappa_comparison(ions, outdir: str):
         pos_mask = bin_centers > 0
         bin_centers_pos = bin_centers[pos_mask]
         hist_plot_pos = hist_plot[pos_mask]
-        ax.step(bin_centers_pos, hist_plot_pos, where="mid", color="#c0392b", linewidth=1.5,
+        ax.step(bin_centers_pos, hist_plot_pos, where="mid", color="#D55E00", linewidth=1.5,
                 label="Ion data")
         if len(bin_centers_pos) > 1:
             v_pos = np.linspace(bin_centers_pos[0], bin_centers_pos[-1], 1000)
-            ax.loglog(v_pos, kappa_1d(v_pos, kappa, v_th), "-", color="#27ae60", linewidth=2.2,
+            ax.loglog(v_pos, kappa_1d(v_pos, kappa, v_th), "-", color="#009E73", linewidth=2.2,
                       label=rf"Kappa")
-            ax.loglog(v_pos, maxwellian_1d(v_pos, v_th), "--", color="#8e44ad", linewidth=2.2,
+            ax.loglog(v_pos, maxwellian_1d(v_pos, v_th), "--", color="#0072B2", linewidth=2.2,
                       label="Maxwellian")
         ax.set_xlabel(rf"$|${short}$|$ [$v_A$]", fontsize=15)
         ax.set_ylabel(r"$f(u)$ [PDF]", fontsize=15)
@@ -443,13 +435,13 @@ def plot_kappa_comparison(ions, outdir: str):
         # ── Row 0: f(p) vs p — Semilog ──────────────────────────────────
         ax0 = axes[0, col]
         ax0.step(bin_centers, hist_plot, where="mid",
-                 color="#c0392b", linewidth=1.5, alpha=0.85,
+                 color="#D55E00", linewidth=1.5, alpha=0.85,
                  label="Ion data", zorder=2)
         ax0.semilogy(v_range, kappa_1d(v_range, kappa, v_th), "-",
-                     color="#27ae60", linewidth=2.5, zorder=3,
+                     color="#009E73", linewidth=2.5, zorder=3,
                      label=rf"Kappa ($\kappa$={kappa})")
         ax0.semilogy(v_range, maxwellian_1d(v_range, v_th), "--",
-                     color="#8e44ad", linewidth=2.5, zorder=3,
+                     color="#0072B2", linewidth=2.5, zorder=3,
                      label="Maxwellian")
         ax0.set_xlabel(xlabel, fontsize=15)
         ax0.set_ylabel(r"$f(p)$  [PDF]", fontsize=15)
@@ -467,13 +459,13 @@ def plot_kappa_comparison(ions, outdir: str):
         sort_idx = np.argsort(p2_range)
 
         ax1.step(p2_centers, hist_plot, where="mid",
-                 color="#c0392b", linewidth=1.5, alpha=0.85,
+                 color="#D55E00", linewidth=1.5, alpha=0.85,
                  label="Ion data", zorder=2)
         ax1.semilogy(p2_range[sort_idx], kappa_1d(v_range[sort_idx], kappa, v_th), "-",
-                     color="#27ae60", linewidth=2.5, zorder=3,
+                     color="#009E73", linewidth=2.5, zorder=3,
                      label=rf"Kappa ($\kappa$={kappa})")
         ax1.semilogy(p2_range[sort_idx], maxwellian_1d(v_range[sort_idx], v_th), "--",
-                     color="#8e44ad", linewidth=2.5, zorder=3,
+                     color="#0072B2", linewidth=2.5, zorder=3,
                      label="Maxwellian (straight line)")
         ax1.set_xlabel(rf"{short}$^2$  $[(m_i v_A)^2]$", fontsize=15)
         ax1.set_ylabel(r"$f(p)$  [PDF]", fontsize=15)
@@ -491,16 +483,16 @@ def plot_kappa_comparison(ions, outdir: str):
         hist_plot_pos = hist_plot[pos_mask]
 
         ax2.step(bin_centers_pos, hist_plot_pos, where="mid",
-                 color="#c0392b", linewidth=1.5, alpha=0.85,
+                 color="#D55E00", linewidth=1.5, alpha=0.85,
                  label="Ion data (positive tail)", zorder=2)
 
         if len(bin_centers_pos) > 1:
             v_pos = np.linspace(bin_centers_pos[0], bin_centers_pos[-1], 1000)
             ax2.loglog(v_pos, kappa_1d(v_pos, kappa, v_th), "-",
-                       color="#27ae60", linewidth=2.5, zorder=3,
+                       color="#009E73", linewidth=2.5, zorder=3,
                        label=rf"Kappa (slope $\propto p^{{-2\kappa}}$)")
             ax2.loglog(v_pos, maxwellian_1d(v_pos, v_th), "--",
-                       color="#8e44ad", linewidth=2.5, zorder=3,
+                       color="#0072B2", linewidth=2.5, zorder=3,
                        label="Maxwellian (exponential drop)")
 
         ax2.set_xlabel(rf"$|${short}$|$  $[m_i v_A]$  (log scale)", fontsize=15)
@@ -513,8 +505,7 @@ def plot_kappa_comparison(ions, outdir: str):
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     path = output_file(outdir, "kappa_vs_maxwellian.png")
-    plt.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
-    plt.close()
+    ps.save(plt.gcf(), path)
     print(f"  Saved: {path}")
 
 
@@ -612,15 +603,15 @@ def plot_goodness_of_fit(ions, outdir: str):
 
         fig, ax = plt.subplots(figsize=(7.2, 5.2))
         _style_paper_axes(ax)
-        ax.step(sample, ecdf_y, where="post", color="#c0392b", linewidth=1.8,
+        ax.step(sample, ecdf_y, where="post", color="#D55E00", linewidth=1.8,
                 label="Empirical CDF")
-        ax.plot(sample, kappa_cdf_vals, "-", color="#27ae60", linewidth=2.2,
+        ax.plot(sample, kappa_cdf_vals, "-", color="#009E73", linewidth=2.2,
                 label=rf"Kappa CDF ($\kappa={kappa}$)")
-        ax.plot(sample, maxw_cdf_vals, "--", color="#8e44ad", linewidth=2.2,
+        ax.plot(sample, maxw_cdf_vals, "--", color="#0072B2", linewidth=2.2,
                 label="Maxwellian CDF")
         ks_idx = np.argmax(np.abs(ecdf_y - kappa_cdf_vals))
         ax.vlines(sample[ks_idx], ecdf_y[ks_idx], kappa_cdf_vals[ks_idx],
-                  colors="#e67e22", linewidths=2.0, label=rf"$D_{{KS}}={ks_stat_kappa:.3g}$")
+                  colors="#E69F00", linewidths=2.0, label=rf"$D_{{KS}}={ks_stat_kappa:.3g}$")
         ax.set_xlabel(label.replace("p_", "u_"), fontsize=15)
         ax.set_ylabel("Cumulative probability", fontsize=15)
         ax.set_ylim(-0.02, 1.05)
@@ -638,161 +629,8 @@ def plot_goodness_of_fit(ions, outdir: str):
         ])
         writer.writerows(results_rows)
     print(f"  Saved: {csv_path}")
-    return
-
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
-    fig.patch.set_facecolor("white")
-    fig.suptitle(
-        rf"Goodness-of-Fit Tests — Kappa ($\kappa = {kappa}$) vs Maxwellian — Ions",
-        fontsize=18, fontweight="bold", y=1.01,
-    )
-
-    NSAMPLE = 5_000
-    rng = np.random.default_rng(42)
-
-    for col, (field, label) in enumerate(zip(mom_fields, comp_labels)):
-        ion_p = np.asarray(ions[field], dtype=float)
-        v_th = norm_vth[field]
-
-        # Sub-sample for A-D (O(n^2) memory)
-        sample = (
-            rng.choice(ion_p, size=NSAMPLE, replace=False)
-            if len(ion_p) > NSAMPLE
-            else ion_p.copy()
-        )
-        sample.sort()
-
-        # Theoretical CDFs on the sample grid
-        kappa_cdf_vals = _kappa_cdf(sample, kappa, v_th)
-        norm_sigma = v_th
-        maxw_cdf_vals = scipy_stats.norm.cdf(sample, loc=0.0, scale=norm_sigma)
-
-        n = len(sample)
-        ecdf_y = np.arange(1, n + 1) / n
-
-        # ── K-S vs Kappa ─────────────────────────────────────────────────
-        ks_stat_kappa = np.max(np.abs(ecdf_y - kappa_cdf_vals))
-        ks_p_kappa = scipy_stats.kstwobign.sf(np.sqrt(n) * ks_stat_kappa)
-
-        # ── K-S vs Maxwellian ────────────────────────────────────────────
-        ks_res_maxw = scipy_stats.kstest(sample, scipy_stats.norm(loc=0.0, scale=norm_sigma).cdf)
-        ks_stat_maxw = ks_res_maxw.statistic
-        ks_p_maxw = ks_res_maxw.pvalue
-
-        # ── A-D vs Kappa ─────────────────────────────────────────────────
-        i_idx = np.arange(1, n + 1)
-        cdf_lo = np.clip(kappa_cdf_vals, 1e-12, 1 - 1e-12)
-        cdf_hi = np.clip(kappa_cdf_vals[::-1], 1e-12, 1 - 1e-12)
-        ad_kappa = -n - np.mean(
-            (2 * i_idx - 1) * (np.log(cdf_lo) + np.log(1 - cdf_hi))
-        )
-        ad_kappa_norm = ad_kappa * (1 + 4 / n - 25 / n**2)
-        ad_p_kappa = _ad_p_value(ad_kappa_norm)
-
-        # ── A-D vs Maxwellian ────────────────────────────────────────────
-        cdf_lo_m = np.clip(maxw_cdf_vals, 1e-12, 1 - 1e-12)
-        cdf_hi_m = np.clip(maxw_cdf_vals[::-1], 1e-12, 1 - 1e-12)
-        ad_maxw = -n - np.mean(
-            (2 * i_idx - 1) * (np.log(cdf_lo_m) + np.log(1 - cdf_hi_m))
-        )
-        ad_maxw_norm = ad_maxw * (1 + 4 / n - 25 / n**2)
-        ad_p_maxw = _ad_p_value(ad_maxw_norm)
-
-        # ── Row 0: CDF comparison ────────────────────────────────────────
-        ax_cdf = axes[0, col]
-        ax_cdf.step(sample, ecdf_y, where="post",
-                    color="#c0392b", linewidth=1.8, alpha=0.9,
-                    label="Empirical CDF", zorder=3)
-        ax_cdf.plot(sample, kappa_cdf_vals, "-",
-                    color="#27ae60", linewidth=2.2, zorder=4,
-                    label=rf"Kappa CDF ($\kappa={kappa}$)")
-        ax_cdf.plot(sample, maxw_cdf_vals, "--",
-                    color="#8e44ad", linewidth=2.2, zorder=4,
-                    label="Maxwellian CDF")
-
-        ks_idx = np.argmax(np.abs(ecdf_y - kappa_cdf_vals))
-        ax_cdf.vlines(sample[ks_idx], ecdf_y[ks_idx], kappa_cdf_vals[ks_idx],
-                      colors="#e67e22", linewidths=2.5, linestyles="solid",
-                      label=rf"$D_{{KS}}$ = {ks_stat_kappa:.4f}")
-
-        ax_cdf.set_xlabel(label, fontsize=14)
-        ax_cdf.set_ylabel("Cumulative probability  $F(p)$", fontsize=14)
-        ax_cdf.set_title(f"Empirical vs theoretical CDF\n{label}",
-                         fontsize=14, fontweight="bold")
-        ax_cdf.legend(fontsize=12, loc="upper left")
-        ax_cdf.grid(True, alpha=0.3)
-        ax_cdf.set_ylim(-0.02, 1.05)
-
-        # ── Row 1: Results table ─────────────────────────────────────────
-        ax_tbl = axes[1, col]
-        ax_tbl.axis("off")
-
-        def _fmt_p(p):
-            return f"{p:.2e}" if p < 0.001 else f"{p:.4f}"
-
-        def _verdict(p, threshold=0.05):
-            return ("✔  H₀ not rejected" if p > threshold else "✘  H₀ rejected")
-
-        table_data = [
-            ["Test", "Statistic", "p-value", "Conclusion (α=0.05)"],
-            ["K-S  vs Kappa",      f"{ks_stat_kappa:.5f}", _fmt_p(ks_p_kappa), _verdict(ks_p_kappa)],
-            ["K-S  vs Maxwellian", f"{ks_stat_maxw:.5f}",  _fmt_p(ks_p_maxw),  _verdict(ks_p_maxw)],
-            ["A-D  vs Kappa",      f"{ad_kappa:.4f}",      _fmt_p(ad_p_kappa), _verdict(ad_p_kappa)],
-            ["A-D  vs Maxwellian", f"{ad_maxw:.4f}",       _fmt_p(ad_p_maxw),  _verdict(ad_p_maxw)],
-        ]
-
-        col_widths = [0.30, 0.20, 0.18, 0.32]
-        row_colors = ["#2c3e50", "#1a252f", "#22303c", "#1a252f", "#22303c"]
-        text_colors = ["white", "#ecf0f1", "#ecf0f1", "#ecf0f1", "#ecf0f1"]
-
-        y_start = 0.95
-        row_h = 0.16
-        for r_idx, row in enumerate(table_data):
-            bg = row_colors[r_idx]
-            tcol = text_colors[r_idx]
-            x_cur = 0.0
-            for c_idx, (cell, cw) in enumerate(zip(row, col_widths)):
-                rect = FancyBboxPatch(
-                    (x_cur, y_start - (r_idx + 1) * row_h),
-                    cw - 0.005, row_h - 0.01,
-                    boxstyle="round,pad=0.01",
-                    facecolor=bg, edgecolor="none",
-                    transform=ax_tbl.transAxes, clip_on=False,
-                )
-                ax_tbl.add_patch(rect)
-                weight = "bold" if r_idx == 0 else "normal"
-                ax_tbl.text(
-                    x_cur + cw / 2,
-                    y_start - (r_idx + 0.5) * row_h,
-                    cell,
-                    ha="center", va="center",
-                    fontsize=12, color=tcol, fontweight=weight,
-                    transform=ax_tbl.transAxes,
-                )
-                x_cur += cw
-
-        ax_tbl.set_xlim(0, 1)
-        ax_tbl.set_ylim(0, 1)
-        ax_tbl.set_title(f"Test results — {label}",
-                         fontsize=13, fontweight="bold", pad=8)
-
-        print(
-            f"  [{label}]  "
-            f"KS-Kappa: D={ks_stat_kappa:.4f} p={_fmt_p(ks_p_kappa)}  "
-            f"KS-Maxw: D={ks_stat_maxw:.4f} p={_fmt_p(ks_p_maxw)}  "
-            f"AD-Kappa: A²={ad_kappa:.3f} p={_fmt_p(ad_p_kappa)}  "
-            f"AD-Maxw: A²={ad_maxw:.3f} p={_fmt_p(ad_p_maxw)}"
-        )
-
-    plt.tight_layout(rect=[0, 0, 1, 0.97])
-    path = output_file(outdir, "goodness_of_fit.png")
-    plt.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
-    plt.close()
-    print(f"  Saved: {path}")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Plot 4: Summary statistics
 # ══════════════════════════════════════════════════════════════════════════════
 
 def print_summary(ions, electrons, step: int):
@@ -825,7 +663,13 @@ def plot_distribution_evolution(
     bins_parallel: int = 180,
     bins_perp: int = 120,
 ):
-    """Plot the temporal evolution of 1D ion/electron distributions."""
+    """f(v_z, t) and f(|v_perp|, t) of ions and electrons, in units of v_A.
+
+    PSC stores u = gamma v; velocities are converted before binning. Each
+    column is normalised by the total particle weight of that snapshot, so the
+    probability outside the plotted range is not folded back into it. Colours
+    below 1e-4 of the maximum are cut: single-particle bins are noise.
+    """
     print("\nBuilding distribution evolution plot...")
 
     sampled_paths = sample_filepaths(filepaths)
@@ -835,73 +679,69 @@ def plot_distribution_evolution(
             f"out of {len(filepaths)} for temporal evolution."
         )
 
-    range_sample = load_particle_phase_space(sampled_paths[-1])
-    ion_par_max = np.percentile(np.abs(range_sample["ions_pz"]), 99.5)
-    ion_perp_max = np.percentile(range_sample["ions_perp"], 99.5)
-    elec_par_max = np.percentile(np.abs(range_sample["electrons_pz"]), 99.5)
-    elec_perp_max = np.percentile(range_sample["electrons_perp"], 99.5)
+    def velocities(phase, species):
+        vx, vy, vz, _ = velocity_from_u(phase[f"{species}_px"], phase[f"{species}_py"],
+                                        phase[f"{species}_pz"])
+        return vz / VA_OVER_C, np.hypot(vx, vy) / VA_OVER_C, phase[f"{species}_w"]
 
-    ion_par_edges = np.linspace(-ion_par_max, ion_par_max, bins_parallel + 1)
-    ion_perp_edges = np.linspace(0.0, ion_perp_max, bins_perp + 1)
-    elec_par_edges = np.linspace(-elec_par_max, elec_par_max, bins_parallel + 1)
-    elec_perp_edges = np.linspace(0.0, elec_perp_max, bins_perp + 1)
+    reference = load_particle_phase_space(sampled_paths[-1])
+    edges = {}
+    for species in ("ions", "electrons"):
+        vz, vperp, _ = velocities(reference, species)
+        par_max, perp_max = np.percentile(np.abs(vz), 99.5), np.percentile(vperp, 99.5)
+        edges[species] = (np.linspace(-par_max, par_max, bins_parallel + 1),
+                          np.linspace(0.0, perp_max, bins_perp + 1))
+    del reference
 
-    ion_par_matrix = np.zeros((len(ion_par_edges) - 1, len(sampled_paths)))
-    ion_perp_matrix = np.zeros((len(ion_perp_edges) - 1, len(sampled_paths)))
-    elec_par_matrix = np.zeros((len(elec_par_edges) - 1, len(sampled_paths)))
-    elec_perp_matrix = np.zeros((len(elec_perp_edges) - 1, len(sampled_paths)))
-
-    steps = []
+    matrices = {(sp, c): np.zeros((len(edges[sp][i]) - 1, len(sampled_paths)))
+                for sp in ("ions", "electrons") for i, c in enumerate(("par", "perp"))}
+    times = []
     for idx, filepath in enumerate(sampled_paths):
-        phase_space = load_particle_phase_space(filepath)
-        steps.append(extract_step(filepath))
-        ion_par_matrix[:, idx], _ = np.histogram(
-            phase_space["ions_pz"], bins=ion_par_edges, density=True
-        )
-        ion_perp_matrix[:, idx], _ = np.histogram(
-            phase_space["ions_perp"], bins=ion_perp_edges, density=True
-        )
-        elec_par_matrix[:, idx], _ = np.histogram(
-            phase_space["electrons_pz"], bins=elec_par_edges, density=True
-        )
-        elec_perp_matrix[:, idx], _ = np.histogram(
-            phase_space["electrons_perp"], bins=elec_perp_edges, density=True
-        )
+        phase = load_particle_phase_space(filepath)
+        times.append(step_to_omegaci(extract_step(filepath)))
+        for species in ("ions", "electrons"):
+            vz, vperp, w = velocities(phase, species)
+            for i, (component, values) in enumerate((("par", vz), ("perp", vperp))):
+                bins = edges[species][i]
+                counts, _ = np.histogram(values, bins=bins, weights=w)
+                matrices[(species, component)][:, idx] = counts / (w.sum() * np.diff(bins))
+        del phase; gc.collect()
 
-    steps = np.asarray(steps, dtype=float)
-    if len(steps) == 1:
-        time_edges = np.array([steps[0] - 0.5, steps[0] + 0.5], dtype=float)
+    times = np.asarray(times, dtype=float)
+    if len(times) == 1:
+        time_edges = np.array([times[0] - 0.5, times[0] + 0.5], dtype=float)
     else:
-        deltas = np.diff(steps)
-        left_edge = steps[0] - 0.5 * deltas[0]
-        right_edge = steps[-1] + 0.5 * deltas[-1]
-        interior = 0.5 * (steps[:-1] + steps[1:])
-        time_edges = np.concatenate([[left_edge], interior, [right_edge]])
+        deltas = np.diff(times)
+        time_edges = np.concatenate([[times[0] - 0.5 * deltas[0]],
+                                     0.5 * (times[:-1] + times[1:]),
+                                     [times[-1] + 0.5 * deltas[-1]]])
 
     panels = [
-        (ion_par_matrix, ion_par_edges, r"Ions: $f(v_\parallel, t)$", "distribution_evolution_ions_parallel.png"),
-        (ion_perp_matrix, ion_perp_edges, r"Ions: $f(v_\perp, t)$", "distribution_evolution_ions_perp.png"),
-        (elec_par_matrix, elec_par_edges, r"Electrons: $f(v_\parallel, t)$", "distribution_evolution_electrons_parallel.png"),
-        (elec_perp_matrix, elec_perp_edges, r"Electrons: $f(v_\perp, t)$", "distribution_evolution_electrons_perp.png"),
+        (("ions", "par"), r"Ions: $f(v_z, t)$", r"$v_z/v_A$  ($\parallel B_0$)",
+         r"$f(v_z)$  [per $v_A$]", "distribution_evolution_ions_parallel.png"),
+        (("ions", "perp"), r"Ions: $f(|v_\perp|, t)$", r"$|v_\perp|/v_A$",
+         r"$f(|v_\perp|)$  [per $v_A$]", "distribution_evolution_ions_perp.png"),
+        (("electrons", "par"), r"Electrons: $f(v_z, t)$", r"$v_z/v_A$  ($\parallel B_0$)",
+         r"$f(v_z)$  [per $v_A$]", "distribution_evolution_electrons_parallel.png"),
+        (("electrons", "perp"), r"Electrons: $f(|v_\perp|, t)$", r"$|v_\perp|/v_A$",
+         r"$f(|v_\perp|)$  [per $v_A$]", "distribution_evolution_electrons_perp.png"),
     ]
-
-    for matrix, edges, title, filename in panels:
+    cmap = plt.get_cmap(ps.CMAP_SEQUENTIAL).copy()
+    cmap.set_bad(ps.PANEL_BG)
+    for key, title, ylabel, clabel, filename in panels:
+        matrix = matrices[key]
+        vmax = float(matrix.max()) if matrix.size and matrix.max() > 0 else 1.0
+        vmin = vmax * 1e-4
         fig, ax = plt.subplots(figsize=(7.2, 5.4))
         _style_paper_axes(ax)
-        positive = matrix[matrix > 0]
-        vmin = positive.min() if positive.size else 1e-12
-        vmax = matrix.max() if matrix.size else 1.0
-        im = ax.pcolormesh(
-            time_edges, edges, matrix,
-            shading="auto",
-            norm=LogNorm(vmin=vmin, vmax=max(vmax, vmin * 10.0)),
-            cmap="viridis",
-        )
-        ax.set_title(title, fontsize=15, fontweight="bold")
-        ax.set_xlabel("Simulation step")
-        ax.set_ylabel("Velocity")
+        im = ax.pcolormesh(time_edges, edges[key[0]][0 if key[1] == "par" else 1],
+                           np.ma.masked_less(matrix, vmin), shading="auto",
+                           norm=LogNorm(vmin=vmin, vmax=vmax), cmap=cmap, rasterized=True)
+        ax.set_title(f"{title} — {PROFILE_LABEL}", fontsize=14, fontweight="bold")
+        ax.set_xlabel(r"$t\Omega_{ci}$")
+        ax.set_ylabel(ylabel)
         cbar = fig.colorbar(im, ax=ax, pad=0.01)
-        cbar.set_label("PDF")
+        cbar.set_label(clabel)
         fig.tight_layout()
         _save_paper_figure(fig, output_file(outdir, filename))
 
@@ -950,11 +790,11 @@ def plot_macro_evolution(
     if field_steps:
         field_steps = np.asarray(field_steps, dtype=float)
         ax.plot(field_steps, delta_b_total, marker="o", linewidth=2.0,
-                color="#8e44ad", label=r"$\delta B_{\rm rms} / B_0$")
+                color="#0072B2", label=r"$\delta B_{\rm rms} / B_0$")
         ax.plot(field_steps, delta_b_parallel, marker="^", linewidth=1.8,
-                color="#16a085", label=r"$\delta B_{\parallel,\rm rms} / B_0$")
+                color="#56B4E9", label=r"$\delta B_{\parallel,\rm rms} / B_0$")
         ax.plot(field_steps, delta_b_perp, marker="d", linewidth=1.8,
-                color="#f39c12", label=r"$\delta B_{\perp,\rm rms} / B_0$")
+                color="#E69F00", label=r"$\delta B_{\perp,\rm rms} / B_0$")
         ax.legend()
     else:
         ax.text(
@@ -979,94 +819,84 @@ def plot_1d_vdf_evolution(
     n_times: int = 6,
     nbins: int = 200,
 ):
-    """Overlay 1-D f(v_par) and f(v_perp) at selected times.
+    """Ion f(v_z) and f(|v_perp|) at selected times, against t = 0 Maxwellians.
 
-    Suprathermal tail excess is quantified as the ratio of the measured
-    high-velocity tail (|v| > 3 v_th) population to the Maxwellian prediction.
-    Colour encodes time (early=blue, late=red), reference Maxwellian dashed.
+    PSC stores u = gamma v, so the velocities are converted before binning;
+    z is the direction of the background field B0 (global frame, not the
+    local field). Each curve is normalised by the total particle weight, so
+    the probability outside the plotted range is not redistributed into it.
+    The references carry the t = 0 variances: a Gaussian for v_z and, for the
+    magnitude of the two perpendicular components, the Rayleigh distribution
+    (v/s^2) exp(-v^2 / 2 s^2) with s^2 = <v_perp^2>/2 -- a Gaussian in |v_perp|
+    would be the wrong reference. The printed tail fractions count
+    |v_z| > 3 s_par and |v_perp| > 3 s_perp.
     """
     print("\nBuilding 1-D VDF temporal evolution with tail diagnostics...")
 
     paths = sample_filepaths(filepaths, max_files=n_times)
-    steps = [extract_step(p) for p in paths]
-    cmap  = plt.colormaps["coolwarm"]
-    colors = [cmap(i / max(len(paths) - 1, 1)) for i in range(len(paths))]
+    times = [step_to_omegaci(extract_step(p)) for p in paths]
+    cmap = plt.get_cmap(ps.CMAP_SEQUENTIAL)
+    colors = [cmap(0.9 * i / max(len(paths) - 1, 1)) for i in range(len(paths))]
 
-    # Determine shared axes from last snapshot
-    ref = load_particle_phase_space(paths[-1])
-    vpar_max  = float(np.percentile(np.abs(ref["ions_pz"]),  99.5))
-    vperp_max = float(np.percentile(ref["ions_perp"], 99.5))
-    del ref; gc.collect()
+    def ion_velocities(path):
+        phase = load_particle_phase_space(path)
+        vx, vy, vz, _ = velocity_from_u(phase["ions_px"], phase["ions_py"], phase["ions_pz"])
+        return vz / VA_OVER_C, np.hypot(vx, vy) / VA_OVER_C, phase["ions_w"]
 
-    vpar_edges  = np.linspace(-vpar_max,  vpar_max,  nbins + 1)
-    vperp_edges = np.linspace(0.0,        vperp_max, nbins + 1)
-    vc_par  = 0.5 * (vpar_edges[:-1]  + vpar_edges[1:])
+    vz_ref, vperp_ref, _ = ion_velocities(paths[-1])
+    vpar_max = float(np.percentile(np.abs(vz_ref), 99.5))
+    vperp_max = float(np.percentile(vperp_ref, 99.5))
+    del vz_ref, vperp_ref; gc.collect()
+
+    vpar_edges = np.linspace(-vpar_max, vpar_max, nbins + 1)
+    vperp_edges = np.linspace(0.0, vperp_max, nbins + 1)
+    vc_par = 0.5 * (vpar_edges[:-1] + vpar_edges[1:])
     vc_perp = 0.5 * (vperp_edges[:-1] + vperp_edges[1:])
 
-    fig_par, ax_par = plt.subplots(figsize=(7.4, 5.2))
-    fig_perp, ax_perp = plt.subplots(figsize=(7.4, 5.2))
+    def pdf(values, weights, edges):
+        counts, _ = np.histogram(values, bins=edges, weights=weights)
+        f = counts / (weights.sum() * np.diff(edges))
+        return np.where(f > 0, f, np.nan)            # empty bins: gaps, not log(0)
+
+    fig_par, ax_par = plt.subplots(figsize=(9.2, 5.2))
+    fig_perp, ax_perp = plt.subplots(figsize=(9.2, 5.2))
     axes = [ax_par, ax_perp]
     for ax in axes:
         _style_paper_axes(ax)
 
-    tail_excess_par  = []
-    tail_excess_perp = []
-    vth_par_est  = None
-    vth_perp_est = None
-
-    for idx, (path, step, col) in enumerate(zip(paths, steps, colors)):
-        ps = load_particle_phase_space(path)
-        pz   = ps["ions_pz"]
-        perp = ps["ions_perp"]
-
-        f_par,  _ = np.histogram(pz,   bins=vpar_edges,  density=True)
-        f_perp, _ = np.histogram(perp, bins=vperp_edges, density=True)
-
-        axes[0].semilogy(vc_par,  f_par,  color=col, linewidth=1.6,
-                         alpha=0.85, label=f"step {step}")
-        axes[1].semilogy(vc_perp, f_perp, color=col, linewidth=1.6,
-                         alpha=0.85, label=f"step {step}")
-
-        # Tail excess at t=0 baseline
+    s_par = s_perp = None
+    tails = []
+    for idx, (path, toci, col) in enumerate(zip(paths, times, colors)):
+        vz, vperp, w = ion_velocities(path)
+        label = rf"$t\Omega_{{ci}} = {toci:.1f}$"
+        axes[0].semilogy(vc_par, pdf(vz, w, vpar_edges), color=col, linewidth=1.6, label=label)
+        axes[1].semilogy(vc_perp, pdf(vperp, w, vperp_edges), color=col, linewidth=1.6, label=label)
         if idx == 0:
-            vth_par_est  = float(np.std(pz))
-            vth_perp_est = float(np.std(perp))
+            mean_z = np.average(vz, weights=w)
+            s_par = float(np.sqrt(np.average((vz - mean_z) ** 2, weights=w)))
+            s_perp = float(np.sqrt(0.5 * np.average(vperp ** 2, weights=w)))
+        tails.append((toci, float(np.average(np.abs(vz) > 3 * s_par, weights=w)),
+                      float(np.average(vperp > 3 * s_perp, weights=w))))
+        del vz, vperp, w; gc.collect()
 
-        # Fraction of ions with |v| > 3 vth
-        if vth_par_est and vth_par_est > 0:
-            tail_par  = float(np.mean(np.abs(pz)   > 3 * vth_par_est))
-            tail_perp = float(np.mean(perp          > 3 * vth_perp_est))
-            tail_excess_par.append(tail_par)
-            tail_excess_perp.append(tail_perp)
+    axes[0].semilogy(vc_par, maxwellian_1d(vc_par, s_par), "k--", linewidth=1.8, alpha=0.7,
+                     label=r"Gaussian, $t=0$ variance")
+    rayleigh = vc_perp / s_perp ** 2 * np.exp(-vc_perp ** 2 / (2 * s_perp ** 2))
+    axes[1].semilogy(vc_perp, np.where(rayleigh > 0, rayleigh, np.nan), "k--", linewidth=1.8,
+                     alpha=0.7, label=r"2-D Maxwellian (Rayleigh), $t=0$ variance")
+    for ax, s, vmax, lo in ((axes[0], s_par, vpar_max, -vpar_max), (axes[1], s_perp, vperp_max, 0.0)):
+        ax.axvspan(3 * s, vmax, alpha=0.08, color="#D55E00", label=r"tail beyond $3\sigma$ at $t=0$")
+        if lo < 0:
+            ax.axvspan(lo, -3 * s, alpha=0.08, color="#D55E00")
 
-        del ps; gc.collect()
-
-    # Reference Maxwellian at t=0 temperatures
-    if vth_par_est:
-        mw_par  = maxwellian_1d(vc_par,  vth_par_est)
-        mw_perp = maxwellian_1d(vc_perp, vth_perp_est)
-        axes[0].semilogy(vc_par,  mw_par,  "k--", linewidth=1.8,
-                         alpha=0.6, label=r"Maxwellian ($t=0$ $v_{th}$)")
-        axes[1].semilogy(vc_perp, mw_perp, "k--", linewidth=1.8,
-                         alpha=0.6, label=r"Maxwellian ($t=0$ $v_{th}$)")
-        # Shade 3 vth tail region
-        for ax, vth, vmax in [(axes[0], vth_par_est, vpar_max),
-                               (axes[1], vth_perp_est, vperp_max)]:
-            ax.axvspan(3 * vth, vmax, alpha=0.08, color="#e74c3c",
-                       label=r"Suprathermal tail ($|v|>3v_{th}$)")
-            if ax is axes[0]:
-                ax.axvspan(-vmax, -3 * vth, alpha=0.08, color="#e74c3c")
-
-    for ax, xlabel, title in [
-        (axes[0], r"$v_\parallel\ [\mathrm{code\ units}]$",
-         r"$f(v_\parallel)$ — Parallel VDF"),
-        (axes[1], r"$v_\perp\ [\mathrm{code\ units}]$",
-         r"$f(v_\perp)$ — Perpendicular VDF"),
-    ]:
+    for ax, xlabel, ylabel, title in (
+        (axes[0], r"$v_z/v_A$  ($\parallel B_0$)", r"$f(v_z)$  [per $v_A$]", "Ion parallel VDF"),
+        (axes[1], r"$|v_\perp|/v_A$", r"$f(|v_\perp|)$  [per $v_A$]", "Ion perpendicular speed distribution"),
+    ):
         ax.set_xlabel(xlabel, fontsize=15)
-        ax.set_ylabel(r"$f(v)$  [PDF]", fontsize=15)
-        ax.set_title(title, fontsize=16, fontweight="bold")
-        ax.legend(fontsize=11, loc="upper right")
+        ax.set_ylabel(ylabel, fontsize=15)
+        ax.set_title(f"{title} — {PROFILE_LABEL}", fontsize=15, fontweight="bold")
+        ax.legend(fontsize=10, loc="upper left", bbox_to_anchor=(1.02, 1.0), borderaxespad=0.0)
         ax.grid(True, alpha=0.3, which="both", ls="--")
         ax.tick_params(which="both", direction="in", top=True, right=True)
 
@@ -1075,11 +905,9 @@ def plot_1d_vdf_evolution(
     _save_paper_figure(fig_par, output_file(outdir, "vdf_1d_parallel_evolution.png"))
     _save_paper_figure(fig_perp, output_file(outdir, "vdf_1d_perp_evolution.png"))
 
-    # Print tail-excess summary
-    if tail_excess_par:
-        print("  Suprathermal tail fraction (|v| > 3 v_th):")
-        for s, tp, tperp in zip(steps, tail_excess_par, tail_excess_perp):
-            print(f"    step {s:>8d}  par={tp:.4f}  perp={tperp:.4f}")
+    print("  Ion tail fractions (|v_z| > 3 s_par, |v_perp| > 3 s_perp; s at t = 0):")
+    for toci, tp, tperp in tails:
+        print(f"    t Omega_ci = {toci:8.2f}  par={tp:.4f}  perp={tperp:.4f}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1143,7 +971,7 @@ def plot_energy_partition(
 
     paths  = sample_filepaths(filepaths, max_files=MAX_EVOLUTION_FILES)
     steps  = np.array([extract_step(p) for p in paths], dtype=float)
-    times  = steps  # steps already in code units; convert if needed
+    times  = np.array([step_to_omegaci(int(st)) for st in steps])
 
     ion_kin_bulk    = []
     ion_thermal     = []
@@ -1163,8 +991,8 @@ def plot_energy_partition(
         if field_files and step in field_files:
             try:
                 m = load_field_fluctuation_metrics(field_files[step])
-                # E_B ~ (delta_B)^2 / 2  (normalised)
-                eb = 0.5 * m["delta_b_total"]**2
+                # delta_b_total = rms|dB|/B0, so E_dB/(B0^2/2) = (dB_rms/B0)^2
+                eb = m["delta_b_total"]**2
             except Exception:
                 pass
         mag_energy.append(eb)
@@ -1183,16 +1011,16 @@ def plot_energy_partition(
 
     fig, ax = plt.subplots(figsize=(7.8, 5.4))
     _style_paper_axes(ax)
-    ax.plot(times, ion_thermal / E0,     "s-", color="#e67e22", linewidth=2,
+    ax.plot(times, ion_thermal / E0,     "s-", color="#E69F00", linewidth=2,
             label=r"Ion thermal energy  ($\frac{1}{2}m_i\langle\delta u^2\rangle$)")
-    ax.plot(times, elec_thermal / E0,    "^-", color="#3498db", linewidth=2,
+    ax.plot(times, elec_thermal / E0,    "^-", color="#0072B2", linewidth=2,
             label=r"Electron thermal energy")
-    ax.plot(times, ion_kin_bulk / E0,    "d-", color="#2ecc71", linewidth=1.5,
+    ax.plot(times, ion_kin_bulk / E0,    "d-", color="#009E73", linewidth=1.5,
             label=r"Ion bulk kinetic")
-    ax.plot(times, elec_kin_bulk / E0,   "x-", color="#16a085", linewidth=1.5,
+    ax.plot(times, elec_kin_bulk / E0,   "x-", color="#56B4E9", linewidth=1.5,
             label=r"Electron bulk kinetic")
     ax.set_ylabel(r"Energy  [$E_0$]", fontsize=15)
-    ax.set_xlabel("Simulation step", fontsize=14)
+    ax.set_xlabel(r"$t\Omega_{ci}$", fontsize=14)
     ax.set_title("Particle energy components (normalised to $E_0$)",
                  fontsize=15, fontweight="bold")
     ax.legend(fontsize=12)
@@ -1202,178 +1030,20 @@ def plot_energy_partition(
     fig, ax2 = plt.subplots(figsize=(7.8, 5.4))
     _style_paper_axes(ax2)
     if not np.all(np.isnan(mag_energy)):
-        ax2.plot(times, mag_energy, "o-", color="#9b59b6", linewidth=2,
-                 label=r"$E_B = (\delta B_{\rm rms})^2 / 2$  (from field files)")
-        ax2.set_ylabel(r"Magnetic fluctuation energy  [$B_0^2/2$]", fontsize=15)
+        ax2.plot(times, mag_energy, "o-", color="#CC79A7", linewidth=2,
+                 label=r"$(\delta B_{\rm rms}/B_0)^2$  (from field files)")
+        ax2.set_ylabel(r"$E_{\delta B}$  [$B_0^2/2$]", fontsize=15)
         ax2.legend(fontsize=12)
     else:
         ax2.text(0.5, 0.5,
                  "Magnetic energy requires matching pfd.*.h5 field files.",
                  ha="center", va="center", transform=ax2.transAxes,
                  fontsize=14, color="gray")
-    ax2.set_xlabel("Simulation step", fontsize=14)
+    ax2.set_xlabel(r"$t\Omega_{ci}$", fontsize=14)
     ax2.set_title("Magnetic energy from field fluctuations",
                   fontsize=15, fontweight="bold")
     fig.tight_layout()
     _save_paper_figure(fig, output_file(outdir, "magnetic_energy_fluctuation.png"))
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  Plot 11: Heat flux diagnostics
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _compute_heat_flux(filepath: str,
-                       n_regions: int = 4) -> dict:
-    """Experimental velocity-quantile heat-flux diagnostic.
-
-    The heat flux vector is defined as:
-        q_i = (m/2) * <(v - <v>)^2 * (v_i - <v_i>)>
-
-    Parallel component:   q_par  = (m/2) * <delta_v^2 * delta_vz>
-    Perpendicular:        q_perp = (m/2) * <delta_v^2 * delta_vperp>
-
-    Particles are grouped by u_z quantile. These groups are velocity
-    populations, not spatial regions, so this diagnostic is not part of the
-    standard analysis pipeline.
-    """
-    with h5py.File(filepath, "r") as f:
-        dset  = f["particles"]["p0"]["1d"]
-        n_tot = dset["q"].shape[0]
-        idx = _sample_indices(n_tot, MAX_PARTICLES)
-        q  = dset["q"][idx].astype(np.float64)
-        m  = dset["m"][idx].astype(np.float64)
-        px = dset["px"][idx].astype(np.float64)
-        py = dset["py"][idx].astype(np.float64)
-        pz = dset["pz"][idx].astype(np.float64)
-
-    ion_mask = q > 0
-    mi = float(np.abs(m[ion_mask][0])) if ion_mask.any() else M_ION
-    pz_i  = pz[ion_mask]
-    px_i  = px[ion_mask]
-    py_i  = py[ion_mask]
-
-    # Proxy spatial bins: divide by pz quantile (streaming direction)
-    pz_bins = np.percentile(pz_i, np.linspace(0, 100, n_regions + 1))
-
-    q_par_regions  = []
-    q_perp_regions = []
-    region_centers = []
-
-    for k in range(n_regions):
-        mask = (pz_i >= pz_bins[k]) & (pz_i < pz_bins[k + 1])
-        if mask.sum() < 10:
-            q_par_regions.append(np.nan)
-            q_perp_regions.append(np.nan)
-            region_centers.append(0.5 * (pz_bins[k] + pz_bins[k + 1]))
-            continue
-
-        vz   = pz_i[mask]
-        vx   = px_i[mask]
-        vy   = py_i[mask]
-        dvz  = vz - np.mean(vz)
-        dvx  = vx - np.mean(vx)
-        dvy  = vy - np.mean(vy)
-        dv2  = dvx**2 + dvy**2 + dvz**2
-        dvperp = np.sqrt(dvx**2 + dvy**2)
-
-        q_par  = 0.5 * mi * np.mean(dv2 * dvz)
-        q_perp = 0.5 * mi * np.mean(dv2 * dvperp)
-        q_par_regions.append(q_par)
-        q_perp_regions.append(q_perp)
-        region_centers.append(0.5 * (pz_bins[k] + pz_bins[k + 1]))
-
-    return {
-        "region_centers": np.array(region_centers),
-        "q_par":  np.array(q_par_regions),
-        "q_perp": np.array(q_perp_regions),
-    }
-
-
-def plot_heat_flux(
-    filepaths: list[str],
-    outdir: str,
-    n_times: int = 8,
-    n_regions: int = 4,
-):
-    """Plot experimental heat flux by parallel-velocity population.
-
-    Characterises non-thermal energy transport associated with instability
-    dynamics for both Maxwellian and kappa initial distributions.
-    """
-    print("\nBuilding heat flux diagnostics...")
-
-    paths  = sample_filepaths(filepaths, max_files=n_times)
-    steps  = np.array([extract_step(p) for p in paths], dtype=float)
-    cmap   = plt.colormaps["plasma"]
-    colors = [cmap(i / max(len(paths) - 1, 1)) for i in range(len(paths))]
-
-    q_par_all  = []   # shape (n_times, n_regions)
-    q_perp_all = []
-
-    for path in paths:
-        hf = _compute_heat_flux(path, n_regions=n_regions)
-        q_par_all.append(hf["q_par"])
-        q_perp_all.append(hf["q_perp"])
-        gc.collect()
-
-    q_par_all  = np.array(q_par_all,  dtype=float)   # (n_times, n_regions)
-    q_perp_all = np.array(q_perp_all, dtype=float)
-
-    region_labels = [f"R{k+1}" for k in range(n_regions)]
-    x = np.arange(n_regions)
-    width = 0.8 / len(paths)
-
-    for data, ylabel, title, filename in [
-        (q_par_all,
-         r"$q_\parallel = \frac{m}{2}\langle\delta v^2\,\delta v_z\rangle$",
-         r"Parallel heat flux $q_\parallel$",
-         "heat_flux_regions_parallel.png"),
-        (q_perp_all,
-         r"$q_\perp = \frac{m}{2}\langle\delta v^2\,\delta v_\perp\rangle$",
-         r"Perpendicular heat flux $q_\perp$",
-         "heat_flux_regions_perp.png"),
-    ]:
-        fig, ax = plt.subplots(figsize=(7.8, 5.4))
-        _style_paper_axes(ax)
-        for i, (row, step, col) in enumerate(zip(data, steps, colors)):
-            offset = (i - len(paths) / 2) * width
-            ax.bar(x + offset, row, width=width * 0.9,
-                   color=col, alpha=0.85, label=f"step {int(step)}")
-
-        ax.axhline(0, color="black", linewidth=0.8, linestyle=":")
-        ax.set_xticks(x)
-        ax.set_xticklabels(region_labels)
-        ax.set_xlabel(r"Population (binned by $u_z$ quantile)", fontsize=14)
-        ax.set_ylabel(ylabel, fontsize=14)
-        ax.set_title(title, fontsize=16, fontweight="bold")
-        ax.legend(fontsize=11, ncol=2)
-        fig.tight_layout()
-        _save_paper_figure(fig, output_file(outdir, filename))
-
-    # Time-series panel at bottom
-    fig2, ax3 = plt.subplots(figsize=(12, 5))
-    fig2.patch.set_facecolor("white")
-    for k in range(n_regions):
-        ax3.plot(steps, q_par_all[:, k],  "o-", linewidth=1.8,
-                 label=rf"$q_\parallel$ R{k+1}")
-        ax3.plot(steps, q_perp_all[:, k], "s--", linewidth=1.4, alpha=0.7,
-                 label=rf"$q_\perp$ R{k+1}")
-    ax3.axhline(0, color="black", linewidth=0.8, linestyle=":")
-    ax3.set_xlabel("Simulation step", fontsize=15)
-    ax3.set_ylabel("Heat flux  [code units]", fontsize=15)
-    ax3.set_title(
-        r"Temporal Evolution of $q_\parallel$ and $q_\perp$ per Region",
-        fontsize=16, fontweight="bold",
-    )
-    ax3.legend(fontsize=11, ncol=2)
-    ax3.grid(True, alpha=0.3)
-    ax3.tick_params(which="both", direction="in", top=True, right=True)
-    fig2.tight_layout()
-
-    path2 = output_file(outdir, "heat_flux_timeseries.png")
-    fig2.savefig(path2, dpi=220, bbox_inches="tight", facecolor="white")
-    plt.close(fig2)
-    print(f"  Saved: {path2}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -59,12 +59,21 @@ class SyntheticPipelineTests(unittest.TestCase):
         cls.tmp.cleanup()
 
     def test_growth_rate_of_the_vector_fluctuation(self):
-        total = _csv(self.out / "growth_rate_summary.csv")[0]
-        self.assertEqual(total["series"], "total")
-        self.assertEqual(total["fit_ok"], "1")
-        gamma, err = float(total["gamma"]), float(total["gamma_err"])
-        self.assertLess(abs(gamma / 0.25 - 1.0), 0.10)
-        self.assertLess(abs(gamma - 0.25), 3 * err + 0.0125)
+        rows = {r["series"]: r for r in _csv(self.out / "growth_rate_summary.csv")}
+        # The dominant Fourier mode is the reference gamma of the run; the
+        # rms of dB is fitted on the same linear phase.
+        for series in ("mode", "total"):
+            with self.subTest(series=series):
+                row = rows[series]
+                self.assertEqual(row["fit_ok"], "1", row["fit_reject_reason"])
+                gamma, err = float(row["gamma"]), float(row["gamma_err"])
+                self.assertLess(abs(gamma / 0.25 - 1.0), 0.10)
+                self.assertLess(abs(gamma - 0.25), 3 * err + 0.0125)
+        self.assertEqual(rows["total"]["window_source"], "dominant-mode")
+        self.assertEqual(rows["total"]["linear_phase_start"], rows["mode"]["linear_phase_start"])
+        modes = _csv(self.out / "mode_growth_table.csv")
+        self.assertEqual(sum(int(m["dominant"]) for m in modes), 1)
+        self.assertEqual(modes[0]["dominant"], "1")
 
     def test_div_b_and_log_residuals(self):
         summary = json.loads((self.out / "field_residuals_summary.json").read_text())

@@ -228,7 +228,7 @@ def plot_step(b: dict, grid: dict, cut: dict, window: dict, lo, hi,
     # ── Panel (a): dominio completo en fluctuación, con la caja prt ─────────
     lim = float(np.percentile(np.abs(delta2d), 99))
     lim = lim if lim > 0 else 1e-6
-    im = ax_map.imshow(delta2d.T, origin="lower", cmap="RdBu_r",
+    im = ax_map.imshow(delta2d.T, origin="lower", cmap=ps.CMAP_DIVERGING,
                        vmin=-lim, vmax=lim, aspect="equal", extent=extent)
     cb = fig.colorbar(im, ax=ax_map, pad=0.02, aspect=28)
     cb.set_label(r"$\delta |B| / B_0$", fontsize=15, labelpad=2)
@@ -243,9 +243,8 @@ def plot_step(b: dict, grid: dict, cut: dict, window: dict, lo, hi,
         ax_map.plot([cut["position_di"]] * 2, [0, grid["Ly_di"]],
                     color=ps.TEXT_CLR, lw=1.6, ls="-", label="cut line")
 
-    ax_map.set_xlabel(r"$Z$  [$d_i$]  (parallel to $B_0$)")
-    ax_map.set_ylabel(r"$Y$  [$d_i$]  (perpendicular)")
-    ax_map.set_title("Full domain", pad=8)
+    ps.spatial_axes(ax_map)
+    ax_map.set_title("Full domain")
     ax_map.legend(loc="upper right", framealpha=0.85)
     ax_map.tick_params(direction="in", which="both", top=True, right=True)
 
@@ -255,20 +254,19 @@ def plot_step(b: dict, grid: dict, cut: dict, window: dict, lo, hi,
     delta_win = delta2d[iz0:iz1, iy0:iy1]
     lim_w = float(np.percentile(np.abs(delta_win), 99))
     lim_w = lim_w if lim_w > 0 else 1e-6
-    im = ax_zoom.imshow(delta_win.T, origin="lower", cmap="RdBu_r",
+    im = ax_zoom.imshow(delta_win.T, origin="lower", cmap=ps.CMAP_DIVERGING,
                         vmin=-lim_w, vmax=lim_w, aspect="equal",
                         extent=[z0, z1, y0, y1])
     cb = fig.colorbar(im, ax=ax_zoom, pad=0.02, aspect=28)
     cb.set_label(r"$\delta |B| / B_0$", fontsize=15, labelpad=2)
-    ax_zoom.set_xlabel(r"$Z$  [$d_i$]")
-    ax_zoom.set_ylabel(r"$Y$  [$d_i$]")
+    ps.spatial_axes(ax_zoom, parallel_note=False)
     ax_zoom.set_title(
-        rf"prt window: {window['size_di'][1]:.1f} x {window['size_di'][0]:.1f} $d_i$"
-        rf"  ({100 * window['fraction_of_area']:.1f} % of the area)", pad=8)
+        rf"prt window: {window['size_di'][1]:.1f} $\times$ {window['size_di'][0]:.1f} $d_i$"
+        rf"  ({100 * window['fraction_of_area']:.1f} % of the area)")
     ax_zoom.tick_params(direction="in", which="both", top=True, right=True)
 
     fig.suptitle(
-        rf"{PROFILE_LABEL} — step {step}, $t \approx {toci:.1f}\,\Omega_{{ci}}^{{-1}}$",
+        rf"{PROFILE_LABEL} — step {step}, $t\Omega_{{ci}} = {toci:.1f}$",
         y=0.95, fontsize=20)
 
     # ── Panel inferior: corte 1D, en fluctuaciones ──────────────────────────

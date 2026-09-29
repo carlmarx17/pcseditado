@@ -8,31 +8,23 @@ Visualización de estructuras magnéticas (fluctuaciones individuales).
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
-import re
 import imageio
 from io import BytesIO
 from pathlib import Path
 from PIL import Image
 from scipy.ndimage import gaussian_filter
-from matplotlib.colors import LinearSegmentedColormap
 
 from data_reader import PICDataReader
 from psc_units import step_to_omegaci, DOMAIN_DI_Y, DOMAIN_DI_Z, B0 as B0_DEFAULT
+import plot_style as ps
 
-plt.switch_backend('Agg')
-plt.rcParams.update({
-    "font.size": 15,
-    "axes.labelsize": 18,
-    "axes.titlesize": 19,
-    "xtick.labelsize": 15,
-    "ytick.labelsize": 15,
-    "legend.fontsize": 14,
-    "figure.titlesize": 20,
-})
-DARK_BG  = "#0c0e14"
-PANEL_BG = "#12151f"
-TEXT_CLR  = "#dde2f0"
-GRID_CLR  = "#2a2f45"
+# The shared theme (paper: white, 300 dpi, PDF copy) like every other figure
+# of the pipeline; this script used to carry its own dark theme.
+ps.apply()
+DARK_BG = ps.FIG_BG
+PANEL_BG = ps.PANEL_BG
+TEXT_CLR = ps.TEXT_CLR
+GRID_CLR = ps.GRID_CLR
 
 # Saved PNG maps are thesis figures: a handful is enough.
 STEP_EVERY_DEFAULT: int = 100_000
@@ -61,21 +53,15 @@ class FieldImagePlotter:
         self.global_vmax = {}
         self.file_map = PICDataReader.find_files(self.em_pattern)
         
-        # Paletas de colores de calidad de publicación
+        # One diverging map for the signed components and one sequential map
+        # for the magnitude, the pipeline-wide choices (plot_style): the old
+        # 'seismic' is not perceptually uniform and prints badly.
         self.palettes = {
-            'Bx': 'RdBu_r',       # Divergente rojo-azul
-            'By': 'PuOr_r',       # Divergente naranja-púrpura 
-            'Bz': 'seismic',      # Divergente frío-caliente
-            'Bmag': 'plasma',     # Secuencial perceptualmente uniforme
+            'Bx': ps.CMAP_DIVERGING,
+            'By': ps.CMAP_DIVERGING,
+            'Bz': ps.CMAP_DIVERGING,
+            'Bmag': ps.CMAP_SEQUENTIAL,
         }
-
-    def create_dark_divergent_cmap(self, color1, color2):
-        """Mantenido por compatibilidad — ahora se usa matplotlib builtin."""
-        return 'RdBu_r'
-
-    def create_yellow_green_cmap(self):
-        """Mantenido por compatibilidad — ahora se usa 'plasma'."""
-        return 'plasma'
 
     def _process_component(self, data):
         """Procesa un componente: normalización y suavizado"""
@@ -240,14 +226,15 @@ class FieldImagePlotter:
         cb.set_label(panel['label'], fontsize=17, color=TEXT_CLR)
         cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
         plt.setp(cb.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
-        ax.set_xlabel(r"$Z\ [d_i]$", fontsize=16, color=TEXT_CLR)
-        ax.set_ylabel(r"$Y\ [d_i]$", fontsize=16, color=TEXT_CLR)
+        ps.spatial_axes(ax, fontsize=16, color=TEXT_CLR)
+        if not np.nanmax(np.abs(panel['data'])) > 0:
+            ax.text(0.5, 0.5, "identically zero in this snapshot", transform=ax.transAxes,
+                    ha="center", va="center", fontsize=14, color=ps.MUTED_CLR)
         ax.set_title(
-            rf"{panel['label']}  —  $t \approx {time_omega_ci:.2f}\,\Omega_{{ci}}^{{-1}}$ (step {step})",
+            rf"{panel['label']} — $t\Omega_{{ci}} = {time_omega_ci:.1f}$ (step {step})",
             fontsize=17, color=TEXT_CLR, fontweight='bold'
         )
         ax.tick_params(colors=TEXT_CLR, direction='in', which='both', top=True, right=True)
-        ax.grid(True, linestyle=':', alpha=0.25, color=GRID_CLR)
         for spine in ax.spines.values():
             spine.set_edgecolor(GRID_CLR)
         return fig
@@ -257,10 +244,7 @@ class FieldImagePlotter:
         if panels is None:
             return False
         for panel in panels:
-            fig = self._make_figure(panel, step)
-            fig.savefig(self.outdir / panel['filename'], dpi=200,
-                        bbox_inches='tight', facecolor=DARK_BG)
-            plt.close(fig)
+            ps.save(self._make_figure(panel, step), self.outdir / panel['filename'])
         return True
 
     def render_frames(self, step, plane='xy', slice_index=None, dpi=GIF_DPI_DEFAULT):

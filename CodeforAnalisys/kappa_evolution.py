@@ -54,6 +54,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from growth_fit import reference_growth_row
+
 try:
     import plot_style as ps
     ps.apply()
@@ -100,18 +102,16 @@ def read_case(path: Path) -> dict:
     gpath = path / "growth_rate_summary.csv"
     if gpath.exists():
         with open(gpath, newline="") as fh:
-            # First row = series "total" (vector |dB|); text columns such as
+            # The row whose gamma is quoted for the run (dominant mode, or the
+            # vector |dB| rms in older summaries); text columns such as
             # series / amplitude / window_source are skipped.
-            for r in csv.DictReader(fh):
-                growth = {}
-                for k, v in r.items():
-                    try:
-                        growth[k] = float(v)
-                    except (TypeError, ValueError):
-                        continue
-                if r.get("fit_ok", "0").lower() not in ("1", "true"):
-                    growth = {}
-                break
+            r = reference_growth_row(list(csv.DictReader(fh)))
+        if r is not None and r.get("fit_ok", "0").lower() in ("1", "true"):
+            for k, v in r.items():
+                try:
+                    growth[k] = float(v)
+                except (TypeError, ValueError):
+                    continue
     return {"rows": rows, "growth": growth}
 
 

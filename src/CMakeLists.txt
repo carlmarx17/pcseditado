@@ -21,7 +21,7 @@ add_psc_executable(psc_harris_yz)
 add_psc_executable(psc_2d_shock)
 add_psc_executable(psc_radiation)
 add_psc_executable(psc_shock)
-# --- Bi-Maxwellian anisotropy scan (1500 ppc, 1024², mr=200) ---
+# --- Bi-Maxwellian anisotropy scan (1000 ppc, 576², mr=200) ---
 # Mirror
 add_psc_executable(psc_mirror_bimaxwellian_strong)
 add_psc_executable(psc_mirror_bimaxwellian_moderate)
@@ -35,12 +35,17 @@ add_psc_executable(psc_whistler_bimaxwellian_strong)
 add_psc_executable(psc_whistler_bimaxwellian_moderate)
 add_psc_executable(psc_whistler_bimaxwellian_weak)
 
-# --- Bi-Kappa anisotropy cases (1500 ppc, 1024², mr=200) ---
+# --- Bi-Kappa anisotropy cases (1000 ppc, 576², mr=200) ---
 add_psc_executable(psc_mirror_bikappa3)
 # Mismo Ai/beta que psc_mirror_bimaxwellian_moderate, para comparar
 # Bi-Maxwelliana vs Bi-Kappa a igualdad de anisotropia.
 add_psc_executable(psc_mirror_bikappa3_moderate)
 add_psc_executable(psc_mirror_bikappa5_moderate)
+# Isotropic controls of the mirror moderate series (A_i = 1, same ion
+# thermal energy): their electron heating is the numerical baseline.
+add_psc_executable(psc_mirror_bimaxwellian_isotropic)
+add_psc_executable(psc_mirror_bikappa5_isotropic)
+add_psc_executable(psc_mirror_bikappa3_isotropic)
 # Gemelo Bi-Kappa de psc_whistler_bimaxwellian_moderate.
 add_psc_executable(psc_whistler_bikappa3_moderate)
 add_psc_executable(psc_mirror_bikappa5)

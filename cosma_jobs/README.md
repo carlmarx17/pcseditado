@@ -22,6 +22,7 @@ Repository root on COSMA: `/cosma7/data/dp433/dc-mart18/pcseditado`
 | `sim_firehose_bimaxwellian_strong_40di.sh` | Strong bi-Maxwellian firehose, big box — the **controlled twin** of the bi-Kappa-3 run | **40 d_i** | ngrid 1152 |
 | `sim_firehose_bikappa5_40di.sh` | Bi-Kappa-5 firehose, big box — third member of the strong firehose series | **40 d_i** | ngrid 1152 |
 | `sim_mirror_bikappa5_moderate.sh` | Moderate bi-Kappa-5 mirror — third member of the moderate mirror series | 20 d_i | ngrid 576 |
+| `sim_mirror_{bimaxwellian,bikappa5,bikappa3}_isotropic.sh` | **Isotropic controls** of the moderate mirror series (A_i = 1, same ion thermal energy, beta_i_par = 25/3): their electron heating is the numerical baseline subtracted by `energy_audit.py` | 20 d_i | ngrid 576 |
 | `sim_whistler_bimaxwellian_{strong,moderate,weak}.sh` | Bi-Maxwellian whistler (Ae = 3.0 / 2.0 / 1.5); electron-scale cadence, each only until relaxation (~6 / ~20 / ~43 h on 83 nodes) | 20 d_i | **ngrid 1152**, 2000 ppc |
 | `sim_whistler_bikappa{3,5}_strong.sh` | Bi-Kappa whistler strong (κ = 3 / 5) — distribution twins of the bi-Maxwellian strong | 20 d_i | **ngrid 1152**, 2000 ppc |
 | `sim_whistler_{bimaxwellian,bikappa3,bikappa5}_strong_mr800.sh` | Whistler strong series with **mi/me = 800** (the batch to run); ~23 h on 83 nodes each | 20 d_i = 566 d_e | **ngrid 2304**, 2000 ppc |
@@ -56,6 +57,42 @@ sbatch cosma_jobs/simulacion/sim_firehose_bikappa5_40di.sh
 
 Note the job id each submission prints: it becomes the `RUN_TAG` needed to
 resume from a checkpoint if 48 h are not enough.
+
+### Isotropic controls of the moderate mirror series (numerical heating)
+
+The three moderate mirror runs heat their electrons x8.3–8.6, isotropically
+and to within 3 % of each other, while their total energy is not conserved
+(`CodeforAnalisys/IMPLEMENTATION_V6.md`). Each control repeats its twin with
+`A_i = 1` and the same ion thermal energy (`beta_i_par = 25/3`): same grid,
+ppc, cadence, decomposition and electrons, but mirror stable. What its
+electrons gain is the numerical baseline that `energy_audit.py` (and the v6
+evidence report) subtract from the anisotropic run. `PSC_ENERGIES_EVERY=500`
+is mandatory: the corrected closure uses `diag.asc`.
+
+```bash
+BUILD_DIR="$PWD/build" BUILD_JOBS=4 \
+  PSC_TARGETS="psc_mirror_bimaxwellian_isotropic psc_mirror_bikappa5_isotropic psc_mirror_bikappa3_isotropic" \
+  src/cosma_build_psc_adios2.sh
+```
+
+```bash
+sbatch cosma_jobs/simulacion/sim_mirror_bimaxwellian_isotropic.sh
+```
+
+```bash
+sbatch cosma_jobs/simulacion/sim_mirror_bikappa5_isotropic.sh
+```
+
+```bash
+sbatch cosma_jobs/simulacion/sim_mirror_bikappa3_isotropic.sh
+```
+
+When they finish, analyse them together with their twins (they are paired
+automatically by numerics, electrons and distribution):
+
+```bash
+sbatch --export=ALL,EXTRA_RUNS="mirror_bimaxwellian_isotropic:psc_mirror_bimaxwellian_isotropic_<jobid> mirror_bikappa5_isotropic:psc_mirror_bikappa5_isotropic_<jobid> mirror_bikappa3_isotropic:psc_mirror_bikappa3_isotropic_<jobid>" cosma_jobs/analisis/reanalysis_v6_all.sh
+```
 
 ### Whistler strong series with mi/me = 800 (batch to run)
 | `sim_whistler_bikappa3_moderate.sh` | Moderate bi-Kappa-3 whistler — **still at the old 576², 1000 ppc, 80 000-step settings**: it is not the distribution twin of the production moderate run (1152², 2000 ppc, 140 000 steps) until its settings are aligned | 20 d_i | ngrid 576 |
@@ -170,10 +207,11 @@ the analysis manifests are written.
 | `analisis_mirror_bikappa3_moderate_pauper.sh` | Mirror **bikappa3** moderate | cosma7-rp-pauper / 24h |
 | `analisis_firehose_bimaxwellian_moderate_bigbox40_pauper.sh` | Firehose bimaxwellian moderate, 40 d_i box | cosma7-rp-pauper / 24h |
 | `analisis_firehose_bikappa3_bigbox40_pauper.sh` | Firehose bikappa3, 40 d_i box | cosma7-rp-pauper / 24h |
-| **`reanalysis_v5_all.sh`** | **Deletes the old products and re-runs the full v5 pipeline on every finished run** (see section D) | cosma7-rp / 48h, 20 nodes |
+| `reanalysis_v5_all.sh` | Historical: the v5 pipeline (section D). Refuses a v6 checkout on purpose | cosma7-rp / 48h, 20 nodes |
+| **`reanalysis_v6_all.sh`** | **Runs the v6 pipeline (`run_pipeline.py`) on every finished run into `analysis_results/v6`; deletes nothing** (see section E) | cosma7-rp / 48h, 20 nodes |
 
 > The per-case scripts above predate the v5 analysis revision (2026-09-28)
-> and write to `run_aware_v4`; use `reanalysis_v5_all.sh` for new products.
+> and write to `run_aware_v4`; use `reanalysis_v6_all.sh` for new products.
 
 ### `utils/` — helpers that do not submit anything
 
@@ -393,6 +431,54 @@ parallelism without changing the results. The job was tested end to end on
 synthetic runs with the same folder names (87/87 steps OK, cleanup limited to
 the analysed cases); the ADIOS2 (`.bp`) reading path is the one already used
 by the per-case jobs.
+
+### E) Re-analysis with the v6 pipeline (nothing deleted)
+
+Revision 6 (analysis conventions version 6) replaces the growth reference by
+the modal fit, fixes VDF coordinates and structure definitions, and adds the
+evidence report and the energy audit. The v5 products stay as the historical
+baseline; this job writes a new tree:
+
+```bash
+cd /cosma7/data/dp433/dc-mart18/pcseditado && git pull
+```
+
+```bash
+.venv/bin/python -m pip install -r CodeforAnalisys/requirements.txt
+```
+
+```bash
+sbatch cosma_jobs/analisis/reanalysis_v6_all.sh
+```
+
+What it does:
+
+1. refuses a checkout older than v6 (and `reanalysis_v5_all.sh` refuses a v6
+   one, so the two trees never mix);
+2. preflight on a compute node: the whole test suite (`pytest`, which includes
+   the synthetic end-to-end run of every script);
+3. skips unfinished runs, and runs that already have a v6 directory unless
+   `RESUME=1`;
+4. one `run_pipeline.py` per run, all at once; each launches its stages as
+   `srun` steps (one node each, up to nodes/runs per run, longest first):
+   manifest preflight, then `physics` -> `spectral` with the accepted linear
+   phase, every other stage alongside; mirror runs add `theory-liouville`,
+   firehose runs `theory` (parallel dispersion, never used for the mirror);
+5. comparisons of the controlled series, only between runs whose `physics`
+   stage passed (`compare-physics`, `kappa_evolution`);
+6. `analysis_results/v6/quality_report/index.html`: evidence matrix of every
+   run and the energy audit across runs;
+7. `analysis_results/v6/REANALYSIS_SUMMARY_<jobid>.txt`: execution status and
+   time of every stage, and the scientific status of every run.
+
+Per-stage logs are in `analysis_results/v6/<case>/logs/`, the runner and
+comparison logs in `logs/reanalysis_v6_<jobid>/`. An interrupted job continues
+with `sbatch --export=ALL,RESUME=1 ...`: completed stages whose products are
+unchanged are skipped, provided code, inputs and options are identical. The
+other overrides of section D (`ONLY`, `DRY_RUN`, `GROWTH_T_START/END`,
+`--nodes`) work the same way. The script was run end to end on a laptop
+against synthetic runs with the production folder names, through a stand-in
+`srun`.
 
 ---
 

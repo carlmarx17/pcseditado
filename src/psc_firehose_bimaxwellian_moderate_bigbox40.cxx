@@ -3,7 +3,7 @@
 //   Firehose Moderate Bi-Maxwellian, caja 40 d_i (el doble de la
 //   estandar de 20 d_i). Misma fisica que
 //   psc_firehose_bimaxwellian_moderate (beta_i_parallel=6.0, Ai=0.3,
-//   beta_e_parallel=1.0, Ae=1.0, mass_ratio=200, 1500 ppc).
+//   beta_e_parallel=1.0, Ae=1.0, mass_ratio=200, 1000 ppc).
 //
 //   Unica diferencia: PSC_DOMAIN_DI=40 en vez de 20. Se corre con
 //   PSC_NGRID=1152 (ver cosma_jobs/simulacion) para mantener la misma

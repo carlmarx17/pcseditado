@@ -34,6 +34,31 @@ class GrowthFitTests(unittest.TestCase):
                     if fit["gamma_err"] < 0.1 * fit["gamma"]:
                         self.assertLess(abs(fit["gamma"] / GAMMA - 1.0), 0.10)
 
+    def test_quiet_start_transient_is_not_the_linear_phase(self):
+        # Shape of the dominant mode in the v5 mirror runs (E(k,t) of the
+        # k d_i = 0.34 shell): from the quiet start the whole spectrum,
+        # the future unstable mode included, builds up x25 in ~2 Omega_ci^-1,
+        # sits on a slowly heating noise plateau, then the mode grows ~6
+        # e-folds at gamma = 0.11 and saturates. The steepest local slope is
+        # the build-up: the fit used to return gamma ~ 0.6 on t < 2.5 and
+        # flag it valid.
+        gamma = 0.11
+        for n in (2400, 121):
+            for seed in (1, 2):
+                rng = np.random.default_rng(seed)
+                t = np.linspace(0.066, 158.0, n)
+                build_up = 1.0 - 0.96 * np.exp(-t / 1.5)
+                g = 8.8e-6 * np.exp(gamma * t)
+                mode = g / (1.0 + g / 0.016)
+                floor = 1.6e-5 * (1.0 + 0.004 * t)
+                a = (build_up * np.sqrt(floor ** 2 + mode ** 2)
+                     * np.exp(0.05 * rng.standard_normal(n)))
+                fit = fit_exponential_growth(t, a)
+                with self.subTest(n=n, seed=seed):
+                    self.assertTrue(fit["fit_ok"], fit["fit_reject_reason"])
+                    self.assertGreater(fit["linear_phase_start"], 10.0)
+                    self.assertLess(abs(fit["gamma"] / gamma - 1.0), 0.10)
+
     def test_window_excludes_the_saturation_roll_over(self):
         t, a = logistic_series(81, 0.0, 0)
         fit = fit_exponential_growth(t, a)
