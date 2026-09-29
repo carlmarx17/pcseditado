@@ -30,7 +30,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import plot_style as ps
-from growth_fit import reference_growth_row
+from growth_fit import BRANCH_SERIES, branch_growth_rows, reference_growth_row
 from analysis_contract import gap_segments
 
 ps.apply()
@@ -123,6 +123,14 @@ def load_case(name: str, path: Path) -> dict:
     fit_ok = bool(total) and total.get("fit_ok", "").strip().lower() in ("1", "true")
     gamma_series = (total.get("series") or "total") if total else "none"
     gamma = gamma_raw if fit_ok else np.nan
+    # Growth rate of each branch (mirror / ion-cyclotron for T_perp > T_par
+    # ions): the reference gamma is that of whichever branch dominated, so a
+    # kappa-vs-Maxwellian comparison of the mirror growth rate needs these.
+    branch_gamma = {}
+    for branch, row in branch_growth_rows(gamma_rows).items():
+        ok = row.get("fit_ok", "").strip().lower() in ("1", "true")
+        branch_gamma[branch] = (_to_float(row.get("gamma")) if ok else np.nan,
+                                _to_float(row.get("gamma_err")) if ok else np.nan)
     driven = manifest.get("driven_species", "ion")
     s = "e" if driven == "electron" else "i"
 
@@ -171,7 +179,8 @@ def load_case(name: str, path: Path) -> dict:
                                            heat_by_step.get(step, {}).get("abs_q_par_over_q0"))),
         })
     return {"name": name, "rows": merged, "gamma": gamma, "gamma_err": gamma_err,
-            "gamma_series": gamma_series, "manifest": manifest, "driven_species": driven}
+            "gamma_series": gamma_series, "manifest": manifest, "driven_species": driven,
+            "branch_gamma": branch_gamma}
 
 
 def validate_comparison(cases: list[dict], mode: str = "distribution") -> list[str]:
@@ -273,6 +282,45 @@ def plot_growth_bars(cases: list[dict], path: Path):
     _save(fig, path)
 
 
+#: Legend names of the geometric branches, and their instability for
+#: T_perp > T_par ions (physical_diagnostics.physical_branch).
+BRANCH_LABELS = {"compressive_oblique": ("compressive, oblique", "mirror"),
+                 "transverse_parallel": ("transverse, parallel", "ion-cyclotron")}
+
+
+def plot_branch_growth_bars(cases: list[dict], path: Path):
+    """Grouped bars: growth rate of each branch in each case."""
+    branches = [b for b in BRANCH_SERIES if any(b in c.get("branch_gamma", {}) for c in cases)]
+    if not branches:
+        return
+    ion_driven = all(c["driven_species"] == "ion" and
+                     (c["manifest"].get("physics", {}).get("A_i") or 0) > 1 for c in cases)
+    fig, ax = plt.subplots(figsize=(9, 5.4))
+    fig.patch.set_facecolor(DARK_BG)
+    _style(ax)
+    indices = np.arange(len(cases))
+    width = 0.8 / len(branches)
+    colors = ("#58a6ff", "#ffa657")
+    for j, branch in enumerate(branches):
+        values = np.array([c.get("branch_gamma", {}).get(branch, (np.nan, np.nan)) for c in cases], dtype=float)
+        x = indices + (j - (len(branches) - 1) / 2) * width
+        geometric, physical = BRANCH_LABELS[branch]
+        label = physical if ion_driven else geometric
+        ok = np.isfinite(values[:, 0])
+        ax.bar(x[ok], values[ok, 0], width * 0.92,
+               yerr=np.where(np.isfinite(values[ok, 1]), values[ok, 1], 0.),
+               color=ps.c(colors[j % len(colors)]), capsize=4, ecolor=TEXT_CLR, label=label)
+        for xi in x[~ok]:
+            ax.text(xi, 0.0, "no fit", ha="center", va="bottom", color=TEXT_CLR, fontsize=9, rotation=90)
+    ax.set_xticks(indices, [c["name"] for c in cases])
+    ax.set_ylabel(r"$\gamma/\Omega_{ci}$", color=TEXT_CLR)
+    ax.set_xlabel("strongest Fourier mode of each branch", color=TEXT_CLR)
+    ax.set_title("Growth rate per branch", color=TEXT_CLR, fontweight="bold")
+    ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR,
+              loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=len(branches))
+    _save(fig, path)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Compare physical diagnostics between PSC cases.")
     parser.add_argument("cases", nargs="+", help="Case directories, optionally NAME=/path/to/09_physical_diagnostics")
@@ -318,6 +366,10 @@ def main():
                     outdir / "comparison_deltaB_components.png",
                     "Compressive vs transverse fluctuation (/B0)", yscale="log")
     plot_growth_bars(cases, outdir / "comparison_growth_rate.png")
+    plot_branch_growth_bars(cases, outdir / "comparison_growth_rate_branches.png")
+    _write_csv(outdir / "comparison_growth_rate_branches.csv", [
+        {"case": c["name"], "branch": b, "gamma": g, "gamma_err": e}
+        for c in cases for b, (g, e) in sorted(c.get("branch_gamma", {}).items())])
     plot_timeseries(cases, ["energy_relative_change"], [r"$\Delta E_{\rm tot}/E_{\rm tot}$"],
                     outdir / "comparison_energy.png", "Global energy conservation (DiagEnergies)")
     plot_timeseries(cases, ["abs_q_par_over_q0"], [rf"$\langle|q_{{\parallel {s}}}|\rangle/q_0$"],

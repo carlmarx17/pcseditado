@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 import numpy as np
 from analysis_contract import atomic_json, ALGORITHMS, CONVENTIONS_VERSION
-from growth_fit import reference_growth_row
+from growth_fit import branch_growth_rows, reference_growth_row
 import energy_audit
 
 #: Worst first; a run's overall status is the worst of its checks.
@@ -70,9 +70,10 @@ def inspect_run(root, energy_tolerance=None):
     path = phys / 'growth_rate_summary.csv'
     if path.exists():
         with path.open(newline='') as handle:
-            growth = reference_growth_row(list(csv.DictReader(handle)))
+            growth_rows = list(csv.DictReader(handle))
     else:
-        growth = None
+        growth_rows = []
+    growth = reference_growth_row(growth_rows)
     accepted = bool(growth) and str(growth.get('fit_ok')) in ('1', 'True', 'true')
     series = (growth or {}).get('series') or 'total'
     if not growth:
@@ -86,6 +87,24 @@ def inspect_run(root, energy_tolerance=None):
     else:
         status, reason = 'PASS', 'Accepted modal fit; mode identity assessed separately'
     check('growth_fit', status, reason, path, growth)
+    # Mirror and ion-cyclotron compete at the same anisotropy: the reference
+    # gamma belongs to whichever branch won, so each branch is reported with
+    # its own fit (physical_diagnostics.classify_mode).
+    branches = branch_growth_rows(growth_rows)
+    accepted_branches = {b: r for b, r in branches.items()
+                         if str(r.get('fit_ok')) in ('1', 'True', 'true')}
+    if not branches:
+        status, reason = 'UNVERIFIED', 'No per-branch growth rows; regenerate with the branch-resolved modal fit'
+    elif not accepted_branches and energy_audit.is_isotropic_control(audit):
+        status, reason = 'PASS', 'No growing branch, as expected for an isotropic control'
+    elif not accepted_branches:
+        status, reason = 'UNVERIFIED', 'No branch has an accepted growing mode'
+    else:
+        status = 'PASS'
+        reason = '; '.join(
+            f"{b.replace('_', ' ')}: gamma = {float(r['gamma']):.3g} Omega_ci" if b in accepted_branches
+            else f"{b.replace('_', ' ')}: no accepted fit" for b, r in sorted(branches.items()))
+    check('branch_growth', status, reason, path, branches)
     path = phys / 'field_residuals_summary.json'
     residuals = read_json(path)
     for key in ('gauss', 'continuity'):

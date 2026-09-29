@@ -8,6 +8,21 @@ following the diagnostic used by Shaaban et al. for EMIC / proton-firehose
 mode identification (Fourier convention validated against a synthetic
 signal, see ``validate_polarization_convention``).
 
+Handedness (verified physically at every run by ``handedness_check``):
+with B0 along +z and the (k_par, omega) transform of this module, power of
+psi_+ at omega > 0 is a LEFT-hand wave, rotating about B0 in the sense in
+which ions gyrate (ion-cyclotron / EMIC branch); power of psi_- at omega > 0
+is a RIGHT-hand wave, rotating in the electron sense (whistler, parallel
+firehose). The sign of k_par only gives the direction of propagation. This
+matches linear_theory.py, whose 'plus' channel resonates at omega = +Omega_ci.
+If B0 points along -z the two channels are swapped, which build_psi and
+stream_polarization do through the sign of b0.
+
+Why it is checked rather than assumed: the assignment depends on three sign
+conventions at once (spatial FFT kernel, temporal kernel, direction of B0),
+any of which flips it, and a flipped assignment would label an ion-cyclotron
+wave as a whistler/firehose and overlay the wrong theory branch.
+
 B0 = B0 zhat in this simulation, so k_parallel = k_z and k_perp = k_y; the
 transverse components are Bx, By and the compressive one is Bz. This module
 covers the parallel/circularly-polarized diagnostic (EMIC, parallel
@@ -42,15 +57,15 @@ EPS = 1e-30
 MIN_FIT_R2 = 0.7
 
 # Mirror is fundamentally oblique/compressive (see module docstring), but the
-# Makefile runs this psi_pm diagnostic unconditionally for every instability.
-# For a mirror case, spatial_fft_kpar0 below only keeps the k_perp=0 slice, a
-# purely field-aligned fluctuation that is a *different* mode from the real
-# oblique mirror mode (theta_kB != 0, see mirror_bparallel_spectrum output).
-# Flag that on every psi_pm plot instead of letting it look like a duplicate
-# or a broken +/- polarization split.
+# Makefile runs this psi_pm diagnostic for every instability. For a
+# T_perp > T_par ion case the k_perp = 0 slice kept here is where the
+# competing ion-cyclotron branch lives (left-hand, psi_+ at omega > 0), a
+# *different* mode from the oblique mirror mode (theta_kB != 0, see
+# mirror_bparallel_spectrum). Flag that on every psi_pm plot so the two
+# branches are not mistaken for one another.
 MIRROR_CAVEAT = (
-    r"Note: $\psi_\pm$ only sees the $k_\perp=0$ slice; this mirror case's actual "
-    "oblique instability is shown in mirror_bparallel_spectrum, not here."
+    r"Note: $\psi_\pm$ only sees $k_\perp=0$, where the competing ion-cyclotron branch lives; "
+    "the oblique mirror mode is in mirror_bparallel_spectrum."
 )
 
 
@@ -105,10 +120,11 @@ def remove_spatial_mean(field_t: np.ndarray) -> np.ndarray:
 
 
 def build_psi(bx_t: np.ndarray, by_t: np.ndarray, b0: float) -> tuple[np.ndarray, np.ndarray]:
+    """psi_pm = (dBx +- i sign(B0) dBy)/|B0|: handedness relative to B0, not to +z."""
     dbx = remove_spatial_mean(bx_t)
-    dby = remove_spatial_mean(by_t)
-    psi_plus = (dbx + 1j * dby) / b0
-    psi_minus = (dbx - 1j * dby) / b0
+    dby = remove_spatial_mean(by_t) * np.sign(b0)
+    psi_plus = (dbx + 1j * dby) / abs(b0)
+    psi_minus = (dbx - 1j * dby) / abs(b0)
     return psi_plus, psi_minus
 
 
@@ -220,6 +236,78 @@ def validate_polarization_convention(n: int = 64, nt: int = 32, k_index: int = 3
             }
         results[label] = entry
     return results
+
+
+def gyration_sense(charge: float, b0: float, steps: int = 64) -> int:
+    """Sense of rotation of a charge about B = b0 z: +1 counter-clockwise seen from +z.
+
+    Integrated with the Boris rotation (the velocity update of PSC's pusher)
+    rather than written down, so the check below rests on the equation of
+    motion and not on a remembered sign.
+    """
+    v = np.array([1.0, 0.0, 0.0])
+    b = np.array([0.0, 0.0, b0])
+    dt = 0.05 / max(abs(charge * b0), EPS)
+    angle = 0.0
+    for _ in range(steps):
+        t_vec = 0.5 * dt * charge * b
+        v_prime = v + np.cross(v, t_vec)
+        v_new = v + np.cross(v_prime, 2.0 * t_vec / (1.0 + t_vec @ t_vec))
+        angle += np.arctan2(v[0] * v_new[1] - v[1] * v_new[0], v @ v_new)
+        v = v_new
+    return int(np.sign(angle))
+
+
+def handedness_check(b0: float = 1.0, n: int = 64, nt: int = 64, k_index: int = 3,
+                     omega_index: int = 4) -> dict:
+    """Which psi channel and frequency sign a wave of known handedness lands on.
+
+    Builds, for B0 = b0 z, a transverse wave whose field vector at fixed z
+    rotates in the ion gyration sense (left-hand by definition) and one
+    rotating in the electron sense (right-hand), each propagating along +z
+    and -z, and passes them through the same stream_polarization and
+    temporal_dispersion calls used on the simulation. Returns the channel
+    holding each wave at omega > 0; ``consistent`` is True when left-hand
+    waves land on psi_+ and right-hand ones on psi_-, the convention of the
+    module docstring and of linear_theory.py.
+    """
+    z = np.arange(n, dtype=float)
+    t = np.arange(nt, dtype=float) * 2.0 * np.pi / nt
+    k = 2.0 * np.pi * k_index / n
+    omega = float(omega_index)
+    Z, T = np.meshgrid(z, t, indexing="xy")      # (nt, n)
+    found = {}
+    for hand, charge in (("left", 1.0), ("right", -1.0)):
+        # Rotation of the field vector at fixed z: angle(t) = sense * omega * t.
+        sense = gyration_sense(charge, b0)
+        for direction in (1.0, -1.0):
+            phase = direction * k * Z - omega * T
+            bx = np.cos(phase)
+            by = -sense * np.sin(phase)
+            frames = np.zeros((3, nt, n, 4))
+            frames[0], frames[1] = bx[:, :, None], by[:, :, None]
+            frames[2] = b0
+            plus, minus, k_par, _ = stream_polarization(frames, (1.0, 1.0), ("z", "y"), "z", b0)
+            peaks = {}
+            for name, A in (("plus", plus), ("minus", minus)):
+                power, omega_axis = temporal_dispersion(A, t)
+                i_w, i_k = np.unravel_index(int(np.argmax(power)), power.shape)
+                peaks[name] = (float(power[i_w, i_k]), float(omega_axis[i_w]), float(k_par[i_k]))
+            channel = max(("plus", "minus"), key=lambda c: peaks[c][0] if peaks[c][1] > 0 else -1.0)
+            found[f"{hand}_hand_k{'+' if direction > 0 else '-'}"] = {
+                "channel_at_positive_omega": channel,
+                "peak_omega": peaks[channel][1], "peak_k": peaks[channel][2],
+                "propagation_sign_matches_k": bool(np.sign(peaks[channel][2]) == direction),
+            }
+    consistent = all(v["channel_at_positive_omega"] == ("plus" if key.startswith("left") else "minus")
+                     and v["propagation_sign_matches_k"] for key, v in found.items())
+    return {"b0": b0, "ion_gyration_sense": gyration_sense(1.0, b0),
+            "left_hand_channel": "plus", "right_hand_channel": "minus",
+            "waves": found, "consistent": bool(consistent)}
+
+
+#: Channel names for figure titles and tables, from handedness_check.
+CHANNEL_HANDEDNESS = {"plus": "left-hand, ion sense", "minus": "right-hand, electron sense"}
 
 
 # ── Theory overlay ────────────────────────────────────────────────────────
@@ -338,6 +426,9 @@ def growth_rate_rows(
             "distribution": distribution,
             "instability": instability,
             "polarization": polarization,
+            # |A(k)| sums both frequency signs; the handedness holds for the
+            # omega > 0 part of the channel (handedness_check).
+            "handedness_at_positive_omega": CHANNEL_HANDEDNESS[polarization],
             "mode_index": mode_idx,
             "kdi": k_val if length_unit == "d_i" else float("nan"),
             "kde": k_val if length_unit == "d_e" else float("nan"),
@@ -392,7 +483,8 @@ def plot_sigma_map(sigma: np.ndarray, k_par: np.ndarray, omega: np.ndarray, titl
     cmap.set_bad(PANEL_BG)  # masked (below-noise-floor) bins blend into the background
     mesh = ax.pcolormesh(k_par, omega, sigma, shading="auto", cmap=cmap, vmin=-1.0, vmax=1.0)
     cb = fig.colorbar(mesh, ax=ax)
-    cb.set_label(r"$\sigma_m = (P_+-P_-)/(P_++P_-)$", color=TEXT_CLR)
+    cb.set_label(r"$\sigma_m = (P_+-P_-)/(P_++P_-)$" + "\n" + r"$+1$ at $\omega>0$: left-hand (ion sense)",
+                 color=TEXT_CLR)
     cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
     plt.setp(plt.getp(cb.ax, "yticklabels"), color=TEXT_CLR)
     ax.set_xlabel(k_label)
@@ -545,9 +637,10 @@ def stream_polarization(series, spacing, axes, parallel_axis, b0, mirror=False, 
         # FFT of the perpendicular average is exactly the k_perp=0 slice
         # of the normalized 2D transform, without storing any spatial cube.
         b1,b2 = frame[c1].mean(axis=perp_dim),frame[c2].mean(axis=perp_dim)
-        b1,b2 = b1-b1.mean(),b2-b2.mean()
-        plus[t] = np.fft.fftshift(np.fft.fft((b1+1j*b2)/b0))/npar
-        minus[t] = np.fft.fftshift(np.fft.fft((b1-1j*b2)/b0))/npar
+        # sign(b0): the handedness is relative to B0 (see handedness_check).
+        b1,b2 = b1-b1.mean(),(b2-b2.mean())*np.sign(b0)
+        plus[t] = np.fft.fftshift(np.fft.fft((b1+1j*b2)/abs(b0)))/npar
+        minus[t] = np.fft.fftshift(np.fft.fft((b1-1j*b2)/abs(b0)))/npar
         if mirror:
             bp=frame['xyz'.index(parallel_axis)]
             coeff[t]=np.fft.fftshift(np.fft.fft2((bp-bp.mean())/b0))[sl0,sl1]/(n0*n1)
@@ -627,14 +720,21 @@ def main() -> int:
     print("Polarization convention check (synthetic Bx=cos(kz-wt), By=+-sin(kz-wt)):")
     for label, entry in convention.items():
         print(f"  {label}: {entry}")
+    handedness = handedness_check(args.b0)
+    if not handedness["consistent"]:
+        raise SystemExit("psi_pm handedness check failed: a wave of known handedness did not land "
+                         f"on the documented channel ({handedness['waves']}); fix the sign "
+                         "conventions before labelling any mode.")
+    print("Handedness check PASS: psi_+ at omega > 0 = left-hand (ion sense), "
+          "psi_- at omega > 0 = right-hand (electron sense), relative to B0.")
 
     if INSTABILITY == "mirror":
         print(
             "[NOTE] instability='mirror': the psi_pm dispersion/mode-growth plots below "
             "only cover the k_perp=0 slice, not the oblique mirror mode itself (see "
-            "mirror_bparallel_spectrum for that). psi_plus/psi_minus commonly come out "
-            "nearly identical here because a k_perp=0 fluctuation isn't preferentially "
-            "circularly polarized -- that is expected, not a duplicate/bug."
+            "mirror_bparallel_spectrum for that). At T_perp > T_par that slice holds the "
+            "competing ion-cyclotron branch: left-hand power (psi_+ at omega > 0) there is "
+            "an ion-cyclotron wave; P_+ ~ P_- means unpolarised noise, no parallel mode."
         )
 
     from dispersion_analysis import load_series
@@ -676,11 +776,11 @@ def main() -> int:
                              if normalization == "electron" else theory)
 
     plot_dispersion_map(
-        power_plus, k_par, omega, fr"$P_+(k_\parallel,\omega)$ — {PROFILE_LABEL}",
+        power_plus, k_par, omega, fr"$P_+(k_\parallel,\omega)$, {CHANNEL_HANDEDNESS['plus']} — {PROFILE_LABEL}",
         outdir / f"polarization_dispersion_plus_{series['plane']}.png", k_label, omega_label, theories["plus"],
     )
     plot_dispersion_map(
-        power_minus, k_par, omega, fr"$P_-(k_\parallel,\omega)$ — {PROFILE_LABEL}",
+        power_minus, k_par, omega, fr"$P_-(k_\parallel,\omega)$, {CHANNEL_HANDEDNESS['minus']} — {PROFILE_LABEL}",
         outdir / f"polarization_dispersion_minus_{series['plane']}.png", k_label, omega_label, theories["minus"],
     )
     plot_sigma_map(
@@ -747,6 +847,14 @@ def main() -> int:
         "t_omegaci_range": [float(times_omegaci.min()), float(times_omegaci.max())],
         "selected_modes_kdi": [float(k_par[m] * (DI if normalization == "electron" else 1.0)) for m in modes],
         "polarization_convention_check": convention,
+        "handedness_check": handedness,
+        # Strongest (k_par, omega) of each channel: psi_+ at omega > 0 is a
+        # left-hand (ion-cyclotron sense) wave, psi_- at omega > 0 right-hand.
+        "channel_peaks": {
+            name: dict(zip(("k", "omega"), (float(k_par[j]), float(omega[i]))))
+            for name, power in (("plus", power_plus), ("minus", power_minus))
+            for i, j in [np.unravel_index(int(np.argmax(power)), power.shape)]},
+        "channel_handedness": {c: f"{h} relative to B0, at omega > 0" for c, h in CHANNEL_HANDEDNESS.items()},
     }
     with (outdir / "polarization_fft_parameters.json").open("w") as handle:
         json.dump(params, handle, indent=2)

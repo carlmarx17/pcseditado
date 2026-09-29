@@ -95,8 +95,12 @@ develop compressive structures whose statistics and local VDFs can be measured
 robustly; the tails respond to the local field and a spatial-mixture origin
 can be bounded.
 
-Not supported yet: a mirror growth rate distinct from the ion-cyclotron one;
-a ranking of the distributions by growth rate or saturation level; any
+Now supported by the pipeline (follow-up 4, to be read on the v6 data): a
+mirror growth rate distinct from the ion-cyclotron one (`mode_compressive` /
+`mode_transverse`), a verified psi_pm handedness, and mirror thresholds with
+the measured electrons.
+
+Not supported yet: a ranking of the distributions by growth rate or saturation level; any
 energy-transfer or late-time pressure-balance statement that involves the
 electrons; agreement with linear theory.
 

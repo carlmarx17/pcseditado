@@ -12,6 +12,12 @@ numbers checked against the input before any COSMA time is spent:
   grid, so its discrete divergence is zero to round-off. The mode is an
   oblique, compressive wave whose amplitude grows as exp(GAMMA t) from a
   noise floor and saturates (logistic), i.e. gamma is known.
+  With ``--ion-cyclotron`` a second, weaker wave is added: a parallel
+  (k_perp = 0), purely transverse, LEFT-hand polarised wave rotating in the
+  ion gyration sense about B0, with its own growth rate GAMMA_IC and real
+  frequency OMEGA_IC. It is the known answer for the mirror / ion-cyclotron
+  branch separation (physical_diagnostics.classify_mode) and for the
+  handedness of psi_pm (polarization_dispersion.handedness_check).
 * ``pfd_moments.<step>_p000000.h5``: ``all_1st-0/{rho,px..pz,txx..tzx}_{i,e}``
   with n_i anticorrelated with |B| and P_perp in total-pressure balance.
 * ``prt_<case>.<step>.h5``: bi-Maxwellian ions and electrons (A from the
@@ -40,10 +46,15 @@ GAMMA = 0.25
 AMP0, AMP_SAT = 3e-4, 0.08
 #: Background noise of delta B / B0 (divergence-free).
 NOISE = 2e-5
+#: Optional ion-cyclotron wave: growth rate and real frequency in Omega_ci,
+#: initial and saturation amplitudes of delta B / B0, and k_par in box modes.
+GAMMA_IC, OMEGA_IC = 0.15, 0.47
+AMP0_IC, AMP_SAT_IC = 1e-4, 0.03
+K_IC = 2
 
 
 def build(outdir: Path, case: str, ngrid: int, t_end_omegaci: float, n_snap: int,
-          ppc: int, seed: int = 1) -> dict:
+          ppc: int, seed: int = 1, ion_cyclotron: bool = False) -> dict:
     os.environ["PSC_PROFILE"] = case
     os.environ.pop("PSC_ANALYSIS_DATA_DIR", None)
     import importlib
@@ -71,6 +82,10 @@ def build(outdir: Path, case: str, ngrid: int, t_end_omegaci: float, n_snap: int
         g = AMP0 * np.exp(GAMMA * t)
         return g / (1.0 + g / AMP_SAT)
 
+    def amplitude_ic(t):
+        g = AMP0_IC * np.exp(GAMMA_IC * t)
+        return g / (1.0 + g / AMP_SAT_IC) if ion_cyclotron else 0.0
+
     ti_par = units.TI_PAR
     ti_perp = units.TI_PERP
     te_par, te_perp = units.TE_PAR, units.TE_PERP
@@ -87,7 +102,14 @@ def build(outdir: Path, case: str, ngrid: int, t_end_omegaci: float, n_snap: int
         ax_ = a * np.sin(phase) / k_code + NOISE * b0 * dx * noise_ax
         by = (np.roll(ax_, -1, 0) - ax_) / dx
         bz = b0 - (np.roll(ax_, -1, 1) - ax_) / dx
-        bx = np.zeros_like(by)
+        # Left-hand wave: dBx + i dBy = a exp[i(k z - omega t)], omega > 0.
+        # At fixed z the vector turns as exp(-i omega t), i.e. clockwise seen
+        # from +z, the sense in which a positive charge gyrates about B0 z.
+        # It depends on z only, so div B stays zero.
+        phase_ic = 2 * np.pi * K_IC * z / ngrid - OMEGA_IC * t
+        a_ic = amplitude_ic(t) * b0
+        bx = a_ic * np.cos(phase_ic)
+        by = by + a_ic * np.sin(phase_ic)
         ex, ey, ez = (1e-7 * rng.standard_normal((ngrid, ngrid)) for _ in range(3))
         with h5py.File(outdir / f"pfd.{step:09d}_p000000.h5", "w") as f:
             for name, arr in (("ex_ec", ex), ("ey_ec", ey), ("ez_ec", ez),
@@ -100,7 +122,8 @@ def build(outdir: Path, case: str, ngrid: int, t_end_omegaci: float, n_snap: int
         # Cell-centred |B| and pressure-balanced moments.
         bz_c = 0.5 * (bz + np.roll(bz, -1, 0))
         by_c = 0.5 * (by + np.roll(by, -1, 1))
-        bmag = np.sqrt(bz_c ** 2 + by_c ** 2)
+        bx_c = 0.25 * (bx + np.roll(bx, -1, 0) + np.roll(bx, -1, 1) + np.roll(bx, (-1, -1), (0, 1)))
+        bmag = np.sqrt(bz_c ** 2 + by_c ** 2 + bx_c ** 2)
         # Isothermal total-pressure balance: B^2/2 + n (T_perp,i + T_perp,e) = const.
         dpm = 0.5 * (bmag ** 2 - b0 ** 2)
         n_i = 1.0 - dpm / (ti_perp + te_perp)
@@ -152,7 +175,8 @@ def build(outdir: Path, case: str, ngrid: int, t_end_omegaci: float, n_snap: int
             f.write(f"{time:.10g} {2*e_e/3:.12g} {2*e_e/3:.12g} {2*e_e/3:.12g} "
                     f"0 {0:.12g} {2*e_b:.12g} {k_e:.12g} {k_i:.12g}\n")
     (outdir / "psc_synthetic_1234.out").write_text("".join(log_lines))
-    return {"steps": steps, "dt": dt, "gamma": GAMMA, "ngrid": ngrid, "e_b0": e_b0}
+    return {"steps": steps, "dt": dt, "gamma": GAMMA, "ngrid": ngrid, "e_b0": e_b0,
+            "gamma_ic": GAMMA_IC if ion_cyclotron else None}
 
 
 def main() -> int:
@@ -163,8 +187,11 @@ def main() -> int:
     p.add_argument("--t-end", type=float, default=40.0, help="final Omega_ci t")
     p.add_argument("--snapshots", type=int, default=41)
     p.add_argument("--ppc", type=int, default=40, help="particles per cell in the prt window")
+    p.add_argument("--ion-cyclotron", action="store_true",
+                   help="add the parallel left-hand ion-cyclotron wave (second branch)")
     args = p.parse_args()
-    info = build(args.outdir, args.case, args.ngrid, args.t_end, args.snapshots, args.ppc)
+    info = build(args.outdir, args.case, args.ngrid, args.t_end, args.snapshots, args.ppc,
+                 ion_cyclotron=args.ion_cyclotron)
     print(f"Synthetic {args.case} run in {args.outdir}: {len(info['steps'])} snapshots, "
           f"gamma = {info['gamma']} Omega_ci")
     return 0

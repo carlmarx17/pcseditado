@@ -24,6 +24,53 @@ def mirror_threshold(beta_parallel):
         return np.where(beta > 0, 0.5 * (1.0 + np.sqrt(1.0 + 4.0 / beta)), np.nan)
 
 
+def mirror_criterion(beta_i_parallel, anisotropy_i, beta_e_parallel, anisotropy_e):
+    """Hellinger (2007) mirror criterion Gamma for bi-Maxwellian protons and electrons.
+
+    Gamma = sum_s beta_perp,s (A_s - 1) - 1
+            - (sum_s q_s n_s A_s)^2 / (2 sum_s (q_s n_s)^2 / beta_par,s),
+
+    unstable for Gamma > 0 (Hellinger 2007, Phys. Plasmas 14, 082105, Eq. 16;
+    long-wavelength, marginal-stability limit of linear kinetic theory). For a
+    quasi-neutral proton-electron plasma q_i n_i = -q_e n_e, so the last term
+    is (A_i - A_e)^2 / (2 (1/beta_par,i + 1/beta_par,e)).
+    """
+    bi, ai, be, ae = (np.asarray(v, dtype=float) for v in
+                      (beta_i_parallel, anisotropy_i, beta_e_parallel, anisotropy_e))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        charge_term = (ai - ae) ** 2 / (2.0 * (1.0 / bi + 1.0 / be))
+        charge_term = np.where(be > 0, charge_term, 0.0)
+    return bi * ai * (ai - 1.0) + be * ae * (ae - 1.0) - 1.0 - charge_term
+
+
+def mirror_threshold_electrons(beta_parallel, beta_e_parallel, anisotropy_e=1.0):
+    """Ion anisotropy A_i at which mirror_criterion vanishes, for given electrons.
+
+    Why: mirror_threshold assumes cold electrons, but in these runs the
+    electrons are heated numerically from beta_e = 1 to ~8 and need not stay
+    isotropic. Both enter the threshold: hot isotropic electrons raise it
+    slightly through the charge term (< 1 % at beta_i = 5), while an electron
+    anisotropy adds beta_perp,e (A_e - 1) to the drive, which at beta_e ~ 8
+    shifts the ion threshold far more than any other term. The ion trajectory
+    must therefore be compared with the threshold of the electrons actually
+    present at that time, not with the initial or the cold-electron one.
+
+    Gamma = 0 is a quadratic in A_i; the positive root is returned. For
+    beta_e -> 0 it reduces to mirror_threshold. Bi-Maxwellian theory: for
+    bi-kappa ions it is a reference, not the kappa threshold.
+    """
+    b, be, ae = np.broadcast_arrays(*(np.asarray(v, dtype=float) for v in
+                                       (beta_parallel, beta_e_parallel, anisotropy_e)))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        inv_d = np.where(be > 0, b * be / (2.0 * (b + be)), 0.0)
+        a = b - inv_d
+        linear = -b + 2.0 * ae * inv_d
+        const = be * ae * (ae - 1.0) - 1.0 - ae ** 2 * inv_d
+        disc = linear ** 2 - 4.0 * a * const
+        root = (-linear + np.sqrt(disc)) / (2.0 * a)
+        return np.where((b > 0) & (disc >= 0) & (a > 0), root, np.nan)
+
+
 def firehose_threshold(beta_parallel):
     """Fluid (CGL) parallel-firehose marginal curve A = 1 - 2/beta_parallel.
 

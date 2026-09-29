@@ -32,6 +32,7 @@ from plasma_physics import (
     field_aligned_pressures,
     firehose_threshold,
     mirror_threshold,
+    mirror_threshold_electrons,
     whistler_threshold,
 )
 from psc_units import (
@@ -102,14 +103,39 @@ def oblique_firehose_threshold(b):
 def ic_threshold(b):       return 1.0 + 0.43 / b**0.42
 
 
-def instability_threshold(beta):
-    """Return a reference curve, not a case-specific kinetic stability test."""
+#: Ion-driven mirror cases compare the ion state with the Hellinger (2007)
+#: threshold of the electrons measured at the same time
+#: (plasma_physics.mirror_threshold_electrons). Why: the electrons are heated
+#: numerically from beta_e = 1 to ~8 in these runs; the cold-electron curve
+#: ignores them, and the initial-electron curve ignores the heating and any
+#: electron anisotropy it produces, which enters the drive directly.
+MIRROR_WITH_ELECTRONS = INSTABILITY == "mirror" and DRIVEN_SPECIES == "ion"
+
+
+def instability_threshold(beta, electrons=None):
+    """Reference curve of the declared family; for mirror, of the given electrons.
+
+    ``electrons`` is (beta_e_parallel, A_e) measured at the same time; without
+    it (or when it is not finite) the mirror curve is the cold-electron one.
+    """
     beta = np.maximum(np.asarray(beta, dtype=float), 1e-12)
     if INSTABILITY == "firehose":
         return firehose_threshold(beta)
     if INSTABILITY == "mirror":
+        if electrons is not None and np.all(np.isfinite(electrons)):
+            return mirror_threshold_electrons(beta, *electrons)
         return mirror_threshold(beta)
     return whistler_threshold(beta)
+
+
+def process_snapshot_with_electrons(mom_file: str, bz_file: str, species: str = DRIVEN_SPECIES):
+    """process_snapshot plus the global electron state (beta_e||, A_e) for mirror cases."""
+    data = process_snapshot(mom_file, bz_file, species)
+    if data is not None and MIRROR_WITH_ELECTRONS:
+        electrons = process_snapshot(mom_file, bz_file, "electron")
+        data["electron_state"] = ((electrons["beta_global"], electrons["anisotropy_global"])
+                                  if electrons is not None else (np.nan, np.nan))
+    return data
 
 
 def instability_drive(anisotropy, threshold):
@@ -207,7 +233,12 @@ def process_snapshot(mom_file: str, bz_file: str, species: str = DRIVEN_SPECIES)
 
 
 # ── Decorar ejes Brasil ───────────────────────────────────────────────────────
-def _draw_thresholds(ax, xmin, xmax, ymin, ymax):
+def _draw_thresholds(ax, xmin, xmax, ymin, ymax, electrons=None):
+    """Reference curves; ``electrons`` = [(beta_e||, A_e, label, linestyle), ...].
+
+    With ``electrons`` the mirror curve is the Hellinger (2007) threshold of
+    each measured electron state instead of the cold-electron reference.
+    """
     b = np.logspace(np.log10(xmin * 0.5), np.log10(xmax * 2), 600)
 
     if INSTABILITY == "whistler":
@@ -221,10 +252,14 @@ def _draw_thresholds(ax, xmin, xmax, ymin, ymax):
         return
 
     # Mirror
-    m = mirror_threshold(b)
-    ok = (m >= ymin * 0.7) & (m <= ymax * 1.5)
-    ax.plot(b[ok], m[ok], "--", color=ps.c("#ff6b6b"), lw=2.2, zorder=8, alpha=0.9,
-            label="Mirror reference (cold electrons)")
+    states = [(be, ae, label, ls) for be, ae, label, ls in (electrons or [])
+              if np.isfinite(be) and np.isfinite(ae)]
+    curves = ([(mirror_threshold_electrons(b, be, ae), label, ls) for be, ae, label, ls in states]
+              or [(mirror_threshold(b), "Mirror reference (cold electrons)", "--")])
+    for m, label, ls in curves:
+        ok = (m >= ymin * 0.7) & (m <= ymax * 1.5)
+        ax.plot(b[ok], m[ok], ls, color=ps.c("#ff6b6b"), lw=2.2, zorder=8, alpha=0.9, label=label)
+    m = curves[-1][0]
     ax.fill_between(b, np.clip(m, ymin, ymax * 2), ymax * 2,
                     alpha=0.08, color=ps.c("#ff4444"), zorder=2)
 
@@ -356,7 +391,13 @@ def plot_brazil_accumulated(
     cbar.ax.yaxis.set_tick_params(color=TEXT_CLR, labelsize=BRAZIL_TICK)
     plt.setp(cbar.ax.yaxis.get_ticklabels(), color=TEXT_CLR)
 
-    _draw_thresholds(ax, xmin, xmax, ymin, ymax)
+    electrons = None
+    if MIRROR_WITH_ELECTRONS and snap_stats:
+        first, last = snap_stats[0], snap_stats[-1]
+        electrons = [(st["beta_e"], st["A_e"],
+                      rf"Mirror, electrons at $t\Omega_{{ci}}={st['toci']:.1f}$", ls)
+                     for st, ls in ((first, "--"), (last, "-"))]
+    _draw_thresholds(ax, xmin, xmax, ymin, ymax, electrons)
 
     # Condicion inicial
     beta_init = ACTIVE_BETA_INITIAL
@@ -479,12 +520,19 @@ def plot_temporal_evolution(snap_data: list, outdir: Path):
         threshold_label = r"Firehose threshold $1-2/\beta_\parallel(t)$"
         threshold_color = ps.c("#74b9ff")
     elif INSTABILITY == "mirror":
-        threshold_label = "Mirror reference (cold electrons)"
+        measured = np.array([s.get("beta_e", np.nan) for s in snap_data], dtype=float)
+        threshold_label = ("Mirror threshold, measured electrons (Hellinger 2007)"
+                           if np.isfinite(measured).any() else "Mirror reference (cold electrons)")
         threshold_color = ps.c("#ff9999")
+        if np.isfinite(measured).any():
+            cold = np.array([s["threshold_cold"] for s in snap_data], dtype=float)
+            ax1.plot(toci, cold, color=ps.c("#8b949e"), lw=1.0, ls="--",
+                     label="Mirror reference (cold electrons)")
+            dynamic_threshold = np.array([s["threshold"] for s in snap_data], dtype=float)
     else:
         threshold_label = r"Whistler threshold $1+0.21/\beta_{e\parallel}^{0.6}$"
         threshold_color = ps.c("#c084fc")
-    ax1.plot(toci, dynamic_threshold, color=threshold_color, alpha=0.9, lw=1.2,
+    ax1.plot(toci, dynamic_threshold, color=threshold_color, alpha=0.9, lw=2.0,
              ls=":", label=threshold_label)
 
     ax1.set_ylabel(r"$T_\perp / T_\parallel$", fontsize=POSTER_LABEL, color=TEXT_CLR)
@@ -519,14 +567,21 @@ def plot_temporal_evolution(snap_data: list, outdir: Path):
     ax2.set_facecolor(PANEL_BG)
     ax2.fill_between(toci, b_p25, b_p75, alpha=0.25, color=ps.c("#58a6ff"))
     ax2.plot(toci, b_global, color=ps.c("#58a6ff"), marker="o", ms=3.5, lw=2.2,
-             label=r"global $2\langle P_\parallel\rangle/\langle B^2\rangle$")
+             label=rf"global $\beta_{{{SPECIES_SYMBOL}\parallel}}=2\langle P_\parallel\rangle/\langle B^2\rangle$")
     ax2.plot(toci, b_med, color=ps.c("#a8d4ff"), lw=1.0, alpha=0.75,
              label="per-cell median")
-    ax2.set_ylabel(r"$\beta_{i\parallel}$", fontsize=POSTER_LABEL, color=TEXT_CLR)
+    beta_e = np.array([s.get("beta_e", np.nan) for s in snap_data], dtype=float)
+    if np.isfinite(beta_e).any():
+        # The electron beta sets the mirror threshold above; its growth is the
+        # numerical heating quantified by energy_audit.py.
+        ax2.plot(toci, beta_e, color=ps.c("#ffa657"), marker="s", ms=3.0, lw=1.8,
+                 label=r"global $\beta_{e\parallel}$ (measured)")
+        b_global = np.concatenate([b_global, beta_e])
+    ax2.set_ylabel(r"$\beta_\parallel$", fontsize=POSTER_LABEL, color=TEXT_CLR)
     ax2.set_xlabel(r"$t\,\Omega_{ci}$", fontsize=POSTER_LABEL, color=TEXT_CLR, labelpad=6)
     # Log only when beta spans more than a decade; otherwise a log axis just
     # prints "5 x 10^0"-style labels on an almost flat curve.
-    finite_b = np.concatenate([b_p25, b_p75, b_global])
+    finite_b = np.concatenate([b_p25, b_p75, b_global])  # b_global includes beta_e
     finite_b = finite_b[np.isfinite(finite_b) & (finite_b > 0)]
     if finite_b.size and finite_b.max() / finite_b.min() > 10:
         ax2.set_yscale("log")
@@ -597,7 +652,9 @@ def plot_brazil_grid(snap_list: list, outdir: Path, b0_ref: float, n_cols=4):
                           norm=mcolors.LogNorm(vmin=1, vmax=max(H.max(), 2)),
                           shading="flat", zorder=3)
 
-        _draw_thresholds(ax, xmin, xmax, ymin, ymax)
+        be, ae = snap.get("electron_state", (np.nan, np.nan))
+        _draw_thresholds(ax, xmin, xmax, ymin, ymax,
+                         [(be, ae, None, "--")] if MIRROR_WITH_ELECTRONS else None)
         ax.plot(beta_init, aniso_init, "*", color=ps.c("#ffd700"),
                 markeredgecolor="white", markeredgewidth=0.6,
                 markersize=14, zorder=12)
@@ -631,6 +688,10 @@ def plot_brazil_grid(snap_list: list, outdir: Path, b0_ref: float, n_cols=4):
         rf"Brazil Plots per Snapshot — {PROFILE_LABEL}  ($m_i/m_e={int(MASS_RATIO)}$)",
         fontsize=BRAZIL_TITLE + 2, fontweight="bold", color=TEXT_CLR
     )
+    if MIRROR_WITH_ELECTRONS:
+        fig.text(0.5, -0.01, "Dashed: mirror threshold (Hellinger 2007) for the electrons "
+                 "measured at each time", ha="center", va="top",
+                 fontsize=BRAZIL_GRID_TICK, color=ps.MUTED_CLR)
 
     out = output_path(outdir, "brazil_snapshots")
     ps.save(fig, out)
@@ -647,7 +708,8 @@ def write_summary_csv(snap_stats: list, outdir: Path):
         "parallel_over_perpendicular_global", "anisotropy_median",
         "anisotropy_p25", "anisotropy_p75", "beta_parallel_global",
         "beta_parallel_median", "beta_parallel_p25", "beta_parallel_p75",
-        "marginal_threshold", "instability_drive", "valid_cells",
+        "marginal_threshold", "threshold_source", "marginal_threshold_cold_electrons",
+        "beta_e_parallel_global", "anisotropy_e_global", "instability_drive", "valid_cells",
         "filtered_fraction",
     ]
     out = output_path(outdir, "anisotropy_evolution", ".csv")
@@ -670,6 +732,12 @@ def write_summary_csv(snap_stats: list, outdir: Path):
                 "beta_parallel_p25": stat["beta_p25"],
                 "beta_parallel_p75": stat["beta_p75"],
                 "marginal_threshold": stat["threshold"],
+                "threshold_source": ("Hellinger (2007), measured electrons"
+                                     if MIRROR_WITH_ELECTRONS and np.isfinite(stat["beta_e"])
+                                     else "reference curve"),
+                "marginal_threshold_cold_electrons": stat["threshold_cold"],
+                "beta_e_parallel_global": stat["beta_e"],
+                "anisotropy_e_global": stat["A_e"],
                 "instability_drive": stat["drive"],
                 "valid_cells": stat["valid_cells"],
                 "filtered_fraction": stat["filtered_fraction"],
@@ -713,7 +781,8 @@ def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
     results = {}
     with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
         futures = {
-            executor.submit(process_snapshot, mom_files[step], bz_files[step], DRIVEN_SPECIES): step
+            executor.submit(process_snapshot_with_electrons, mom_files[step], bz_files[step],
+                            DRIVEN_SPECIES): step
             for step in common
         }
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
@@ -745,8 +814,13 @@ def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
 
         # Estadisticas por paso
         if n_pts > 5:
-            threshold = float(instability_threshold(data["beta_global"]))
+            electrons = data.get("electron_state", (np.nan, np.nan))
+            threshold = float(instability_threshold(data["beta_global"], electrons))
             snap_stats.append({
+                "beta_e": float(electrons[0]),
+                "A_e": float(electrons[1]),
+                "threshold_cold": (float(mirror_threshold(data["beta_global"]))
+                                   if INSTABILITY == "mirror" else np.nan),
                 "step":      step,
                 "toci":      step_to_omegaci(step),
                 "aniso_global": data["anisotropy_global"],
@@ -770,6 +844,7 @@ def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
             grid_snaps.append({
                 "step": step, "toci": step_to_omegaci(step),
                 "anisotropy": av, "beta_par": bv,
+                "electron_state": data.get("electron_state", (np.nan, np.nan)),
             })
 
     print(f"Puntos acumulados: {len(all_beta):,}")

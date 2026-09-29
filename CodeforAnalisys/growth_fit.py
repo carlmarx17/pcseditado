@@ -331,6 +331,22 @@ def fit_exponential_growth(
 REFERENCE_SERIES = ("mode", "total")
 
 
+#: Geometric branch -> growth_rate_summary.csv series of its strongest mode
+#: (physical_diagnostics.classify_mode). With T_perp > T_par ions the
+#: compressive oblique branch is the mirror mode and the transverse parallel
+#: one the ion-cyclotron wave; both can grow in the same run, so the thesis
+#: quotes the mirror gamma from its own series, not from the dominant mode.
+BRANCH_SERIES = {"compressive_oblique": "mode_compressive",
+                 "transverse_parallel": "mode_transverse"}
+
+
+def branch_growth_rows(rows: list[dict]) -> dict[str, dict]:
+    """The growth_rate_summary.csv row of each branch present, keyed by branch."""
+    by_series = {r.get("series"): r for r in rows}
+    return {branch: by_series[series] for branch, series in BRANCH_SERIES.items()
+            if series in by_series}
+
+
 def reference_growth_row(rows: list[dict]) -> dict | None:
     """The growth_rate_summary.csv row that holds the growth rate of a run.
 

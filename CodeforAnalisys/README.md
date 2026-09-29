@@ -50,6 +50,31 @@ again; regenerate `09_physical_diagnostics` and `04_spectra`.
   `parallel`, `perp`) are fitted on the mode's linear phase. Comparisons,
   convergence study and `kappa_evolution.py` all read the `mode` row
   (`growth_fit.reference_growth_row`).
+- **Branch-resolved growth rates (v6 follow-up 4).** At beta_i|| = 5, A_i = 2
+  the mirror and ion-cyclotron (IC) thresholds almost coincide, and the v5
+  dominant mode was an IC wave (k_perp = 0, compressibility ~1e-12). Every
+  followed mode is now classified by theta_kB and compressibility
+  |dB_par|^2/|dB|^2 (`physical_diagnostics.classify_mode`): compressive
+  oblique (theta_kB >= 45 deg, >= 0.5; mirror for T_perp > T_par ions) or
+  transverse parallel (theta_kB <= 30 deg, <= 0.2; IC). The strongest mode of
+  each branch is fitted in its own row, `mode_compressive` and
+  `mode_transverse`, with `growth_rate_fit_mode_compressive.png` /
+  `_transverse.png`; `linear_phase.json` carries the classification and a
+  `branches` block, the quality report a `branch_growth` check, and
+  `compare_physical_cases.py` the figure `comparison_growth_rate_branches.png`.
+  The mirror growth rate of the thesis is the `mode_compressive` row.
+- **psi_pm handedness is verified, not assumed.** `polarization_dispersion.py`
+  runs `handedness_check` before every analysis: the ion gyration sense is
+  integrated with the Boris rotation, waves rotating in that sense (left-hand)
+  and in the opposite sense are pushed through the same transforms, and the run
+  stops if they do not land on psi_+ / psi_- at omega > 0. psi_pm are now
+  defined relative to B0 (sign of b0 included), titles state the handedness,
+  and the JSON records the peak (k, omega) of each channel.
+- **Mirror threshold with the measured electrons.** The Brazil plots and the
+  anisotropy evolution of mirror cases use the Hellinger (2007) criterion for
+  bi-Maxwellian ions and electrons with beta_e||(t) and A_e(t) measured at each
+  snapshot (`plasma_physics.mirror_threshold_electrons`), since the electrons
+  heat from beta_e = 1 to ~8. The cold-electron curve is kept in the CSV.
 - The automatic window no longer locks onto the PIC quiet-start build-up of
   the noise floor (the first ~2 \(\Omega_{ci}^{-1}\), steeper than any
   instability): the spectral, polarization and dispersion fits of the v5 run
@@ -530,6 +555,20 @@ of particle scattering by the generated waves.
    This reference omits hot-electron effects and is not a Kappa threshold or
    the CGL mirror condition. See [Hellinger (2007), Eq. (16)](https://space.asu.cas.cz/~helinger/hell07.pdf).
    A case-specific stability claim requires the appropriate kinetic calculation.
+
+   With the electrons included (what the mirror figures now draw, with the
+   beta_e|| and A_e measured at each time), Hellinger (2007) Eq. (16) for a
+   quasi-neutral proton-electron plasma reads
+
+   \[
+   \Gamma=\sum_{s=i,e}\beta_{\perp s}(A_s-1)-1
+   -\frac{(A_i-A_e)^2}{2\,(1/\beta_{\parallel i}+1/\beta_{\parallel e})}>0 .
+   \]
+
+   Hot isotropic electrons raise the ion threshold slightly (1.171 -> 1.178 at
+   beta_i|| = 5 for beta_e = 0 -> 8); an electron anisotropy enters the drive
+   directly, e.g. A_e = 1.05 at beta_e = 8 lowers it to 1.106. It remains a
+   bi-Maxwellian, marginal-stability criterion.
 
 2. Fluid firehose:
 

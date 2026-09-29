@@ -238,3 +238,34 @@ findings; no unused imports remain; the COSMA job was rerun locally end to end.
   `analisis_resolution_mirror.sh` runs both variants, the energy audit with
   labelled runs and a comparison at the last common time, and the convergence
   table; the whole chain was run locally on synthetic variants.
+
+## Follow-up 4 (2026-09-29): mode identification
+
+Why: the three weakest links left between the measurements and the thesis
+claims were (i) one growth rate per run although mirror and ion-cyclotron
+compete at the same anisotropy, (ii) a psi_pm handedness taken from a sign
+convention, and (iii) Brazil thresholds for cold electrons in runs whose
+electrons heat to beta_e ~ 8.
+
+- Branch-resolved growth: `mode_power(..., split=True)` gives the transverse
+  and compressive power of each followed mode; `classify_mode` assigns
+  compressive-oblique (mirror) or transverse-parallel (IC) from theta_kB and
+  compressibility on the mode's own linear phase; candidates include the
+  strongest modes of each part so a weaker branch is always followed. New
+  series `mode_compressive` / `mode_transverse`, `branches` in
+  `linear_phase.json`, `branch_growth` QA check, per-branch comparison figure.
+  Known answer: synthetic run with a mirror mode (gamma 0.25) and a left-hand
+  IC wave (gamma 0.15, `synthetic_run.py --ion-cyclotron`) returns 0.236 and
+  0.142, compressibility 0.90 and 4e-13.
+- Handedness: `handedness_check` integrates the ion gyration (Boris) and
+  verifies, through `stream_polarization` and `temporal_dispersion`, that
+  left-hand waves land on psi_+ and right-hand ones on psi_- at omega > 0,
+  for both propagation directions and both signs of B0 (psi_pm now include
+  sign(B0)); a flipped time kernel is detected. On the synthetic run the IC
+  wave appears in psi_+ at (k d_i, omega/Omega_ci) = (0.63, 0.46).
+- Thresholds: `mirror_criterion` / `mirror_threshold_electrons` (Hellinger
+  2007, Eq. 16, protons + electrons); `anisotropy_analysis.py` reads the
+  electron moments of every snapshot and draws the threshold of the measured
+  (beta_e||, A_e); CSV columns `beta_e_parallel_global`,
+  `anisotropy_e_global`, `marginal_threshold_cold_electrons`.
+- Tests: `test_branches_handedness.py` (15 tests).

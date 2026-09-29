@@ -44,7 +44,7 @@ except ImportError:  # pragma: no cover - requirements include scipy
 from data_reader import PICDataReader
 from vdf_validation import predictive_check
 from analysis_contract import sample_rng, stable_rng, cylindrical_density, atomic_json, effective_sample_size
-from growth_fit import fit_exponential_growth
+from growth_fit import BRANCH_SERIES, fit_exponential_growth
 from plasma_physics import (
     central_pressure_tensor,
     central_uv,
@@ -558,12 +558,13 @@ def field_metrics(field_file: str, b0: float = B0,
     Con ``prt_window=(lo, hi)`` añade las mismas métricas escalares medidas
     sólo dentro de la ventana de salida de partículas, con prefijo ``prt_``.
     Con ``modes`` (índices FFT de ``mode_candidates``) añade ``mode_power``,
-    el <|dB|^2> de cada modo, para el ajuste de gamma del modo dominante.
+    el <|dB|^2> de cada modo separado en parte transversal y compresiva
+    (2, n_modos), para el ajuste de gamma y la rama de cada modo.
     """
     fld = load_fields(field_file)
     bx, by, bz = fld["Bx"], fld["By"], fld["Bz"]
-    power = (mode_power(_fluctuation_plane(bx, by, bz)[0], modes)
-             if modes else np.zeros(0))
+    power = (mode_power(_fluctuation_plane(bx, by, bz)[0], modes, split=True)
+             if modes else np.zeros((2, 0)))
     bmag = np.sqrt(bx**2 + by**2 + bz**2)
     delta_b = bmag - b0
     dbx = bx - np.nanmean(bx)
@@ -716,14 +717,85 @@ def _mode_power_map(comps: np.ndarray) -> np.ndarray:
     return np.sum(np.abs(np.fft.fft2(comps, axes=(1, 2))) ** 2, axis=0) / n ** 2
 
 
-def mode_power(comps: np.ndarray, modes: list[tuple[int, int]]) -> np.ndarray:
-    """<|dB|^2> carried by each (+k, -k) pair in ``modes`` (unshifted FFT indices)."""
+def mode_power(comps: np.ndarray, modes: list[tuple[int, int]],
+               split: bool = False) -> np.ndarray:
+    """<|dB|^2> carried by each (+k, -k) pair in ``modes`` (unshifted FFT indices).
+
+    With ``split`` the result is (2, n_modes): the transverse part
+    |dBx|^2 + |dBy|^2 and the compressive part |dBz|^2 (B0 is along z), which
+    sum to the unsplit power. Their ratio is the compressibility of the mode,
+    the quantity that separates the mirror branch from the ion-cyclotron
+    branch (see classify_mode).
+    """
     if not modes:
-        return np.zeros(0)
-    power = _mode_power_map(comps)
+        return np.zeros((2, 0)) if split else np.zeros(0)
     i0, i1 = zip(*modes)
     self_conjugate = ((2 * np.asarray(i0)) % comps.shape[1] == 0) & ((2 * np.asarray(i1)) % comps.shape[2] == 0)
-    return np.where(self_conjugate, 1.0, 2.0) * power[list(i0), list(i1)]
+    weight = np.where(self_conjugate, 1.0, 2.0)
+    if not split:
+        return weight * _mode_power_map(comps)[list(i0), list(i1)]
+    transverse = _mode_power_map(comps[:2])[list(i0), list(i1)]
+    compressive = _mode_power_map(comps[2:])[list(i0), list(i1)]
+    return weight * np.stack([transverse, compressive])
+
+
+# --- Branch of a Fourier mode ------------------------------------------------
+#
+# Why: at beta_i|| = 5 and T_perp/T_par = 2 the ions are unstable to TWO
+# branches whose thresholds are almost equal (Hellinger et al. 2006 fits:
+# A_IC = 1.219, A_mirror = 1.226 at gamma_max = 1e-3 Omega_ci). The strongest
+# Fourier mode of the v5 "mirror" runs had k_perp = 0 and a compressibility of
+# ~1e-12, i.e. it was an ion-cyclotron wave, not a mirror mode. A single
+# "dominant mode" gamma therefore does not measure the mirror growth rate the
+# thesis compares between bi-Maxwellian and bi-kappa ions; each branch needs
+# its own fit.
+#
+# The two branches are told apart by linear-theory polarisation, which a
+# single Fourier amplitude of dB carries:
+#   * mirror: non-propagating, oblique (theta_kB well above 45 deg in the
+#     unstable band), and since div B = 0 forces dB to lie in the (k, B0)
+#     plane, |dB_par|^2 / |dB|^2 = sin^2(theta_kB) -> compressive;
+#   * ion-cyclotron (EMIC): fastest at parallel propagation, dB transverse
+#     and left-hand polarised, |dB_par|^2 / |dB|^2 -> 0.
+# A mode that is neither (intermediate angle or compressibility) is left
+# unclassified instead of forced into a branch.
+
+#: Minimum theta_kB and compressibility of a mirror-like mode. For a linear
+#: mirror mode the compressibility is sin^2(theta_kB) >= 0.5 above 45 deg.
+MIRROR_MIN_THETA_DEG = 45.0
+MIRROR_MIN_COMPRESSIBILITY = 0.5
+#: Maximum theta_kB and compressibility of an ion-cyclotron-like mode. Oblique
+#: EMIC waves acquire a compressive part; 0.2 keeps the quasi-parallel ones.
+IC_MAX_THETA_DEG = 30.0
+IC_MAX_COMPRESSIBILITY = 0.2
+
+
+def classify_mode(theta_kB_deg: float, compressibility: float) -> str:
+    """Geometric branch of one Fourier mode of dB (see the comment above)."""
+    if not (np.isfinite(theta_kB_deg) and np.isfinite(compressibility)):
+        return "unclassified"
+    if theta_kB_deg >= MIRROR_MIN_THETA_DEG and compressibility >= MIRROR_MIN_COMPRESSIBILITY:
+        return "compressive_oblique"
+    if theta_kB_deg <= IC_MAX_THETA_DEG and compressibility <= IC_MAX_COMPRESSIBILITY:
+        return "transverse_parallel"
+    return "unclassified"
+
+
+def physical_branch(branch: str, ion_anisotropy: float) -> str:
+    """Instability that a geometric branch corresponds to for the driving ions.
+
+    Only T_perp > T_par ions drive both a compressive (mirror) and a transverse
+    (ion-cyclotron) branch. For T_perp < T_par the parallel firehose is
+    transverse, but the oblique firehose is Alfvenic (dB out of the plane, not
+    compressive), so no physical name is attached; an isotropic control drives
+    neither.
+    """
+    if ion_anisotropy > 1.0 + 1e-9:
+        return {"compressive_oblique": "mirror",
+                "transverse_parallel": "ion-cyclotron"}.get(branch, "")
+    if ion_anisotropy < 1.0 - 1e-9 and branch == "transverse_parallel":
+        return "parallel firehose"
+    return ""
 
 
 def mode_candidates(field_files: dict[int, str], kmax_di: float,
@@ -736,6 +808,11 @@ def mode_candidates(field_files: dict[int, str], kmax_di: float,
     (it is the largest amplitude during the late linear phase and saturation)
     while keeping the per-snapshot output to a few dozen numbers. Each +k/-k
     pair of the real field is one mode, kept in the half plane with k0 > 0.
+
+    The strongest modes of the compressive part dB_par and of the transverse
+    part dB_perp are added separately (``per_snapshot // 2`` each): when one
+    branch dominates the total power, the other would otherwise never be
+    followed and its growth rate could not be measured.
     """
     steps = sorted(field_files)
     if not steps:
@@ -753,9 +830,11 @@ def mode_candidates(field_files: dict[int, str], kmax_di: float,
         allowed = ((K0 ** 2 + K1 ** 2 <= kmax_di ** 2)
                    & ((K0 > 0) | ((K0 == 0) & (K1 > 0))))
         flat = np.flatnonzero(allowed)
-        power = _mode_power_map(comps).ravel()
-        for f in flat[np.argsort(power[flat])[::-1][:per_snapshot]]:
-            chosen[tuple(int(v) for v in np.unravel_index(f, shape))] = None
+        for power, count in ((_mode_power_map(comps).ravel(), per_snapshot),
+                             (_mode_power_map(comps[:2]).ravel(), per_snapshot // 2),
+                             (_mode_power_map(comps[2:]).ravel(), per_snapshot // 2)):
+            for f in flat[np.argsort(power[flat])[::-1][:count]]:
+                chosen[tuple(int(v) for v in np.unravel_index(f, shape))] = None
     k0 = 2.0 * np.pi * np.fft.fftfreq(shape[0], d=spacing[0])
     k1 = 2.0 * np.pi * np.fft.fftfreq(shape[1], d=spacing[1])
     par_first = axes[0] == "z"
@@ -1568,7 +1647,7 @@ def plot_growth(growth: dict, outdir: Path):
                color=ps.c("#ff7b72"), alpha=0.12)
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
     ax.set_ylabel(rf"$\ln {series}$", color=TEXT_CLR)
-    ax.set_title("Linear growth-rate fit", color=TEXT_CLR, fontweight="bold")
+    ax.set_title(growth.get("title", "Linear growth-rate fit"), color=TEXT_CLR, fontweight="bold")
     ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
     _savefig(fig, outdir / growth.get("figure_name", "growth_rate_fit.png"))
 
@@ -2087,17 +2166,22 @@ class PhysicalDiagnostics:
                     "amplitude_gain", "series_start", "window_source",
                     "fit_ok", "fit_reject_reason")
 
-        # 1. Reference: the dominant Fourier mode of dB (see mode_candidates).
-        reference = None
+        # 1. Reference: the dominant Fourier mode of dB (see mode_candidates),
+        # then the strongest mode of each branch (see classify_mode).
+        reference, branches = None, []
         if modes and len(results) == len(steps):
-            amplitude = np.sqrt(np.clip(np.array([p for _, _, p in results], dtype=float), 0.0, None))
-            reference = self.fit_mode_growth(t, modes, amplitude)
+            power = np.clip(np.array([p for _, _, p in results], dtype=float), 0.0, None)
+            reference, branches = self.fit_mode_growth(t, modes, power)
         if reference is not None:
             summary_rows.append({"series": "mode", "amplitude": reference["amplitude_name"],
                                  **{key: reference[key] for key in fit_keys}})
             if not reference["fit_ok"]:
                 print(f"  [WARN] dominant-mode growth rate NOT valid: "
                       f"{reference['fit_reject_reason']}")
+        for branch in branches:
+            summary_rows.append({"series": BRANCH_SERIES[branch["branch"]],
+                                 "amplitude": branch["amplitude_name"],
+                                 **{key: branch[key] for key in fit_keys}})
 
         # 2. The domain rms of dB and of its compressive / transverse parts:
         # which one grows is part of the mode identification. They are fitted
@@ -2130,19 +2214,41 @@ class PhysicalDiagnostics:
         return rows
 
     def fit_mode_growth(self, t: np.ndarray, modes: list[dict],
-                        amplitude: np.ndarray) -> dict | None:
-        """gamma of every followed mode; returns the fit of the dominant one.
+                        power: np.ndarray) -> tuple[dict | None, list[dict]]:
+        """gamma of every followed mode: the dominant one and one per branch.
 
-        ``amplitude`` is (n_steps, n_modes), the rms of dB carried by each
-        mode. The dominant mode is the one with the largest amplitude over the
-        run. Every mode is fitted on its own linear phase and tabulated in
-        mode_growth_table.csv, so a faster but weaker mode stays visible.
+        ``power`` is (n_steps, 2, n_modes), the transverse and compressive
+        <|dB|^2> of each mode (mode_power with ``split``). The dominant mode is
+        the one with the largest amplitude over the run. Every mode is fitted
+        on its own linear phase, classified by theta_kB and compressibility
+        (classify_mode) and tabulated in mode_growth_table.csv, so a faster but
+        weaker mode stays visible. Returns the dominant fit and, for each
+        geometric branch that has at least one mode, the fit of its strongest
+        mode: with competing mirror and ion-cyclotron instabilities the
+        dominant-mode gamma is the gamma of whichever branch won, not the
+        mirror growth rate.
         """
         t_start, t_end = self.growth_window
+        total = power.sum(axis=1)
+        amplitude = np.sqrt(total)
+        anisotropy = TI_PERP / TI_PAR
         table, fits = [], []
         for j, mode in enumerate(modes):
             fit = growth_rate(t, amplitude[:, j], t_start=t_start, t_end=t_end)
             fits.append(fit)
+            # Compressibility of the mode where it is measured as a linear
+            # mode (the accepted fit window), otherwise power-weighted over
+            # the run; saturation mixes branches through nonlinear coupling.
+            window = np.ones(t.size, dtype=bool)
+            source = "whole run"
+            if fit and fit.get("fit_ok"):
+                inside = (t >= fit["linear_phase_start"]) & (t <= fit["linear_phase_end"])
+                if inside.any():
+                    window, source = inside, "linear phase"
+            weight = total[window, j].sum()
+            compressibility = (float(power[window, 1, j].sum() / weight)
+                               if weight > 0 else float("nan"))
+            branch = classify_mode(mode["theta_kB_deg"], compressibility)
             table.append({
                 "k_parallel_di": mode["k_parallel_di"], "k_perp_di": mode["k_perp_di"],
                 "k_di": mode["k_di"], "theta_kB_deg": mode["theta_kB_deg"],
@@ -2151,34 +2257,87 @@ class PhysicalDiagnostics:
                 **{key: fit.get(key, np.nan) for key in (
                     "gamma", "gamma_err", "linear_phase_start", "linear_phase_end",
                     "r_squared", "amplitude_gain", "fit_ok", "fit_reject_reason")},
+                "compressibility": compressibility,
+                "compressibility_window": source,
+                "classification": branch,
+                # A physical name only for a mode that actually grows: a
+                # decaying noise mode may have mirror geometry, not a mirror
+                # instability.
+                "physical_branch": (physical_branch(branch, anisotropy)
+                                    if fit and fit.get("fit_ok") else ""),
+                "_index": j,
             })
         dominant = int(np.nanargmax(np.nanmax(amplitude, axis=0)))
+        leaders = {}
+        for row in table:
+            j = row["_index"]
+            if row["classification"] != "unclassified":
+                best = leaders.get(row["classification"])
+                if best is None or row["max_amplitude_over_B0"] > table[best]["max_amplitude_over_B0"]:
+                    leaders[row["classification"]] = j
+        fastest = max((r["gamma"] for r in table if r["fit_ok"]), default=float("nan"))
         for j, row in enumerate(table):
             row["dominant"] = int(j == dominant)
-            row["fastest_accepted"] = int(bool(row["fit_ok"]) and row["gamma"] == max((r["gamma"] for r in table if r["fit_ok"]), default=float("nan")))
-            row["classification"] = "unclassified; consult dispersion mode evidence"
+            row["branch_leader"] = int(leaders.get(row["classification"]) == j)
+            row["fastest_accepted"] = int(bool(row["fit_ok"]) and row["gamma"] == fastest)
             row["candidate_snapshot_fractions"] = ";".join(map(str, MODE_CANDIDATE_FRACTIONS))
-        table.sort(key=lambda r: -r["max_amplitude_over_B0"])
-        _write_csv(self.outdir / "mode_growth_table.csv", table)
+        dominant_row = table[dominant]
+        _write_csv(self.outdir / "mode_growth_table.csv",
+                   [{k: v for k, v in r.items() if k != "_index"}
+                    for r in sorted(table, key=lambda r: -r["max_amplitude_over_B0"])])
+
+        def describe(j: int) -> dict:
+            row = table[j]
+            return {"mode": modes[j], "gamma": row["gamma"], "gamma_err": row["gamma_err"],
+                    "fit_ok": bool(row["fit_ok"]), "compressibility": row["compressibility"],
+                    "physical_branch": row["physical_branch"],
+                    "start": row["linear_phase_start"], "end": row["linear_phase_end"],
+                    "reason": row["fit_reject_reason"]}
+
         atomic_json(self.outdir / "linear_phase.json", {
             "status": "PASS" if fits[dominant]["fit_ok"] else "UNVERIFIED",
             "source": "strongest-power Fourier mode", "mode": modes[dominant],
             "start": fits[dominant]["linear_phase_start"], "end": fits[dominant]["linear_phase_end"],
-            "classification": "unclassified", "reason": fits[dominant].get("fit_reject_reason", "")})
-        fit = fits[dominant]
-        if not fit:
-            return None
-        mode = modes[dominant]
-        kpar, kperp = mode["k_parallel_di"], mode["k_perp_di"]
-        fit.update(
-            amplitude_name=(f"dominant mode k_par d_i={kpar:.3f}, k_perp d_i={kperp:.3f}, "
-                            f"theta={mode['theta_kB_deg']:.0f} deg"),
-            series_label=(rf"|\delta\hat{{\mathbf{{B}}}}(k_\parallel d_i={kpar:.2f},"
-                          rf"\,k_\perp d_i={kperp:.2f})|"),
-            figure_name="growth_rate_fit_mode.png",
-        )
-        plot_growth(fit, self.outdir)
-        return fit
+            "classification": dominant_row["classification"],
+            "physical_branch": dominant_row["physical_branch"],
+            "compressibility": dominant_row["compressibility"],
+            "classification_rule": (
+                f"compressive_oblique: theta_kB >= {MIRROR_MIN_THETA_DEG:g} deg and "
+                f"|dB_par|^2/|dB|^2 >= {MIRROR_MIN_COMPRESSIBILITY:g}; transverse_parallel: "
+                f"theta_kB <= {IC_MAX_THETA_DEG:g} deg and |dB_par|^2/|dB|^2 <= "
+                f"{IC_MAX_COMPRESSIBILITY:g}"),
+            "branches": {branch: describe(j) for branch, j in sorted(leaders.items())},
+            "reason": fits[dominant].get("fit_reject_reason", "")})
+
+        def labelled(j: int, prefix: str, figure: str, title: str) -> dict | None:
+            fit = fits[j]
+            if not fit:
+                return None
+            mode, row = modes[j], table[j]
+            kpar, kperp = mode["k_parallel_di"], mode["k_perp_di"]
+            fit = dict(fit)
+            fit.update(
+                amplitude_name=(f"{prefix} k_par d_i={kpar:.3f}, k_perp d_i={kperp:.3f}, "
+                                f"theta={mode['theta_kB_deg']:.0f} deg, "
+                                f"compressibility={row['compressibility']:.2g}"),
+                series_label=(rf"|\delta\hat{{\mathbf{{B}}}}(k_\parallel d_i={kpar:.2f},"
+                              rf"\,k_\perp d_i={kperp:.2f})|"),
+                figure_name=figure, title=title,
+            )
+            plot_growth(fit, self.outdir)
+            return fit
+
+        reference = labelled(dominant, "dominant mode", "growth_rate_fit_mode.png",
+                             "Linear growth-rate fit: dominant mode")
+        branches = []
+        for branch, j in sorted(leaders.items()):
+            name = table[j]["physical_branch"] or branch.replace("_", " ")
+            fit = labelled(j, f"strongest {name} mode",
+                           f"growth_rate_fit_{BRANCH_SERIES[branch]}.png",
+                           f"Linear growth-rate fit: {name} branch")
+            if fit is not None:
+                branches.append({**fit, "branch": branch})
+        return reference, branches
 
     def run_magnetic_spectra(self):
         """Generate transverse P(k) within the integrated diagnostics run."""
