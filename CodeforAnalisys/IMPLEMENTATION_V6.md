@@ -298,3 +298,44 @@ growth. The pipeline was adapted to that result.
 - Legends and annotations moved off the data in every figure the QA flagged
   on the v6b runs (Brazil, anisotropy evolution, energy partitions, trapping
   VDFs, comparisons, kappa evolution).
+
+## Follow-up 6 (2026-09-30): pre-launch audit of the final analysis (v6c)
+
+Why: v6c is the last reanalysis before the paper; every change was checked
+on the real v6b products and on a synthetic end-to-end run of the COSMA job.
+
+- Growth rates of non-dominant modes are fitted only before the dominant mode
+  saturates: afterwards the anisotropy has relaxed and the saturated wave
+  drives other k nonlinearly, so the rate is not the linear growth of the
+  initial state (v6b kappa = 5: a compressive mode "grew" at 0.25 Omega_ci
+  on [58, 66], after the ion-cyclotron wave saturated at 49).
+- energy_exchange.py: the snapshot integral of J_s.E is not the work when the
+  output interval aliases the plasma oscillation of the species (v6b kappa 5,
+  electrons: cadence * omega_pe = 165, int <J_e.E> dt = -0.72 vs Delta K_e =
+  +0.036 from DiagEnergies). The closure is graded per species
+  (PASS <= 10 %, FAIL >= 50 %), aliasing is reported, and an aliased,
+  unconfirmed curve is drawn dotted, labelled, and kept out of the scale.
+- Physical units instead of code units: T_i / (m_i v_A^2), energy densities
+  / (B0^2/mu0), J_dia / (n0 e v_A), the energy proxy relative to t = 0.
+- COSMA job: default tree `analysis_results/v6c`; isotropic controls skip the
+  theory stages (no drive; a failed theory stage would hold back their
+  spectral stage); mirror series get `paper_figures.py`. The resolution
+  analysis compares against v6c and includes the theory stage.
+- linear_theory.py: a kappa seed dragged from the marginal root of the first
+  k (gamma ~ 1e-18) sat on the Im(omega) = 0 boundary where Z_kappa is not
+  integrated, and the kappa = 5 ion-cyclotron branch was lost for every k.
+  The seed is lifted to Im(omega) >= 1e-3; kappa 5 / 3 now give gamma_max =
+  0.1225 / 0.1162 at k d_i = 0.36 (regression test). Damped kappa roots
+  (gamma < 0) remain out of reach of this Z_kappa; figures draw only what is
+  found.
+- Figures that the preflight showed empty or crowded for a stable plasma: the
+  growth-rate map says "no mode with an accepted growth fit", the kappa
+  panel of vdf_b_profiles says "no resolvable tail", round-off axis spans
+  get a +-1 % window, corner tick labels are dropped.
+- The job summary lists the runs it did not analyse and why (unfinished,
+  missing, already present), and `find` follows symlinked run folders.
+- Preflight: the COSMA job script itself was run on a laptop (stand-in srun,
+  local paths) on four synthetic runs and an isotropic control: every stage
+  PASS, controls without theory stages, comparison, kappa evolution, paper
+  figures and evidence report OK, no figure-QA issue that applies to real
+  data.

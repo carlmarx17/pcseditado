@@ -696,6 +696,9 @@ def plot_b_profiles(agg: list[dict], per_step: dict[int, list[dict]],
                 ls="none", ms=7, color=ps.c("#9467bd"), alpha=0.7,
                 zorder=3, label=r"Maxwellian-consistent ($\kappa\to\infty$)")
     ax.set_ylim(0.0, cap)
+    if not np.any(m) and not np.any(bound):
+        ax.text(0.5, 0.5, "no resolvable tail in any |B| bin", transform=ax.transAxes,
+                ha="center", va="center", fontsize=11, color=ps.MUTED_CLR)
     if KAPPA is not None:
         ax.axhline(KAPPA, color=ps.c("#ff7f0e"), lw=1.4, ls="--",
                    label=rf"adiabatic invariance: $\kappa_0 = {KAPPA:g}$")

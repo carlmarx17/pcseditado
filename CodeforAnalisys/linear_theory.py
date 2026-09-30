@@ -198,6 +198,13 @@ class ParallelDispersion:
         self.last_solve = {"converged": False, "residual": float("nan"), "iterations": 0}
         if omega_guess is None:
             omega_guess = complex(0.3 * k, 0.05)
+        # Z_kappa is integrated for Im(omega) > 0 only. A seed dragged from a
+        # marginal root (gamma ~ 1e-18 at the first, smallest k) sits on the
+        # boundary, the first evaluation fails and every later k inherits the
+        # failure (v6c preflight: the kappa = 5 branch was lost after k d_i =
+        # 0.02). The seed, not the root, is lifted into the upper half plane.
+        if self.kappa is not None and np.imag(omega_guess) < 1e-3:
+            omega_guess = complex(np.real(omega_guess), 1e-3)
         w0 = omega_guess
         w1 = omega_guess * 1.02 + 1e-4j
         try:

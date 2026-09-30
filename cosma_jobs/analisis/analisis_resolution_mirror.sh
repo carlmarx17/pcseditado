@@ -46,11 +46,12 @@ cd "$REPO/CodeforAnalisys" || exit 1
 
 RUN_ROOT=/cosma7/data/dp433/dc-mart18/anisotropy_adios2
 PY="${PYTHON:-$REPO/.venv/bin/python}"
-OUT="${OUT:-$REPO/analysis_results/v6_resolution}"
-BASE_RESULTS="${BASE_RESULTS:-$REPO/analysis_results/v6/mirror_bimaxwellian_moderate}"
+OUT="${OUT:-$REPO/analysis_results/v6c_resolution}"
+BASE_RESULTS="${BASE_RESULTS:-$REPO/analysis_results/v6c/mirror_bimaxwellian_moderate}"
 CASE=mirror_bimaxwellian_moderate
 STEP=(srun --nodes=1 --ntasks=1 --exclusive --cpus-per-task="${SLURM_CPUS_PER_TASK:-28}")
-STAGES=(manifest residuals physics spectral structures energy-exchange estimators validate)
+# theory: the ion-cyclotron growth rate each variant is compared with.
+STAGES=(manifest residuals physics theory spectral structures energy-exchange estimators validate)
 export MPLCONFIGDIR="/tmp/psc-mpl-${SLURM_JOB_ID:-manual}" PSC_FIG_THEME=paper
 say() { echo "[$(date '+%F %T')] $*"; }
 

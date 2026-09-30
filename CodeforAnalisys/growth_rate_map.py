@@ -274,17 +274,27 @@ def plot_growth_rate_map(
 
     fig, axis = plt.subplots(figsize=(7.4, 6.2), layout="constrained")
     ps.style_axes(axis)
-    image = axis.pcolormesh(
-        kpar, kperp, display.T, shading=shading, cmap=ps.CMAP_SEQUENTIAL,
-        vmin=0.0, vmax=gmax, rasterized=True,
-    )
-    axis.text(0.02, 0.02, "Blank bins: rejected or below power floor; not zero growth"
-              + ("\nZoom widened to show every accepted cell" if extended else ""),
-              transform=axis.transAxes, fontsize=7, va="bottom")
+    if np.any(~mask):
+        image = axis.pcolormesh(
+            kpar, kperp, display.T, shading=shading, cmap=ps.CMAP_SEQUENTIAL,
+            vmin=0.0, vmax=gmax, rasterized=True,
+        )
+        axis.text(0.02, 0.02, "Blank bins: rejected or below power floor; not zero growth"
+                  + ("\nZoom widened to show every accepted cell" if extended else ""),
+                  transform=axis.transAxes, fontsize=7, va="bottom")
+    else:
+        # A stable plasma (e.g. an isotropic control) has no growing mode: say
+        # so instead of drawing an empty colour map.
+        image = None
+        axis.set_xlim(float(np.min(kpar)), float(np.max(kpar)))
+        axis.set_ylim(float(np.min(kperp)), float(np.max(kperp)))
+        axis.text(0.5, 0.5, "No mode with an accepted growth fit\n(stable plasma, or growth below the noise floor)",
+                  transform=axis.transAxes, ha="center", va="center", fontsize=11, color=ps.MUTED_CLR)
     data_limits = axis.get_xlim(), axis.get_ylim()
-    colorbar = fig.colorbar(image, ax=axis, pad=0.02)
-    colorbar.set_label(r"growth rate $\gamma\ [\Omega_{ci}]$")
-    colorbar.ax.tick_params(which="both", direction="in")
+    if image is not None:
+        colorbar = fig.colorbar(image, ax=axis, pad=0.02)
+        colorbar.set_label(r"growth rate $\gamma\ [\Omega_{ci}]$")
+        colorbar.ax.tick_params(which="both", direction="in")
 
     if contour_count > 0 and np.any(~mask) and len(kpar) > 1 and len(kperp) > 1:
         levels = np.linspace(0.0, gmax, contour_count + 2)[1:-1]

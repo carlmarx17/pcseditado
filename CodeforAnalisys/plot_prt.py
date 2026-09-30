@@ -348,6 +348,9 @@ def plot_kappa_comparison(ions, outdir: str):
         ax.set_title(rf"Ion {short} distribution ({direction})", fontsize=15, fontweight="bold")
         ax.set_yscale("log")
         ax.set_ylim(bottom=y_min)
+        # The first x label sits in the corner of the lowest decade label.
+        ax.set_xlim(p_lo, p_hi)
+        ps.drop_corner_tick(ax, "x")
         ax.legend(fontsize=12)
         _save_paper_figure(fig, output_file(outdir, f"kappa_comparison_{slug}_semilog.png"))
 

@@ -91,7 +91,8 @@ source "$REPO/src/cosma_adios2_env.sh"
 cd "$REPO/CodeforAnalisys" || exit 1
 
 RUN_ROOT=/cosma7/data/dp433/dc-mart18/anisotropy_adios2
-NEW_ROOT="${NEW_ROOT:-$REPO/analysis_results/v6}"
+# v6c: the final analysis tree (v6 and v6b stay as they are).
+NEW_ROOT="${NEW_ROOT:-$REPO/analysis_results/v6c}"
 JOB_ID="${SLURM_JOB_ID:-manual}"
 LOG_DIR="/cosma7/data/dp433/dc-mart18/logs/reanalysis_v6_${JOB_ID}"
 PY="${PYTHON:-$REPO/.venv/bin/python}"
@@ -162,10 +163,12 @@ say "preflight OK: $(tail -1 "$LOG_DIR/preflight.log")"
 # 2) Resolve every run: folder, format (.bp / .h5), completeness.
 # =====================================================================
 last_field_step() {
-    find "$1" -maxdepth 1 \( -name 'pfd.*.bp' -o -name 'pfd.*_p*.h5' \) 2>/dev/null \
+    # "$1/": follow the run folder when it is a symbolic link.
+    find "$1/" -maxdepth 1 \( -name 'pfd.*.bp' -o -name 'pfd.*_p*.h5' \) 2>/dev/null \
         | sed -E 's|.*/pfd\.0*([0-9]+)[._].*|\1|' | sort -n | tail -1
 }
-CASES=(); DIRS=(); FORMATS=()
+CASES=(); DIRS=(); FORMATS=(); SKIPPED=()
+skip() { say "SKIP $1"; SKIPPED+=("$1"); }
 for entry in "${RUNS[@]}"; do
     case_name="${entry%%:*}"
     folder="${entry#*:}"
@@ -174,22 +177,22 @@ for entry in "${RUNS[@]}"; do
     fi
     dir="$RUN_ROOT/$folder"
     if [ ! -d "$dir" ]; then
-        say "SKIP $case_name: $dir does not exist"
+        skip "$case_name: $dir does not exist"
         continue
     fi
     read -r nmax fields_every < <(PSC_PROFILE="$case_name" PSC_ANALYSIS_DATA_DIR= \
         "$PY" -c 'import psc_units as u; print(u.NMAX, u.FIELDS_EVERY)')
     last=$(last_field_step "$dir")
     if [ -z "$last" ]; then
-        say "SKIP $case_name: no field snapshots in $dir"
+        skip "$case_name: no field snapshots in $dir"
         continue
     fi
     if [ "$last" -lt $((nmax - fields_every)) ] && [ "$ALLOW_INCOMPLETE" != 1 ]; then
-        say "SKIP $case_name: last field step $last < nmax $nmax (unfinished; ALLOW_INCOMPLETE=1 forces it)"
+        skip "$case_name: last field step $last < nmax $nmax (unfinished; ALLOW_INCOMPLETE=1 forces it)"
         continue
     fi
     if [ "$RESUME" != 1 ] && [ -e "$NEW_ROOT/$case_name" ]; then
-        say "SKIP $case_name: $NEW_ROOT/$case_name exists (RESUME=1 continues it; nothing is overwritten)"
+        skip "$case_name: $NEW_ROOT/$case_name exists (RESUME=1 continues it; nothing is overwritten)"
         continue
     fi
     if compgen -G "$dir/pfd.*_p*.h5" > /dev/null; then fmt=h5; else fmt=bp; fi
@@ -223,6 +226,9 @@ for i in "${!CASES[@]}"; do
     stages=(manifest residuals physics brazil spectral structures energy-exchange estimators
             heatflux particles validate diamagnetic fields vdf-spatial)
     case "$c" in
+        # Isotropic controls: no drive, no branch to solve; a failed theory
+        # stage would also hold back their spectral stage.
+        *_isotropic) ;;
         # mirror: the theory stage solves the competing parallel ion-cyclotron
         # branch (the mode that grows in these runs), never the mirror mode.
         mirror_*)   stages+=(theory-liouville theory) ;;
@@ -281,6 +287,16 @@ compare_series() {  # compare_series NAME LABEL=CASE... (all must have succeeded
         "$PY" kappa_evolution.py "${kev[@]}" --outdir "$NEW_ROOT/kappa_evolution_$name" \
         > "$LOG_DIR/kappa_evolution_$name.log" 2>&1
     echo $? > "$LOG_DIR/comparison_${name}.kappa-evolution.rc"
+    # Publication figures of the series (ion-cyclotron mode, gamma vs kappa
+    # against theory, trajectories, resonance, local kappa): mirror series.
+    if [[ "$name" == mirror_* ]]; then
+        local roots=()
+        for pair in "$@"; do roots+=("$NEW_ROOT/${pair#*=}"); done
+        run "${STEP[@]}" --job-name="paper_fig:$name" \
+            "$PY" paper_figures.py "${roots[@]}" --outdir "$NEW_ROOT/paper_figures/$name" \
+            > "$LOG_DIR/paper_figures_$name.log" 2>&1
+        echo $? > "$LOG_DIR/comparison_${name}.paper-figures.rc"
+    fi
 }
 compare_series mirror_moderate_kappa \
     "bi-Maxwellian=mirror_bimaxwellian_moderate" \
@@ -312,6 +328,11 @@ SUMMARY="$NEW_ROOT/REANALYSIS_SUMMARY_${JOB_ID}.txt"
     echo "results: $NEW_ROOT   logs: $LOG_DIR"
     echo "Execution status per stage (scientific status: quality_report/index.html)"
     echo
+    if [ "${#SKIPPED[@]}" -gt 0 ]; then
+        echo "Runs not analysed by this job:"
+        printf '   %s\n' "${SKIPPED[@]}"
+        echo
+    fi
     for c in "${CASES[@]}"; do
         echo "== $c (runner rc=$(cat "$LOG_DIR/${c}.runner.rc" 2>/dev/null || echo '?'))"
         "$PY" - "$NEW_ROOT/$c/pipeline.json" <<'EOF' 2>/dev/null || echo "   no pipeline record"

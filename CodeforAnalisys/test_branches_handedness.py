@@ -197,3 +197,16 @@ def test_theory_of_a_mirror_case_is_the_competing_ion_cyclotron_branch(tmp_path)
     best = max(rows, key=lambda r: float(r["gamma_over_Omegai"]))
     assert 0.12 < float(best["gamma_over_Omegai"]) < 0.13      # 0.127 at k d_i ~ 0.36
     assert 0.3 < float(best["omega_r_over_Omegai"]) < 0.6
+
+
+@pytest.mark.parametrize("kappa,gamma_max", [(5.0, 0.1225), (3.0, 0.1162)])
+def test_kappa_branch_is_followed_from_the_marginal_first_root(kappa, gamma_max):
+    """At k d_i = 0.02 the root is marginal (gamma ~ 1e-18); the kappa solver
+    must still follow the ion-cyclotron branch to its maximum (v6c preflight:
+    the kappa = 5 branch was lost after the first k)."""
+    from linear_theory import ParallelDispersion
+    from psc_units import MASS_RATIO, VA_OVER_C
+    disp = ParallelDispersion(5.0, 2.0, 1.0, 1.0, MASS_RATIO, 1.0 / VA_OVER_C, kappa=kappa)
+    rows = disp.scan(np.linspace(0.02, 0.5, 20), "plus")
+    gamma = np.array([r["gamma_over_Omegai"] for r in rows])
+    assert np.nanmax(gamma) == pytest.approx(gamma_max, abs=0.002)

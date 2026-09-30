@@ -232,8 +232,16 @@ def plot_brazil(runs, outdir):
     last = runs[0]["aniso"]
     offsets = {0: (-10, -8, "right"), 50: (10, -6, "left"), 100: (-10, -10, "right"),
                150: (-10, -10, "right")}
+    ax.set_ylim(1.0, 2.15)
+    idx = {tm: int(np.argmin(np.abs(last["omega_ci_t"] - tm))) for tm in offsets}
+    # Only labels whose points are apart on the page (a stalled trajectory
+    # would print them on top of each other).
+    kept = set(ps.spaced_indices(ax, last["beta_parallel_global"], last["anisotropy_global"],
+                                 list(idx.values()), min_separation_pt=28))
     for tm, (dx, dy, ha) in offsets.items():
-        j = int(np.argmin(np.abs(last["omega_ci_t"] - tm)))
+        j = idx[tm]
+        if j not in kept:
+            continue
         ax.annotate(rf"{tm}", (last["beta_parallel_global"][j], last["anisotropy_global"][j]),
                     xytext=(dx, dy), textcoords="offset points", fontsize=10,
                     color=ps.MUTED_CLR, va="top", ha=ha)

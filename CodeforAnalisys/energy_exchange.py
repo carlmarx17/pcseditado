@@ -54,6 +54,22 @@ from psc_units import B0, DT_CODE, M_ELEC, M_ION, OMEGA_CI, PROFILE_LABEL, step_
 ps.apply()
 
 SPECIES = (("i", "ion", +1.0, M_ION), ("e", "electron", -1.0, M_ELEC))
+#: Closure of W_s = int <J_s.E> dt against Delta K_s of DiagEnergies, as a
+#: fraction of the larger of the two: the thresholds of energy_audit.py.
+CLOSURE_PASS, CLOSURE_FAIL = 0.10, 0.50
+
+
+def aliased(cadence_code: float, mass: float) -> bool:
+    """True when the snapshot interval cannot follow the plasma oscillation of a species.
+
+    <J_s.E> of the resolved instability is a slow product, but the field and
+    the current also carry the species' plasma oscillation (omega_ps = 1/sqrt(m_s)
+    in code units, n = q = 1). Sampled slower than its Nyquist interval
+    pi / omega_ps, that fast part aliases into the snapshot mean and the
+    integral is not the work: v6b kappa = 5, electrons (cadence * omega_pe = 165)
+    gave int <J_e.E> dt = -0.72 against Delta K_e = +0.036 from DiagEnergies.
+    """
+    return cadence_code * (1.0 / np.sqrt(mass)) > np.pi
 
 
 def to_cell_centres_yz(ex, ey, ez, bx, by, bz) -> tuple:
@@ -173,6 +189,10 @@ def main() -> int:
     summary.update({"scientific_status": "UNVERIFIED", "reason": "No closure tolerance or temporal-staggering validation supplied",
                     "current_convention": "deposited current when available; otherwise q<p>/m (u approximation)",
                     "time_source": "step * resolved DT_CODE"})
+    cadence_code = float(np.median(np.diff(t_code)))
+    for suffix, _, _, mass in SPECIES:
+        summary[f"cadence_times_omega_p_{suffix}"] = float(cadence_code / np.sqrt(mass))
+        summary[f"aliased_{suffix}"] = bool(aliased(cadence_code, mass))
     if diag is not None:
         for suffix in ("i", "e"):
             dk, coverage = align_time(diag["time_code"], diag[f"dK_{suffix}"], t_code, args.time_tolerance_code)
@@ -196,46 +216,77 @@ def main() -> int:
                     r[f"closure_residual_{suffix}"] = float(res)
             summary[f"time_alignment_{suffix}"] = coverage
         summary["volume_from_E_B0"] = diag["volume"]
+        # Per-species closure against DiagEnergies decides what the J.E
+        # integral can be used for.
+        verdicts = {}
+        for suffix, name, _, _ in SPECIES:
+            mismatch = summary.get(f"relative_mismatch_{suffix}")
+            if mismatch is None or not np.isfinite(mismatch):
+                continue
+            verdicts[name] = ("FAIL" if mismatch >= CLOSURE_FAIL else
+                              "PASS" if mismatch <= CLOSURE_PASS else "UNVERIFIED")
+            summary[f"closure_status_{suffix}"] = verdicts[name]
+        if verdicts:
+            order = ("FAIL", "UNVERIFIED", "PASS")
+            summary["scientific_status"] = next(v for v in order if v in verdicts.values())
+            summary["reason"] = "; ".join(
+                f"{name}: int<J.E>dt vs Delta K mismatch {summary[f'relative_mismatch_{name[0]}']:.0%} ({v})"
+                + (" -- snapshot cadence aliases the plasma oscillation"
+                   if summary.get(f"aliased_{name[0]}") and v != "PASS" else "")
+                for name, v in verdicts.items())
     else:
-        summary["reason"] = "Global energy diagnostic missing or invalid"
+        summary["reason"] = ("Global energy diagnostic missing; "
+                             + ", ".join(f"{name} J.E aliased (cadence*omega_p = "
+                                         f"{summary[f'cadence_times_omega_p_{sfx}']:.0f})"
+                                         for sfx, name, _, _ in SPECIES if summary[f"aliased_{sfx}"])
+                             if any(summary[f"aliased_{sfx}"] for sfx, *_ in SPECIES)
+                             else "Global energy diagnostic missing or invalid")
     write_csv(outdir / "energy_exchange_table.csv", rows)
     atomic_json(outdir / "energy_exchange_summary.json", summary)
-    plot(rows, diag is not None, outdir)
+    plot(rows, diag is not None, outdir, summary)
     print(strict_dumps(summary, indent=2))
     return 0
 
 
-def plot(rows: list[dict], with_diag: bool, outdir: Path):
+def plot(rows: list[dict], with_diag: bool, outdir: Path, summary: dict | None = None):
     t = np.array([r["omega_ci_t"] for r in rows])
     col = lambda k: np.array([r.get(k, np.nan) for r in rows], dtype=float)
     colors = {"i": ps.c("#ff7b72"), "e": ps.c("#58a6ff")}
 
     fig, axes = plt.subplots(2, 1, figsize=(8.6, 7.2), sharex=True, layout="constrained")
     for ax, suffix, name in zip(axes, ("i", "e"), ("(a) ions", "(b) electrons")):
-        ax.plot(t, col(f"JE_{suffix}") / OMEGA_CI, "-", color=colors[suffix],
+        ax.plot(t, col(f"JE_{suffix}") / (OMEGA_CI * B0 ** 2), "-", color=colors[suffix],
                 label=rf"$\langle J_{suffix}\cdot E\rangle$")
-        ax.plot(t, col(f"JE_par_{suffix}") / OMEGA_CI, "--", color=ps.c("#56d364"),
+        ax.plot(t, col(f"JE_par_{suffix}") / (OMEGA_CI * B0 ** 2), "--", color=ps.c("#56d364"),
                 label=rf"$\langle J_{{\parallel {suffix}}}E_\parallel\rangle$")
-        ax.plot(t, col(f"JE_perp_{suffix}") / OMEGA_CI, ":", color=ps.c("#d2a8ff"),
+        ax.plot(t, col(f"JE_perp_{suffix}") / (OMEGA_CI * B0 ** 2), ":", color=ps.c("#d2a8ff"),
                 label=rf"$\langle J_{{\perp {suffix}}}\cdot E_\perp\rangle$")
         ax.axhline(0.0, color=ps.MUTED_CLR, lw=0.8)
         ps.style_axes(ax, name)
         ps.legend(ax, fontsize=10)
     axes[-1].set_xlabel(r"$t\,\Omega_{ci}$")
-    fig.supylabel(r"$\langle J_s\cdot E\rangle/\Omega_{ci}$  [code energy density]")
+    fig.supylabel(r"$\langle J_s\cdot E\rangle/(\Omega_{ci}B_0^2/\mu_0)$")
     fig.suptitle(f"Field-particle energy transfer — {PROFILE_LABEL}", fontsize=13, fontweight="bold")
     ps.save(fig, outdir / "energy_exchange_rate.png")
 
     fig, ax = plt.subplots(figsize=(8.6, 5.2))
+    summary = summary or {}
     for suffix, name in (("i", "ions"), ("e", "electrons")):
-        ax.plot(t, col(f"W_common_{suffix}" if f"W_common_{suffix}" in rows[0] else f"W_total_{suffix}"), "-", color=colors[suffix],
-                label=rf"$\int\langle J_{suffix}\cdot E\rangle dt$ ({name})")
+        # A species whose snapshot J.E aliases its plasma oscillation, and is
+        # not confirmed by DiagEnergies, is drawn thin and dotted and says so.
+        unusable = (summary.get(f"aliased_{suffix}") and
+                    summary.get(f"closure_status_{suffix}", "UNVERIFIED") != "PASS")
+        note = " — aliased, not the work" if unusable else ""
+        ax.plot(t, col(f"W_common_{suffix}" if f"W_common_{suffix}" in rows[0] else f"W_total_{suffix}") / B0 ** 2,
+                ":" if unusable else "-", lw=1.0 if unusable else 1.8, color=colors[suffix],
+                scaley=not unusable,   # an aliased curve must not set the scale
+                label=rf"$\int\langle J_{suffix}\cdot E\rangle dt$ ({name}){note}")
         if with_diag:
-            ax.plot(t, col(f"dK_diag_{suffix}"), "o", ms=3, mfc="none", color=colors[suffix],
+            ax.plot(t, col(f"dK_diag_{suffix}") / B0 ** 2, "o", ms=3, mfc="none", color=colors[suffix],
                     label=rf"$\Delta K_{suffix}/V$ (DiagEnergies)")
     ax.axhline(0.0, color=ps.MUTED_CLR, lw=0.8)
     ax.set_xlabel(r"$t\,\Omega_{ci}$")
-    ax.set_ylabel("energy per volume [code]")
+    ax.set_ylabel(r"energy density / $(B_0^2/\mu_0)$")
     ax.set_title("Work done by E on each species vs its kinetic-energy change", fontsize=12)
     ps.style_axes(ax)
     ps.legend(ax, fontsize=10)

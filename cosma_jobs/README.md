@@ -113,7 +113,7 @@ After `reanalysis_v6_all.sh` has analysed the production run:
 sbatch --export=ALL,PPC_RUN=psc_mirror_bimaxwellian_moderate_res_ppc4000_<jobid>,GRID_RUN=psc_mirror_bimaxwellian_moderate_res_ngrid1152_<jobid> cosma_jobs/analisis/analisis_resolution_mirror.sh
 ```
 
-`analysis_results/v6_resolution/energy_audit/energy_audit_common_time.csv`:
+`analysis_results/v6c_resolution/energy_audit/energy_audit_common_time.csv`:
 heating ~4x lower with 4x ppc -> particle noise; much lower with dx/2 ->
 finite-grid heating.
 
@@ -231,7 +231,7 @@ the analysis manifests are written.
 | `analisis_firehose_bimaxwellian_moderate_bigbox40_pauper.sh` | Firehose bimaxwellian moderate, 40 d_i box | cosma7-rp-pauper / 24h |
 | `analisis_firehose_bikappa3_bigbox40_pauper.sh` | Firehose bikappa3, 40 d_i box | cosma7-rp-pauper / 24h |
 | `reanalysis_v5_all.sh` | Historical: the v5 pipeline (section D). Refuses a v6 checkout on purpose | cosma7-rp / 48h, 20 nodes |
-| **`reanalysis_v6_all.sh`** | **Runs the v6 pipeline (`run_pipeline.py`) on every finished run into `analysis_results/v6`; deletes nothing** (see section E) | cosma7-rp / 48h, 20 nodes |
+| **`reanalysis_v6_all.sh`** | **Runs the v6 pipeline (`run_pipeline.py`) on every finished run into `analysis_results/v6c`; deletes nothing** (see section E) | cosma7-rp / 48h, 20 nodes |
 
 > The per-case scripts above predate the v5 analysis revision (2026-09-28)
 > and write to `run_aware_v4`; use `reanalysis_v6_all.sh` for new products.
@@ -460,7 +460,8 @@ by the per-case jobs.
 Revision 6 (analysis conventions version 6) replaces the growth reference by
 the modal fit, fixes VDF coordinates and structure definitions, and adds the
 evidence report and the energy audit. The v5 products stay as the historical
-baseline; this job writes a new tree:
+baseline; this job writes a new tree, `analysis_results/v6c` by default (the
+final one: the earlier `v6` and `v6b` trees are left as they are):
 
 ```bash
 cd /cosma7/data/dp433/dc-mart18/pcseditado && git pull
@@ -485,16 +486,28 @@ What it does:
 4. one `run_pipeline.py` per run, all at once; each launches its stages as
    `srun` steps (one node each, up to nodes/runs per run, longest first):
    manifest preflight, then `physics` -> `spectral` with the accepted linear
-   phase, every other stage alongside; mirror runs add `theory-liouville`,
-   firehose runs `theory` (parallel dispersion, never used for the mirror);
+   phase, every other stage alongside; mirror runs add `theory-liouville` and
+   `theory` (the parallel ion-cyclotron branch that competes with the mirror
+   and grows in these runs, never a mirror prediction), firehose runs
+   `theory`; isotropic controls (`*_isotropic`) run neither;
 5. comparisons of the controlled series, only between runs whose `physics`
-   stage passed (`compare-physics`, `kappa_evolution`);
-6. `analysis_results/v6/quality_report/index.html`: evidence matrix of every
-   run and the energy audit across runs;
-7. `analysis_results/v6/REANALYSIS_SUMMARY_<jobid>.txt`: execution status and
+   stage passed (`compare-physics`, `kappa_evolution`), and for the mirror
+   series the publication figures (`paper_figures.py`) in
+   `analysis_results/v6c/paper_figures/`;
+6. `analysis_results/v6c/quality_report/index.html`: evidence matrix of every
+   run and the energy audit across runs (an isotropic control present in the
+   tree is paired with its twin and its heating subtracted);
+7. `analysis_results/v6c/REANALYSIS_SUMMARY_<jobid>.txt`: execution status and
    time of every stage, and the scientific status of every run.
 
-Per-stage logs are in `analysis_results/v6/<case>/logs/`, the runner and
+Isotropic controls are added with `EXTRA_RUNS` (in the same job or later with
+`RESUME=1` and the same `NEW_ROOT`):
+
+```bash
+sbatch --export=ALL,EXTRA_RUNS="mirror_bimaxwellian_isotropic:<folder> mirror_bikappa5_isotropic:<folder> mirror_bikappa3_isotropic:<folder>" cosma_jobs/analisis/reanalysis_v6_all.sh
+```
+
+Per-stage logs are in `analysis_results/v6c/<case>/logs/`, the runner and
 comparison logs in `logs/reanalysis_v6_<jobid>/`. An interrupted job continues
 with `sbatch --export=ALL,RESUME=1 ...`: completed stages whose products are
 unchanged are skipped, provided code, inputs and options are identical. The

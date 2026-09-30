@@ -491,8 +491,10 @@ def plot_dispersion_map(
         for sign in (1.0, -1.0):
             ax.plot(sign * kdi, np.where(grow, wr, np.nan), "--", color=ps.c("#ff7b72"), lw=2.0,
                     label=r"linear theory, $\gamma>0$" if sign > 0 else None)
-            ax.plot(sign * kdi, np.where(grow, np.nan, wr), ":", color=ps.c("#ff7b72"), lw=1.0,
-                    label=r"linear theory, damped" if sign > 0 else None)
+            damped = np.where(grow, np.nan, wr)
+            if np.any(np.isfinite(damped)):   # bi-kappa roots are often not found once damped
+                ax.plot(sign * kdi, damped, ":", color=ps.c("#ff7b72"), lw=1.0,
+                        label=r"linear theory, damped" if sign > 0 else None)
         ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR, loc="lower right")
     _apply_window(ax, k_par, omega, window)
     cb = fig.colorbar(mesh, ax=ax)

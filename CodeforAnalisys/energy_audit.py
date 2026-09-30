@@ -483,7 +483,9 @@ def plot(audits: list[dict], path: Path) -> None:
     handles, _ = axes[0].get_legend_handles_labels()
     handles.append(Line2D([], [], ls="none", marker="o", mfc="none", color=ps.MUTED_CLR,
                           label="end of fitted linear phase"))
-    ps.legend(axes[0], handles=handles, loc="best", fontsize=9)
+    # Below the panel: inside it covers the curves whatever their shape.
+    ps.legend(axes[0], handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.2),
+              ncol=2, fontsize=9, frameon=False)
     for ax, title in zip(axes, ("(a) electron heating", "(b) Debye-length resolution")):
         ps.style_axes(ax, title)
         ax.set_xlabel(r"$t\Omega_{ci}$")

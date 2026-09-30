@@ -199,6 +199,34 @@ def measured_fluctuation(t) -> np.ndarray:
     return np.isfinite(t) & (t > 0.0)
 
 
+def drop_corner_tick(ax, which: str = "x", fraction: float = 0.06) -> None:
+    """Remove the first tick of an axis when it sits in the corner of the other axis.
+
+    Call after the limits are final. A first x label within ``fraction`` of the
+    axis length from the left edge collides with the lowest y label.
+    """
+    axis = getattr(ax, f"{which}axis")
+    lo, hi = getattr(ax, f"get_{which}lim")()
+    ticks = [t for t in getattr(ax, f"get_{which}ticks")() if min(lo, hi) <= t <= max(lo, hi)]
+    if len(ticks) > 2 and abs(ticks[0] - lo) < fraction * abs(hi - lo):
+        getattr(ax, f"set_{which}ticks")(ticks[1:])
+    del axis
+
+
+def guard_degenerate_axis(ax, which: str = "x", rel: float = 1e-6, pad: float = 0.01) -> None:
+    """Give a meaningful window to an axis whose data span is round-off.
+
+    With offsets disabled, a span of 1e-12 around 1 prints labels such as
+    "1.0000000000010" that overlap each other; the data are then shown in a
+    +-1 % window around their value (a stable state, e.g. t = 0 or a control).
+    """
+    lo, hi = getattr(ax, f"get_{which}lim")()
+    centre = 0.5 * (lo + hi)
+    if abs(hi - lo) <= rel * max(abs(centre), 1e-30):
+        half = pad * abs(centre) if centre else pad
+        getattr(ax, f"set_{which}lim")(centre - half, centre + half)
+
+
 def plain_log_axis(ax, which: str = "both") -> None:
     """Readable labels on a log axis whose limits are already set.
 

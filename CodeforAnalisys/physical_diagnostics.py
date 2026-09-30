@@ -1175,10 +1175,13 @@ def plot_time_series(rows: list[dict], outdir: Path):
     fig, ax = plt.subplots(figsize=(9, 5.5))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    ax.plot(t, tpar, color=ps.c("#58a6ff"), label=r"$T_{\parallel i}$", **_series_style(len(t)))
-    ax.plot(t, tperp, color=ps.c("#ff7b72"), label=r"$T_{\perp i}$", **_series_style(len(t)))
+    # In units of m_i v_A^2 = B0^2 / (mu0 n): T|| / (m_i v_A^2) = beta|| / 2.
+    ax.plot(t, np.asarray(tpar) / B0 ** 2, color=ps.c("#58a6ff"), label=r"$T_{\parallel i}$",
+            **_series_style(len(t)))
+    ax.plot(t, np.asarray(tperp) / B0 ** 2, color=ps.c("#ff7b72"), label=r"$T_{\perp i}$",
+            **_series_style(len(t)))
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
-    ax.set_ylabel("temperature [code]", color=TEXT_CLR)
+    ax.set_ylabel(r"$k_B T_i/(m_i v_A^2)$", color=TEXT_CLR)
     ax.set_title("Parallel and perpendicular ion temperature", color=TEXT_CLR, fontweight="bold")
     ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
     _savefig(fig, outdir / "temperature_parallel_perp_vs_time.png")
@@ -1386,7 +1389,13 @@ def plot_fit_metrics(rows: list[dict], outdir: Path):
     ax.set_ylim(bottom=-0.02)
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
     ax.set_ylabel(r"$1/\kappa_{\rm fit}$  (0 = Maxwellian)", color=TEXT_CLR)
-    ax.set_title("Fitted kappa index of the window VDF", color=TEXT_CLR, fontweight="bold")
+    ax.set_title("Fitted kappa index of the window VDF", color=TEXT_CLR, fontweight="bold", pad=24)
+    # u_par is taken along the global B0: once the waves tilt the local field
+    # (dB/B0 ~ 0.2) and scatter resonant ions, this fit reads the distortion
+    # as a tail. The local-field kappa_eff (vdf_spatial.py) is the tail measure.
+    ax.text(0.5, 1.005, r"$u_\parallel$ along the global $B_0$; not a tail measure once "
+            r"$\delta B/B_0\gtrsim0.1$ (use the local-field $\kappa_{\rm eff}$)",
+            transform=ax.transAxes, ha="center", va="bottom", fontsize=9, color=ps.MUTED_CLR)
     ps.legend(ax, loc="best", fontsize=10)
     _savefig(fig, outdir / "kappa_fit_vs_time.png")
 
@@ -1487,7 +1496,7 @@ def plot_spatial_maps(rows: list[dict], outdir: Path):
     ax.plot(t, mean_a, color=ps.c("#ff7b72"), label=r"$\langle A_i\rangle$", **_series_style(len(t)))
     ax.axhline(1.0, color=TEXT_CLR, linestyle=":", alpha=0.35)
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
-    ax.set_ylabel(r"$A_i(x,y)$", color=TEXT_CLR)
+    ax.set_ylabel(r"$A_i(y,z)$", color=TEXT_CLR)
     ax.set_title("Spatial anisotropy from moments", color=TEXT_CLR, fontweight="bold")
     ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
     _savefig(fig, outdir / "brazil_plot_time_evolution.png")
@@ -1671,7 +1680,9 @@ def plot_growth(growth: dict, outdir: Path):
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
     ax.set_ylabel(rf"$\ln {series}$", color=TEXT_CLR)
     ax.set_title(growth.get("title", "Linear growth-rate fit"), color=TEXT_CLR, fontweight="bold")
-    ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
+    # Below the axes: a fit that is not valid spans the whole panel.
+    ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR,
+              loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2, frameon=False)
     _savefig(fig, outdir / growth.get("figure_name", "growth_rate_fit.png"))
 
 
@@ -1830,6 +1841,8 @@ def plot_scatter_series(series: list[tuple[float, np.ndarray, np.ndarray]], path
     cb.set_label(r"$t\Omega_{ci}$", color=TEXT_CLR)
     for axis in (ax.xaxis, ax.yaxis):
         axis.set_major_locator(ticker.MaxNLocator(nbins=5))
+    ps.guard_degenerate_axis(ax, "x")
+    ps.guard_degenerate_axis(ax, "y")
     ax.set_xlabel(xlabel, color=TEXT_CLR)
     ax.set_ylabel(ylabel, color=TEXT_CLR)
     ax.set_title(title, color=TEXT_CLR, fontweight="bold")
@@ -2256,9 +2269,25 @@ class PhysicalDiagnostics:
         amplitude = np.sqrt(total)
         anisotropy = TI_PERP / TI_PAR
         table, fits = [], []
+        # The linear growth rate of the initial state can only be measured
+        # before the dominant mode saturates: afterwards the anisotropy has
+        # relaxed and the saturated wave drives other modes nonlinearly (v6b
+        # kappa = 5: a compressive mode "grew" at 0.25 Omega_ci on [58, 66],
+        # after the ion-cyclotron wave saturated at 49). Every other mode is
+        # therefore fitted on t <= end of the dominant linear phase.
+        dominant = int(np.nanargmax(np.nanmax(amplitude, axis=0)))
+
+        def fit_mode(j, t_limit=None):
+            use = t >= noise_settling_time(modes[j]["k_di"])
+            if t_limit is not None:
+                use &= t <= t_limit
+            return growth_rate(t[use], amplitude[use, j], t_start=t_start, t_end=t_end)
+
+        dominant_fit = fit_mode(dominant)
+        t_saturation = (dominant_fit["linear_phase_end"]
+                        if dominant_fit and dominant_fit.get("fit_ok") else None)
         for j, mode in enumerate(modes):
-            settled = t >= noise_settling_time(mode["k_di"])
-            fit = growth_rate(t[settled], amplitude[settled, j], t_start=t_start, t_end=t_end)
+            fit = dominant_fit if j == dominant else fit_mode(j, t_saturation)
             fits.append(fit)
             # Compressibility of the mode where it is measured as a linear
             # mode (the accepted fit window), otherwise power-weighted over
@@ -2291,7 +2320,6 @@ class PhysicalDiagnostics:
                                     if fit and fit.get("fit_ok") else ""),
                 "_index": j,
             })
-        dominant = int(np.nanargmax(np.nanmax(amplitude, axis=0)))
         leaders = {}
         for row in table:
             j = row["_index"]
@@ -2470,9 +2498,10 @@ class PhysicalDiagnostics:
             toci = step_to_omegaci(step)
             for key, label in (("J_dia_i", r"J_{{\rm dia},x,i}"), ("J_dia_e", r"J_{{\rm dia},x,e}"),
                                ("J_dia_total", r"J_{{\rm dia},x}")):
-                plot_map(jdia[key], self.outdir / f"{key}_map_step_{step}.png",
+                # In units of n0 e v_A (n0 = e = 1 in code units).
+                plot_map(jdia[key] / VA, self.outdir / f"{key}_map_step_{step}.png",
                          rf"${label}$ — $t\Omega_{{ci}} = {toci:.1f}$",
-                         rf"${label}$ [code units]", cmap=ps.CMAP_DIVERGING, symmetric=True)
+                         rf"${label}/(n_0 e v_A)$", cmap=ps.CMAP_DIVERGING, symmetric=True)
             scatter["deltaB"].append((toci, maps["A"], PICDataReader.flatten_2d_slice(fmet["delta_B_over_B0"])))
             scatter["B"].append((toci, maps["A"], PICDataReader.flatten_2d_slice(fmet["B_magnitude"]) / abs(B0)))
             scatter["Jdia"].append((toci, maps["A"], jdia["J_dia_total"]))
@@ -2632,6 +2661,10 @@ class PhysicalDiagnostics:
         fig, ax = plt.subplots(figsize=(8.8, 5.4))
         fig.patch.set_facecolor(DARK_BG)
         _style_axes(ax)
+        # Relative to the initial proxy: the proxy is a partial sum whose
+        # absolute code value carries no meaning, its changes do.
+        e0 = next((r["E_proxy"] for r in rows if np.isfinite(r.get("E_proxy", np.nan))
+                   and r.get("E_proxy")), 1.0)
         for key, color, label in [
             ("E_kin_bulk", ps.c("#58a6ff"), "bulk"),
             ("E_internal_i", ps.c("#ff7b72"), "ion internal"),
@@ -2639,17 +2672,17 @@ class PhysicalDiagnostics:
             ("E_B", ps.c("#56d364"), "magnetic fluct."),
             ("E_proxy", ps.c("#f2cc60"), "partial energy proxy"),
         ]:
-            y = np.array([r.get(key, np.nan) for r in rows], dtype=float)
+            y = np.array([r.get(key, np.nan) for r in rows], dtype=float) / e0
             if np.any(np.isfinite(y)):
                 style = _series_style(len(t))
                 ax.plot(t, y, color=color, label=label, **style)
         if heating:
-            ax.plot(t, heating["slope_per_omegaci"] * t + heating["intercept"],
+            ax.plot(t, (heating["slope_per_omegaci"] * t + heating["intercept"]) / e0,
                     ":", color=ps.c("#8b949e"), lw=2.0,
                     label=(rf"secular $e^-$ trend "
                            rf"($R^2$={heating['r_squared']:.3f})"))
         ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
-        ax.set_ylabel("energy proxy [code]", color=TEXT_CLR)
+        ax.set_ylabel(r"energy / $E_{\rm proxy}(0)$", color=TEXT_CLR)
         ax.set_title("Partial energy proxy", color=TEXT_CLR, fontweight="bold")
         ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR,
                   fontsize=11, loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=3,
