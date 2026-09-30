@@ -251,10 +251,14 @@ def plot_timeseries(cases: list[dict], ykeys: list[str], labels: list[str], path
                             label=f"{case['name']} {label}" if segment == 0 else None)
     if yscale:
         ax.set_yscale(yscale)
+        ps.plain_log_axis(ax, "y")
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
     ax.set_ylabel(", ".join(labels), color=TEXT_CLR)
     ax.set_title(title, color=TEXT_CLR, fontweight="bold")
-    ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
+    # Below the axes: with several cases x components the legend otherwise
+    # sits on the saturated curves.
+    ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR, fontsize=10,
+              loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=min(3, len(cases) * len(ykeys)))
     _save(fig, path)
 
 
@@ -313,8 +317,12 @@ def plot_branch_growth_bars(cases: list[dict], path: Path):
                yerr=np.where(np.isfinite(values[ok, 1]), values[ok, 1], 0.),
                color=ps.c(colors[j % len(colors)]), capsize=4, ecolor=TEXT_CLR, label=label)
         for xi in x[~ok]:
-            ax.text(xi, 0.0, "no fit", ha="center", va="bottom", color=TEXT_CLR, fontsize=9, rotation=90)
+            ax.text(xi, 0.0, "no fit", ha="center", va="bottom", color=TEXT_CLR, fontsize=9,
+                    rotation=90, transform=ax.get_xaxis_transform())
     ax.set_xticks(indices, [c["name"] for c in cases])
+    ax.set_xlim(-0.75, len(cases) - 0.25)
+    ax.set_ylim(bottom=0.0)
+    ax.tick_params(axis="x", pad=10)
     ax.set_ylabel(r"$\gamma/\Omega_{ci}$", color=TEXT_CLR)
     ax.set_xlabel("strongest Fourier mode of each branch", color=TEXT_CLR)
     ax.set_title("Growth rate per branch", color=TEXT_CLR, fontweight="bold")

@@ -34,6 +34,14 @@ and smaller 1/kappa. A measured *increase* of 1/kappa therefore cannot be a
 particle-noise artefact -- the artefact has the opposite sign. A decrease can,
 and must be controlled against a stable run.
 
+Frame note: fit_metrics.csv fits u_par along the *global* B0. Once the waves
+tilt the local field (dB/B0 ~ 0.2 at saturation) and resonant scattering
+distorts the distribution, that fit can report a "tail" the local-field,
+kurtosis-based kappa_eff of vdf_spatial.py does not see (v6b bi-Maxwellian
+mirror run: kappa ~ 13 vs Maxwellian at t Omega_ci ~ 63). An increase of
+1/kappa after saturation is therefore not a suprathermal tail unless the
+local estimator confirms it; paper_figures.py plots the local one.
+
 Usage::
 
     python kappa_evolution.py \
@@ -166,9 +174,8 @@ def plot_evolution(cases: dict, outdir: Path) -> Path:
                            alpha=0.8, zorder=1)
 
     ax1.axhline(0.0, color=MUTED, lw=0.9, ls=(0, (4, 3)), zorder=1)
-    ax1.text(0.995, 0.002, "Maxwellian limit", transform=
-             ax1.get_yaxis_transform(), fontsize=8, color=MUTED,
-             va="bottom", ha="right")
+    ax1.text(1.005, 0.0, "Maxwellian\nlimit", transform=ax1.get_yaxis_transform(),
+             fontsize=8, color=MUTED, va="center", ha="left")
     ax1.set_ylabel(r"$1/\kappa_{\rm fit}$")
     ax1.set_ylim(-0.008, None)
 
@@ -181,14 +188,16 @@ def plot_evolution(cases: dict, outdir: Path) -> Path:
         ax.grid(True, which="major", color=GRID, lw=0.5, ls=":", zorder=0)
         for sp in ("top", "right"):
             ax.spines[sp].set_visible(False)
-    ax1.legend(frameon=False, fontsize=9, loc="upper left",
-               title="dotted vertical: end of linear phase",
+    ax1.legend(frameon=False, fontsize=9, loc="lower center", ncol=len(cases),
+               bbox_to_anchor=(0.5, 1.0),
+               title="global-B0 fit; dotted vertical: end of linear phase",
                title_fontsize=7.5)
 
-    ax2.text(0.012, 0.93, r"$>1$: Kappa fits better", transform=ax2.transAxes,
-             fontsize=8, color=MUTED, va="top")
-    ax2.text(0.012, 0.07, r"$<1$: Maxwellian fits better",
-             transform=ax2.transAxes, fontsize=8, color=MUTED, va="bottom")
+    # Outside the frame, on the right: inside they cover the trajectories.
+    ax2.text(1.01, 0.97, r"$>1$: Kappa" "\n" "fits better", transform=ax2.transAxes,
+             fontsize=8, color=MUTED, va="top", ha="left")
+    ax2.text(1.01, 0.03, r"$<1$: Maxwellian" "\n" "fits better",
+             transform=ax2.transAxes, fontsize=8, color=MUTED, va="bottom", ha="left")
 
     out = outdir / "kappa_evolution.png"
     if _HAVE_PS:

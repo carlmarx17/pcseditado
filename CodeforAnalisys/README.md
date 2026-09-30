@@ -70,6 +70,16 @@ again; regenerate `09_physical_diagnostics` and `04_spectra`.
   stops if they do not land on psi_+ / psi_- at omega > 0. psi_pm are now
   defined relative to B0 (sign of b0 included), titles state the handedness,
   and the JSON records the peak (k, omega) of each channel.
+- **Publication figures from analysis products (`paper_figures.py`).** Built
+  on a laptop from the downloaded CSV/JSON of a controlled series, no raw
+  data needed: amplitude of the dominant ion-cyclotron mode with the linear-
+  theory slope, gamma vs 1/kappa against the parallel kinetic dispersion
+  relation, the (beta_i||, A_i) trajectories with the thresholds of the
+  measured electrons, the reduced distributions at the cyclotron resonance,
+  and the local-frame 1/kappa_eff (the global-B0 fit of `kappa_evolution.py`
+  reads the wave-tilted distribution at saturation as a tail), plus
+  `series_summary.csv` with the numbers quoted in the text:
+  `python paper_figures.py RUN_MAXW RUN_K5 RUN_K3 --outdir OUT`.
 - **Mirror threshold with the measured electrons.** The Brazil plots and the
   anisotropy evolution of mirror cases use the Hellinger (2007) criterion for
   bi-Maxwellian ions and electrons with beta_e||(t) and A_e(t) measured at each

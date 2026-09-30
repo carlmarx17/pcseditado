@@ -162,6 +162,20 @@ def test_modes_are_fitted_only_after_the_noise_settles():
     """v6b: weak modes 'grew' at 2-6 Omega_ci on [0.13, 0.3] while the quiet-start
     noise built up; the ion transit time 1/(k v_th,i) excludes that interval."""
     import physical_diagnostics as pd
-    # mirror moderate: beta_i|| = 5, A_i = 2 -> v_th,perp / v_A = sqrt(5)
-    assert pd.noise_settling_time(2 * np.pi / 20) == pytest.approx(2 / (0.314159 * 5 ** 0.5), rel=1e-4)
+    # 2 ion transits of the wavelength at the larger ion thermal speed; for
+    # mirror moderate (beta_i|| = 5, A_i = 2) that is 2 / (0.314 sqrt(5)) = 2.85.
+    vth = np.sqrt(pd.BETA_I_PAR * max(1.0, pd.TI_PERP / pd.TI_PAR) / 2.0)
+    k = 2 * np.pi / 20
+    expected = 2.0 / (k * vth) if pd.DRIVEN_SPECIES == "ion" else 0.0
+    assert pd.noise_settling_time(k) == pytest.approx(expected, rel=1e-12)
     assert pd.noise_settling_time(0.0) == 0.0
+
+
+@pytest.mark.parametrize("kappa", [None, 5.0, 3.0])
+def test_reduced_pdf_is_normalised_with_unit_variance(kappa):
+    """paper_figures compares the three distributions at the same temperature."""
+    from paper_figures import reduced_pdf
+    x = np.linspace(-400, 400, 800001)
+    f = reduced_pdf(np.abs(x), kappa)
+    assert np.trapezoid(f, x) == pytest.approx(1.0, rel=1e-4)
+    assert np.trapezoid(x ** 2 * f, x) == pytest.approx(1.0, rel=2e-2)
