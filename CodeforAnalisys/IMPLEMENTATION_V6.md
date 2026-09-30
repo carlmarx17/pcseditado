@@ -429,5 +429,15 @@ organised by the magnetic field at the same instant?
   bi-Maxwellian runs get a value with an error instead of "inf", and the
   index is continuous on one axis for all runs.
 - kappa_evolution.py draws the local-field index as the main curve and the
-  global-B0 fit faintly: the fit's bump at t Omega_ci ~ 60-90, present even
-  in the bi-Maxwellian run, is the frame artefact, now visible as such.
+  global-B0 fit faintly. The fit's bump at t Omega_ci ~ 60-90 (present even in
+  the bi-Maxwellian run, kappa_fit ~ 14-16) is not a tail: there the kappa
+  model fits the tail *worse* than the Maxwellian (tail error 0.39 against
+  0.20), and the fraction of ions beyond 3 sigma, 0.27 % for a Gaussian,
+  *drops* to 0.15 % and recovers to 0.25 % by the end. Right after
+  saturation the ion-cyclotron wave flattens the parallel distribution
+  (resonant diffusion), a transient the kappa fit misreads; the field tilt is
+  not the cause (A in the local and in the global frame agree at t = 63). In
+  the kappa runs the tail content only decreases, fastest around saturation.
+  kappa_field_evolution.png now shows this model-free tail content between
+  the index and the field energy (vdf_kappa_series.csv carries it in the
+  local frame; fit_metrics.csv in the global one for older deliveries).

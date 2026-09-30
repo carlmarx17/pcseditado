@@ -41,7 +41,8 @@ def make_run(root, kappa0, nu0, c, *, wave=True, slope=0.0, n=60, t_end=158.0, e
             rows.append({"step": 1000 * k, "omega_ci_t": tk, "population": population,
                          "count": 100000, "b_mean_over_B0": 1.0, "A_local_b": 2.0,
                          "kappa_eff": 1.0 / ik, "inv_kappa_signed": ik + rng.normal(0.0, e),
-                         "inv_kappa_signed_error": e})
+                         "inv_kappa_signed_error": e,
+                         "tail_fraction_par_3sigma": 0.0027 * (1.0 + 10.0 * ik)})
         for b in (0.9, 0.95, 1.0, 1.05):
             b_rows.append({"step": 1000 * k, "omega_ci_t": tk, "b_ref_over_B0": 1.0,
                            "b_center": b, "b_mean": b, "count": 50000, "A": 2.0,
@@ -66,6 +67,16 @@ def test_relaxation_model_separates_background_and_wave_driven_rates(tmp_path):
     for name in ("kappa_field_evolution.png", "kappa_relaxation.png", "kappa_vs_local_field.png",
                  "kappa_dynamics_timeseries.csv", "kappa_relaxation_fit.json"):
         assert (tmp_path / "out" / name).exists()
+    with (tmp_path / "out" / "kappa_dynamics_timeseries.csv").open() as handle:
+        first = next(csv.DictReader(handle))
+    assert float(first["tail_fraction_3sigma"]) == pytest.approx(0.0027 * (1 + 10 / 3.0), rel=0.05)
+
+
+def test_gaussian_tail_reference_and_kappa_values():
+    assert kd.GAUSS_TAIL_3SIGMA == pytest.approx(0.0027, rel=1e-3)
+    assert kd._gauss_ratio_of_kappa(None) == pytest.approx(1.0)
+    # Student t with nu = 2 kappa - 1 and unit variance, beyond 3 sigma
+    assert kd._gauss_ratio_of_kappa(3.0) == pytest.approx(4.3, abs=0.1)
 
 
 def test_isotropic_control_next_to_the_run_is_paired_and_measures_the_background(tmp_path):

@@ -1097,7 +1097,11 @@ def kappa_time_series(series: dict, fields: dict, lo, hi, args) -> tuple[list[di
                          "A_local_b": g["A"], "T_parallel": g["T_parallel"],
                          "T_perp": g["T_perp"], "kappa_eff": g["kappa_eff"],
                          "inv_kappa_signed": g["inv_kappa_signed"],
-                         "inv_kappa_signed_error": g["inv_kappa_signed_err"]})
+                         "inv_kappa_signed_error": g["inv_kappa_signed_err"],
+                         # model-free tail content of v_par (local field): a
+                         # kappa tail raises it, a flattened core lowers it
+                         "tail_fraction_par_3sigma": _tail_fraction(vel["v_par"][g["idx"]],
+                                                                    part["w"][g["idx"]])})
         trap = trapping_classification(part, vel, bfield, lo, hi, args.b_ref_percentile)
         for r in bin_by_b(part, trap, b_edges, args.s_max, n_boot=0):
             if r["count"]:
@@ -1109,6 +1113,15 @@ def kappa_time_series(series: dict, fields: dict, lo, hi, args) -> tuple[list[di
         print(f"  kappa series: step {step:>9}  t Omega_ci = {toci:6.1f}  "
               f"1/kappa = {groups.get('all', {}).get('inv_kappa_signed', float('nan')):+.4f}")
     return rows, b_rows
+
+
+def _tail_fraction(v: np.ndarray, w: np.ndarray, nsigma: float = 3.0) -> float:
+    """Weighted fraction beyond nsigma measured standard deviations (0.27 % for a Gaussian)."""
+    if v.size < 100 or np.sum(w) <= 0:
+        return float("nan")
+    mean = np.average(v, weights=w)
+    sigma = np.sqrt(np.average((v - mean) ** 2, weights=w))
+    return float(np.sum(w[np.abs(v - mean) > nsigma * sigma]) / np.sum(w))
 
 
 def _write_rows(path: Path, rows: list[dict]) -> None:

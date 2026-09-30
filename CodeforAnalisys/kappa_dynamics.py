@@ -50,7 +50,8 @@ Inputs are analysis products (no raw data), per run root:
   09_physical_diagnostics/growth_rate_summary.csv       linear phase
 
 Outputs (--outdir):
-  kappa_field_evolution.png  1/kappa(t) and the fluctuation energy at the same times
+  kappa_field_evolution.png  1/kappa(t), the model-free tail content P(|dv_par| > 3 sigma)
+                             and the fluctuation energy at the same times
   kappa_relaxation.png       the two-term relaxation model and the rate against W
   kappa_vs_local_field.png   1/kappa(b) at several times, S(t), hole - peak(t)
   kappa_dynamics_timeseries.csv, kappa_relaxation_rates.csv,
@@ -95,6 +96,8 @@ MIN_EXCESS = 0.02
 RATE_WINDOWS = 10
 #: At most this many snapshots are drawn as 1/kappa(b) profiles.
 PROFILE_SNAPSHOTS = 6
+#: Fraction of a Gaussian beyond 3 standard deviations, 2 [1 - Phi(3)].
+GAUSS_TAIL_3SIGMA = 0.0026997960632601866
 
 
 def _rows(path: Path) -> list[dict]:
@@ -180,6 +183,26 @@ def load_b_profiles(root: Path, step_time: dict) -> list[dict]:
     return out
 
 
+def load_tail(root: Path, series_rows: list[dict]) -> dict | None:
+    """Fraction of ions beyond 3 sigma in v_par, the model-free tail content.
+
+    A kappa tail raises it above the Gaussian 0.27 %; a flattened core (a
+    plateau from resonant diffusion) lowers it. From the local-field series
+    when written, else from fit_metrics.csv (v_par along the global B0).
+    """
+    local = [(_f(r["omega_ci_t"]), _f(r.get("tail_fraction_par_3sigma"))) for r in series_rows
+             if r.get("population") == "all" and np.isfinite(_f(r.get("tail_fraction_par_3sigma")))]
+    if local:
+        a = np.array(sorted(local))
+        return {"t": a[:, 0], "frac": a[:, 1], "frame": "local field"}
+    path = root / "09_physical_diagnostics" / "fit_metrics.csv"
+    if not path.exists():
+        return None
+    rows = [(_f(r.get("omega_ci_t")), _f(r.get("suprathermal_fraction"))) for r in _rows(path)]
+    a = np.array(sorted(x for x in rows if np.isfinite(x[0]) and np.isfinite(x[1])))
+    return {"t": a[:, 0], "frac": a[:, 1], "frame": r"global $B_0$"} if a.size else None
+
+
 def load_run(root) -> dict | None:
     """Everything this module uses from one run root; None without a kappa product."""
     root = Path(root)
@@ -190,7 +213,8 @@ def load_run(root) -> dict | None:
         return None
     profile = psc_units._PROFILES.get(root.name, {})
     pops: dict[str, list] = {}
-    for r in _rows(source):
+    source_rows = _rows(source)
+    for r in source_rows:
         inv, err = index_of(r)
         pops.setdefault(r["population"], []).append(
             (_f(r["omega_ci_t"]), inv, err, _f(r.get("A_local_b")), _f(r.get("step"))))
@@ -213,6 +237,7 @@ def load_run(root) -> dict | None:
         "dense": source.name == "vdf_kappa_series.csv",
         "pop": series, "field": load_field(root), "t_lin_end": linear_phase_end(root),
         "b_profiles": load_b_profiles(root, step_time),
+        "tail": load_tail(root, source_rows),
         "window_di": float(min(window)) if window else float("nan"),
         # thermal speed along B of the driven ions, in v_A (profile)
         "vth_par": float(np.sqrt(profile.get("beta_i_par", np.nan) / 2.0)),
@@ -419,17 +444,35 @@ def _draw_index(ax, run: dict, color: str, population: str = "all", **style) -> 
                     mfc="white" if run["control"] else color, **style)
 
 
+def _gauss_ratio_of_kappa(kappa) -> float:
+    """Fraction beyond 3 sigma of the kappa marginal, over the Gaussian one."""
+    from plasma_physics import kappa_marginal_cdf
+    return float(2.0 * (1.0 - kappa_marginal_cdf(3.0, 1.0, kappa)) / GAUSS_TAIL_3SIGMA)
+
+
 def plot_field_evolution(runs: list[dict], colors: dict, path: Path) -> Path:
-    fig, (top, bottom) = plt.subplots(2, 1, figsize=(8.2, 7.6), sharex=True,
-                                      gridspec_kw={"height_ratios": [1.35, 1.0], "hspace": 0.08})
+    with_tail = any(r.get("tail") for r in runs)
+    heights = [1.35, 0.95, 1.0] if with_tail else [1.35, 1.0]
+    fig, axes = plt.subplots(len(heights), 1, figsize=(8.2, 7.6 + 2.6 * with_tail), sharex=True,
+                             gridspec_kw={"height_ratios": heights, "hspace": 0.08})
+    top, bottom = axes[0], axes[-1]
+    middle = axes[1] if with_tail else None
+    frames = set()
     for run in runs:
         col = colors[run["name"]]
         _draw_index(top, run, col)
         if run["kappa0"] and not run["control"]:
             top.axhline(1.0 / run["kappa0"], color=col, lw=0.9, ls=":", alpha=0.9)
         if np.isfinite(run["t_lin_end"]) and not run["control"]:
-            for ax in (top, bottom):
+            for ax in axes:
                 ax.axvline(run["t_lin_end"], color=col, lw=0.9, ls=(0, (5, 2, 1, 2)), alpha=0.8)
+        tail = run.get("tail")
+        if middle is not None and tail is not None:
+            frames.add(tail["frame"])
+            middle.plot(tail["t"], tail["frac"] / GAUSS_TAIL_3SIGMA, "--" if run["control"] else "-",
+                        color=col, lw=1.4)
+            if run["kappa0"] and not run["control"]:
+                middle.axhline(_gauss_ratio_of_kappa(run["kappa0"]), color=col, lw=0.9, ls=":")
         field = run["field"]
         if field is not None and not run["control"]:
             shown = ps.measured_fluctuation(field["t"]) & (field["W"] > 0)
@@ -438,11 +481,25 @@ def plot_field_evolution(runs: list[dict], colors: dict, path: Path) -> Path:
             bottom.plot(field["t"][par], field["W_par"][par], ":", color=col, lw=1.4)
     top.axhline(0.0, color=ps.MUTED_CLR, lw=0.8, ls="--")
     top.set_ylabel(r"$1/\kappa_{\rm eff}$  (0 = Maxwellian)")
-    top.set_title("Ion suprathermal index (local-field frame) and magnetic fluctuation energy",
-                  fontsize=12.5)
+    top.set_title("Ion suprathermal index (local-field frame), tail content and magnetic "
+                  "fluctuation energy" if with_tail else
+                  "Ion suprathermal index (local-field frame) and magnetic fluctuation energy",
+                  fontsize=12)
     lo, hi = top.get_ylim()
     top.set_ylim(min(lo, -0.01), hi)
     _kappa_axis(top)
+    if middle is not None:
+        middle.axhline(1.0, color=ps.MUTED_CLR, lw=0.8, ls="--")
+        middle.set_yscale("log")
+        lo, hi = middle.get_ylim()
+        middle.set_ylim(min(lo, 0.3), hi)          # room for the note under the curves
+        middle.yaxis.set_major_locator(LogLocator(base=10.0, subs=(1.0, 2.0, 5.0)))
+        middle.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:g}"))
+        middle.yaxis.set_minor_formatter(NullFormatter())
+        middle.set_ylabel("ions beyond " r"$3\sigma_\parallel$" "\n(Gaussian = 1)")
+        middle.text(0.01, 0.04, "model-free tail content (" + ", ".join(sorted(frames)) +
+                    r" frame): above 1 a suprathermal tail, below 1 a flattened core",
+                    transform=middle.transAxes, fontsize=8.8, color=ps.MUTED_CLR)
     bottom.set_yscale("log")
     ps.plain_log_axis(bottom, "y")
     bottom.set_ylabel(r"$\langle|\delta\mathbf{B}|^2\rangle/B_0^2$")
@@ -649,6 +706,8 @@ def timeseries_rows(run: dict) -> list[dict]:
                      "kappa": float(1.0 / s["inv"][k]) if s["inv"][k] > 0 else float("inf"),
                      "A_local": float(s["A"][k]), "W": w,
                      "F": float(fluence_at(run, np.array([t]))[0]),
+                     "tail_fraction_3sigma": (float(np.interp(t, run["tail"]["t"], run["tail"]["frac"]))
+                                              if run.get("tail") else float("nan")),
                      "source": run["source"]})
     return rows
 

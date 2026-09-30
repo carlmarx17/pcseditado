@@ -84,7 +84,9 @@ again; regenerate `09_physical_diagnostics` and `04_spectra`.
   every run at t = 0, the end of the linear phase and the end.
 - **The kappa index against the magnetic field (`kappa_dynamics.py`, v6
   follow-up 8).** From analysis products: 1/kappa of the ions (local-field
-  frame) at every particle snapshot above <|dB|^2>/B0^2 at the same times; the
+  frame) at every particle snapshot, the model-free fraction of ions beyond
+  3 sigma (a tail raises it, a flattened core lowers it) and <|dB|^2>/B0^2 at
+  the same times; the
   relaxation fit ln[(1/kappa)/(1/kappa_0)] = -nu_0 t - c int W dt, which
   separates a rate that follows the fluctuation energy from one present from
   t = 0 (isotropic controls with the same kappa measure the latter); and
