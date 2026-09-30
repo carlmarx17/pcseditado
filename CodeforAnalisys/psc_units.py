@@ -964,6 +964,25 @@ def temp_to_va2mi(T_code, m=M_ION):
     return T_code / (m * VA**2)
 
 
+#: Quiet-start noise settling, in ion transit times 1/(k v_th,i) of the mode.
+NOISE_SETTLING_TRANSITS = 2.0
+
+
+def noise_settling_time(k_di: float) -> float:
+    """Omega_ci t before which the noise of a mode at |k| d_i is still building up.
+
+    The quiet start has no fluctuations: the ion noise of wavelength 2 pi/k
+    builds up over the ion transit time 1/(k v_th,i) (v_th,i from the larger of
+    T_par, T_perp). Earlier samples are neither linear growth nor the noise
+    floor, so growth fits start after, and growth figures do not draw them.
+    Electron-driven cases (whistler) grow on electron time scales: 0.
+    """
+    if DRIVEN_SPECIES != "ion" or not k_di > 0:
+        return 0.0
+    vth_over_va = np.sqrt(BETA_I_PAR * max(1.0, BETA_I_PERP_OVER_PAR) / 2.0)
+    return NOISE_SETTLING_TRANSITS / (k_di * vth_over_va)
+
+
 def step_to_omegaci(step: int, dt_code: float = DT_CODE) -> float:
     """Convierte un step de simulación a tiempo normalizado por Ωci^-1."""
     return step * dt_code * OMEGA_CI

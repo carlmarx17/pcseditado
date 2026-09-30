@@ -144,8 +144,14 @@ def characterize_modes(spectra, times, k0, k1, axes, parallel_axis,
     return rows
 
 
-def plot_mode_summary(result, output):
-    """Measured wavevector power and frequency/growth of coherent candidates."""
+def plot_mode_summary(result, output, k_display_max=None):
+    """Measured wavevector power and frequency/growth of coherent candidates.
+
+    ``k_display_max`` (k d_i) crops panel (a) to the physical band: without it
+    a box of L = 20 d_i resolved to the grid shows |k| d_i up to ~90 and the
+    ion-scale peak is a single pixel at the centre. Display only; the
+    candidates are ranked over the whole retained grid either way.
+    """
     import matplotlib.pyplot as plt
     import plot_style as ps
 
@@ -167,6 +173,15 @@ def plot_mode_summary(result, output):
     ax.set_xlabel(r"$k_\parallel d_i$")
     ax.set_ylabel(r"$k_\perp d_i$ (signed)")
     ax.set_title("(a) Spatial modes", fontsize=15)
+    if k_display_max is not None:
+        steps = [float(np.min(np.diff(np.unique(k)))) for k in (kp, kt) if len(np.unique(k)) > 1]
+        half = max(float(k_display_max), 2.5 * max(steps, default=0.0))
+        if rows:   # never crop the reported peak out of its own panel
+            half = max(half, 1.2 * max(abs(rows[0]["k_parallel_d_i"]), rows[0]["k_perp_d_i"]))
+        ax.set_xlim(-half, half)
+        ax.set_ylim(-half, half)
+        ax.set_aspect("equal")
+        ps.drop_corner_tick(ax, "x")   # the first k_par label sits on the lowest k_perp one
     dominant = rows[0] if rows else None
     summary.axis("off")
     summary.set_title("(b) Strongest spatial peak", loc="left", fontsize=15)
@@ -176,25 +191,26 @@ def plot_mode_summary(result, output):
         m = dominant
         ax.plot(m["k_parallel_d_i"], m["k_perp_signed_d_i"], "o", ms=11,
                 markerfacecolor="none", markeredgecolor="white", markeredgewidth=2)
-        freq = f"{m['omega_over_omega_ci']:.4g}" if m["frequency_resolved"] else "not resolved"
+        freq = (rf"$\omega/\Omega_{{ci}} = {m['omega_over_omega_ci']:.3g}$" if m["frequency_resolved"]
+                else r"$\omega/\Omega_{ci}$: not resolved")
         comp = m["magnetic_compressibility"]
         pol = m["sigma_b_transverse"]
         lines = [
             f"Status: {m['status'].replace('_', ' ')}",
             "Single-mode characterization: " + ("candidate accepted" if m["accepted"] else "not confirmed"),
-            f"k_parallel d_i = {m['k_parallel_d_i']:.4g}",
-            f"|k_perp| d_i = {m['k_perp_d_i']:.4g}; angle = {m['theta_deg']:.1f} deg",
+            rf"$k_\parallel d_i = {m['k_parallel_d_i']:.3g}$,  $|k_\perp| d_i = {m['k_perp_d_i']:.3g}$",
+            rf"Propagation angle $\theta_{{kB}} = {m['theta_deg']:.1f}^\circ$",
             f"Share of retained magnetic power: {100*m['power_fraction']:.1f}%",
-            f"omega / Omega_ci: {freq}",
-            f"Frequency resolution: {m['omega_resolution_over_omega_ci']:.3g} Omega_ci",
-            f"gamma / Omega_ci = {m['gamma_over_omega_ci']:.4g} (R² = {m['growth_r_squared']:.3f})",
+            freq,
+            rf"Frequency resolution $\delta\omega = {m['omega_resolution_over_omega_ci']:.3g}\,\Omega_{{ci}}$",
+            rf"$\gamma/\Omega_{{ci}} = {m['gamma_over_omega_ci']:.3g}$  ($R^2 = {m['growth_r_squared']:.3f}$)",
             "Growth fit: " + ("consistent across interval" if m["growth_fit_usable"] else "not established"),
             f"Phase coherence = {m['phase_coherence']:.3f}",
         ]
         if comp is not None:
-            lines.append(f"Magnetic compressibility = {comp:.3f}")
+            lines.append(rf"Compressibility $|\delta B_\parallel|^2/|\delta\mathbf{{B}}|^2 = {comp:.3g}$")
         if pol is not None:
-            lines.append(f"Transverse sigma_B = {pol:+.3f}")
+            lines.append(rf"Transverse polarization $\sigma_B = {pol:+.3f}$")
         summary.text(0, 0.96, "\n".join(lines), va="top", fontsize=11, linespacing=1.8)
     times = result["times"]
     fig.supxlabel(f"Selected interval: {times[0]:.3g}–{times[-1]:.3g} Ωci t; "

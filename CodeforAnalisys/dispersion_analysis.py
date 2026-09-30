@@ -1257,9 +1257,16 @@ def plot_omega_k_dispersion(
     theta_min_deg: float | None = None,
     omega_scale: str = "linear",
     ridges: list[dict] | None = None,
+    kpar_cap_di: float | None = None,
 ):
     """Dense omega-k dispersion diagram: log(omega/omega_p) vs log(k c/omega_p),
     or a linear k axis when ``result`` carries signed velocities.
+
+    ``kpar_cap_di`` bounds the autocropped k range to the physical band of the
+    profile (psc_units.K_MAX_DI_DEFAULT). PIC grid noise is broadband, so on
+    a grid-resolved k axis (k d_i up to ~90) the marginal-power autocrop keeps
+    the whole range and the ion-scale ridge ends up in one corner. The
+    frequency autocrop then only looks at the displayed k columns.
 
     ``omega_scale="linear"`` keeps the omega = 0 row on the plot. Logarithmic
     axes cannot represent it at all, so for an aperiodic mode the log version
@@ -1325,10 +1332,25 @@ def plot_omega_k_dispersion(
     # what actually gets rendered (log_p) stays untouched.
     pnorm_for_crop = _smooth_2d(pnorm, passes=1)
     k_marginal = np.sum(pnorm_for_crop, axis=0)
-    omega_marginal = np.sum(pnorm_for_crop, axis=1)
     kc_signal = _autocrop_signal_extent(kc_wp, k_marginal, autocrop_floor)
-    w_wp_signal = _autocrop_signal_extent(w_wp, omega_marginal, autocrop_floor)
     has_k_signal = kc_signal is not None
+    # Autocrop never extends past the computed grid (outer bin edges):
+    # the strip beyond would be blank and read as zero power.
+    half = lambda c: 0.5 * float(np.median(np.diff(c))) if len(c) > 1 else 0.0
+    k_top = float(np.max(np.abs(kc_wp))) + half(kc_wp)
+    w_top = float(np.max(w_wp)) + half(w_wp)
+    k_extent = None                              # displayed |k| d_i limit
+    if kpar_max_di is not None:
+        k_extent = float(kpar_max_di)
+    elif autocrop and has_k_signal:
+        k_extent = min(float(np.max(np.abs(kc_signal))) * 1.3, k_top)
+        if kpar_cap_di is not None:
+            k_extent = min(k_extent, max(float(kpar_cap_di), 5 * half(kc_wp)))
+    shown_k = (np.abs(kc_wp) <= k_extent) if k_extent is not None else np.ones(len(kc_wp), bool)
+    if not shown_k.any():
+        shown_k[:] = True
+    omega_marginal = np.sum(pnorm_for_crop[:, shown_k], axis=1)
+    w_wp_signal = _autocrop_signal_extent(w_wp, omega_marginal, autocrop_floor)
     has_w_signal = w_wp_signal is not None
 
     fig, axis = plt.subplots(figsize=(9.6, 7.4))
@@ -1348,16 +1370,8 @@ def plot_omega_k_dispersion(
         # When the velocities are unsigned, k has already been folded onto the
         # positive half, so a symmetric x range would be half empty.
         k_low = -1.0 if signed else 0.0
-        # Autocrop never extends past the computed grid (outer bin edges):
-        # the strip beyond would be blank and read as zero power.
-        half = lambda c: 0.5 * float(np.median(np.diff(c))) if len(c) > 1 else 0.0
-        k_top = float(np.max(np.abs(kc_wp))) + half(kc_wp)
-        w_top = float(np.max(w_wp)) + half(w_wp)
-        if kpar_max_di is not None:
-            axis.set_xlim(k_low * kpar_max_di, kpar_max_di)
-        elif autocrop and has_k_signal:
-            extent = min(float(np.max(np.abs(kc_signal))) * 1.3, k_top)
-            axis.set_xlim(k_low * extent, extent)
+        if k_extent is not None:
+            axis.set_xlim(k_low * k_extent, k_extent)
         if omega_max_ci is not None:
             axis.set_ylim(0, omega_max_ci * va_over_c)
         elif autocrop and has_w_signal:
@@ -1382,7 +1396,10 @@ def plot_omega_k_dispersion(
             axis.set_xlim(right=np.log10(kpar_max_di))
         elif autocrop and has_k_signal:
             log_k_signal = np.log10(kc_signal)
-            axis.set_xlim(log_k_signal.min() - 0.1, log_k_signal.max() + 0.3)
+            right = log_k_signal.max() + 0.3
+            if kpar_cap_di is not None:
+                right = min(right, np.log10(max(float(kpar_cap_di), 5 * half(kc_wp))))
+            axis.set_xlim(min(log_k_signal.min() - 0.1, right - 0.5), right)
         if omega_max_ci is not None:
             axis.set_ylim(top=np.log10(omega_max_ci * va_over_c))
         elif autocrop and has_w_signal:
@@ -1525,6 +1542,10 @@ def main() -> int:
         from psc_units import MASS_RATIO
     except (ImportError, ValueError):
         MASS_RATIO = None
+    try:
+        from psc_units import K_MAX_DI_DEFAULT
+    except (ImportError, ValueError):
+        K_MAX_DI_DEFAULT = None
 
     parser = argparse.ArgumentParser(
         description="Frequency--phase-velocity density map from PSC field snapshots."
@@ -1553,7 +1574,8 @@ def main() -> int:
     parser.add_argument("--kmax-di", type=float, default=None,
                         help="Physical cap on retained k*d_i. Preferred over --max-spatial-mode: "
                              "a fixed mode count reaches k d_i ~ 40 in a 20 d_i box, far above "
-                             "any ion-scale physics, so the extra range is PIC noise.")
+                             "any ion-scale physics, so the extra range is PIC noise. Default: "
+                             "the mode preset's value, else psc_units.K_MAX_DI_DEFAULT.")
     parser.add_argument("--spatial-window", choices=["none", "hann", "tukey"], default="none",
                         help="Window applied to each snapshot before the spatial FFT. Default "
                              "'none': these runs are periodic in space, so a snapshot is already "
@@ -1667,6 +1689,14 @@ def main() -> int:
         t_start=args.t_start,
         t_end=args.t_end,
     )
+    if args.kmax_di is None and K_MAX_DI_DEFAULT is not None:
+        # The generic preset has no k cap, and --max-spatial-mode alone keeps
+        # k d_i up to ~40 in a 20 d_i box: PIC grid noise that fills both
+        # diagrams and buries the ion-scale ridge. Default to the profile's
+        # physical band (psc_units.K_MAX_DI_DEFAULT: k d_i <= 2 ion-scale,
+        # k d_e <= 2 electron-scale), never fewer than two modes per axis.
+        dk = max(2.0 * np.pi / (h * n) for h, n in zip(metadata["spacing"], series.shape[2:]))
+        args.kmax_di = max(float(K_MAX_DI_DEFAULT), 2.0 * dk)
     result = compute_phase_velocity_density(
         series,
         times,
@@ -1724,7 +1754,8 @@ def main() -> int:
                                 autocrop=not args.no_autocrop,
                                 autocrop_floor=args.autocrop_floor,
                                 theta_min_deg=args.theta_min_deg,
-                                omega_scale=args.omega_scale, ridges=ridges)
+                                omega_scale=args.omega_scale, ridges=ridges,
+                                kpar_cap_di=K_MAX_DI_DEFAULT)
         print(f"Saved omega-k dispersion diagram: {wk_path}")
     write_csv(csv_path, ridges)
     stem = f"dispersion_modes_{metadata['plane']}_{args.component}"
@@ -1752,7 +1783,8 @@ def main() -> int:
         "limitations": "Single-complex-exponential characterization in the selected interval and retained k band; unresolved/aliased frequencies and multiple branches require further data. No instability species is inferred.",
     }
     (outdir / f"{stem}.json").write_text(strict_dumps(mode_report, indent=2, allow_nan=False))
-    plot_mode_summary(result, outdir / f"{stem}.png")
+    plot_mode_summary(result, outdir / f"{stem}.png",
+                      k_display_max=args.kpar_max_di or K_MAX_DI_DEFAULT)
     plot_mode_fit(result, outdir / f"{stem}_fit.png")
     if dominant is not None:
         print(f"Dominant coherent candidate: k_parallel*d_i={dominant['k_parallel_d_i']:.4g}, "

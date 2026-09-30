@@ -169,13 +169,14 @@ def plot(div_rows: list[dict], log_rows: list[dict], meta: dict, outdir: Path):
             ok = np.isfinite(y) & (y > 0)
             if np.any(ok):
                 ax.semilogy(t[ok], y[ok], ".", ms=3, color=ps.c(color), label=label)
-        for name, thres in meta.get("thresholds", {}).items():
-            ax.axhline(thres, color=ps.MUTED_CLR, ls="--", lw=1.0)
+        for j, (name, thres) in enumerate(meta.get("thresholds", {}).items()):
+            ax.axhline(thres, color=ps.MUTED_CLR, ls="--", lw=1.0,
+                       label="PSC abort threshold" if j == 0 else None)
         ax.set_ylabel("max error [code]")
         ps.style_axes(ax)
         ps.legend(ax, fontsize=10)
     axes[-1].set_xlabel(r"$t\,\Omega_{ci}$")
-    axes[0].set_title("Field-solver constraints (dashed: PSC abort threshold)", fontsize=13)
+    axes[0].set_title("Field-solver constraints", fontsize=13)
     fig.tight_layout()
     ps.save(fig, outdir / "field_residuals.png")
 

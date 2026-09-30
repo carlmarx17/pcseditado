@@ -48,7 +48,7 @@ import matplotlib.pyplot as plt  # noqa: E402  (Agg backend set by spectral_anal
 import plot_style as ps  # noqa: E402
 from psc_units import (
     B0, DI, DX_DI, MASS_RATIO, KAPPA, INSTABILITY, PROFILE_LABEL,
-    SIM_PROFILE, step_to_omegaci,
+    SIM_PROFILE, noise_settling_time, step_to_omegaci,
 )
 
 EPS = 1e-30
@@ -538,7 +538,10 @@ def plot_mode_growth(
     fit = _fit_growth_rate(times_norm, amplitude)
 
     fig, ax = _new_dark_fig((8.5, 5.5))
-    valid = (power > 0) & ps.measured_fluctuation(times_norm)
+    # Not drawn: t = 0 and the quiet-start noise build-up of this k (ion units only;
+    # electron-driven cases have none on the ion time scale).
+    t_min = noise_settling_time(abs(k_val)) if length_unit == "d_i" else 0.0
+    valid = (power > 0) & ps.measured_fluctuation(times_norm) & (times_norm >= t_min)
     if np.count_nonzero(valid) < 2:
         ax.text(0.5, 0.5, "no measurable power in this mode", transform=ax.transAxes,
                 ha="center", va="center", color=TEXT_CLR, fontsize=13)

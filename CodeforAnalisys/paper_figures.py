@@ -33,6 +33,15 @@ raw run data:
                           (kappa ~ 13 in the bi-Maxwellian run while the local
                           estimator gives a Maxwellian); only the local one is
                           quoted.
+* ``vdf_evolution``       f(v||, v_perp) of the driven species for every run at
+                          t = 0, the end of the linear phase and the last frame,
+                          with the initial model at the same levels and the
+                          cyclotron-resonant velocities. Why: shows where in
+                          velocity space the anisotropy is removed (pitch-angle
+                          scattering across the resonance), which the moments
+                          alone cannot. Built from the .npz histograms of
+                          physical_diagnostics.plot_vdf2d; skipped for older
+                          deliveries without them.
 * ``series_summary.csv``  the numbers quoted in the text.
 
 Usage::
@@ -62,7 +71,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 import psc_units  # noqa: E402
 from growth_fit import reference_growth_row  # noqa: E402
-from plasma_physics import mirror_threshold_electrons  # noqa: E402
+from plasma_physics import bi_distribution_3d, mirror_threshold_electrons  # noqa: E402
 
 #: Okabe-Ito, fixed order: Maxwellian, kappa 5, kappa 3.
 SERIES = ("#0072B2", "#D55E00", "#009E73", "#CC79A7")
@@ -109,6 +118,9 @@ def load_run(root: Path) -> dict:
     shells = np.unique([_f(r["k"]) for r in kt])
     shell = shells[np.argmin(np.abs(shells - np.hypot(run["k_mode"], run["k_perp_mode"])))]
     sel = [r for r in kt if _f(r["k"]) == shell]
+    vth = np.sqrt(profile["beta_i_par"] * max(1.0, profile["Ti_perp_over_Ti_par"]) / 2.0)
+    run["t_settle"] = (psc_units.NOISE_SETTLING_TRANSITS / (np.hypot(run["k_mode"], run["k_perp_mode"]) * vth)
+                       if profile.get("driven_species", "ion") == "ion" else 0.0)
     run["kt_shell"] = float(shell)
     run["kt_t"] = np.array([_f(r["omega_ci_t"]) for r in sel])
     run["kt_amp"] = np.sqrt(np.clip([_f(r["E_perp"]) for r in sel], 0, None))
@@ -167,7 +179,9 @@ def plot_mode_amplitude(runs, outdir):
     fig, ax = plt.subplots(figsize=(7.6, 4.8))
     for i, run in enumerate(runs):
         col = ps.c(SERIES[i])
-        keep = ps.measured_fluctuation(run["kt_t"]) & (run["kt_amp"] > 0)
+        # Not drawn: t = 0 and the quiet-start noise build-up of the mode.
+        keep = (ps.measured_fluctuation(run["kt_t"]) & (run["kt_amp"] > 0)
+                & (run["kt_t"] >= run["t_settle"]))
         t, amp = run["kt_t"][keep], run["kt_amp"][keep]
         ax.plot(t, amp, color=col, lw=1.6, label=run["label"])
         t0, t1 = run["t_lin"]
@@ -310,6 +324,98 @@ def plot_kappa_local(runs, outdir):
     ps.save(fig, outdir / "kappa_local.png")
 
 
+def vdf_frames(root: Path, species: str = "ion") -> dict:
+    """{Omega_ci t: histogram} of the f(v||, v_perp) frames physical_diagnostics saved."""
+    frames = {}
+    for path in (root / "09_physical_diagnostics").glob(f"vdf_2d_{species}_step_*.npz"):
+        with np.load(path) as data:
+            frames[float(data["omega_ci_t"])] = {key: data[key] for key in data.files}
+    return dict(sorted(frames.items()))
+
+
+def plot_vdf_evolution(runs, outdir, species="ion"):
+    from matplotlib import patheffects
+    from matplotlib.colors import LogNorm
+    from matplotlib.lines import Line2D
+    from scipy.ndimage import gaussian_filter
+
+    frames = [vdf_frames(run["root"], species) for run in runs]
+    if not all(frames):
+        print("[SKIP] vdf_evolution: no vdf_2d_*.npz frames (delivery predates them)")
+        return
+    # White contours with a dark rim: readable on the whole colour map and,
+    # in the legend, on the white page.
+    outline = [patheffects.Stroke(linewidth=2.3, foreground="0.15"), patheffects.Normal()]
+    levels = np.log10([1e-3, 1e-2, 1e-1])
+    cmap = plt.get_cmap(ps.CMAP_SEQUENTIAL).copy()
+    cmap.set_bad(ps.PANEL_BG)
+    norm = LogNorm(vmin=1e-4, vmax=1.0)
+    picks = []
+    for run, fr in zip(runs, frames):
+        times = np.array(list(fr))
+        t_end = run["t_lin"][1]
+        mid = times[np.argmin(np.abs(times - t_end))] if np.isfinite(t_end) else times[len(times) // 2]
+        picks.append((times[0], mid, times[-1]))
+    half = max(float(np.max(np.abs(fr[t]["par_edges"]))) for fr, ts in zip(frames, picks) for t in ts)
+    top = max(float(np.max(fr[t]["perp_edges"])) for fr, ts in zip(frames, picks) for t in ts)
+    # Equal axis scales: the figure height follows the panel aspect, so the
+    # rows are not separated by empty bands.
+    panel_width = 3.45
+    fig, axes = plt.subplots(len(runs), 3, sharex=True, sharey=True, squeeze=False,
+                             figsize=(12.0, len(runs) * panel_width * top / (2.0 * half) + 1.9),
+                             layout="constrained")
+    mesh = None
+    for i, (run, fr, ts) in enumerate(zip(runs, frames, picks)):
+        first = fr[ts[0]]
+        # One normalisation per run, its own t = 0 peak: the change of the
+        # core height over time stays visible.
+        peak0 = float(np.nanmax(first["f"]))
+        s0_par, s0_perp = (float(v) for v in first["sigma0"])
+        for j, t in enumerate(ts):
+            ax, d = axes[i, j], fr[t]
+            xe, ye = d["par_edges"], d["perp_edges"]
+            xc, yc = 0.5 * (xe[:-1] + xe[1:]), 0.5 * (ye[:-1] + ye[1:])
+            f = d["f"] / peak0
+            mesh = ax.pcolormesh(xe, ye, np.ma.masked_invalid(f).T, cmap=cmap, norm=norm,
+                                 shading="flat", rasterized=True)
+            logf = np.log10(np.where(np.isfinite(f) & (f > 0), f, np.nan))
+            if np.any(np.isfinite(logf)):
+                filled = np.where(np.isfinite(logf), logf, np.nanmin(logf) - 1.0)
+                smooth = np.where(np.isfinite(logf), gaussian_filter(filled, 1.0), np.nan)
+                ax.contour(xc, yc, smooth.T, levels=levels, colors="white",
+                           linewidths=0.9).set_path_effects(outline)
+            # Initial model (profile temperatures), per d^3v like the histogram.
+            model = bi_distribution_3d(*np.meshgrid(xc, yc, indexing="ij"), s0_par, s0_perp,
+                                       run["kappa"]) / peak0
+            ax.contour(xc, yc, np.log10(np.maximum(model, 1e-300)).T, levels=levels,
+                       colors=ps.c("#E69F00"), linewidths=1.1, linestyles="--")
+            for sign in (-1.0, 1.0):
+                ax.axvline(sign * abs(run["resonance_v"]), color=ps.c("#56B4E9"), lw=1.2, ls=":")
+            # Upper corner: outside the distribution, on the page colour.
+            ax.text(0.03, 0.95, rf"$t\,\Omega_{{ci}}={t:.0f}$", transform=ax.transAxes,
+                    va="top", ha="left", fontsize=10.5, color=ps.TEXT_CLR)
+            ax.set_xlim(-half, half)
+            ax.set_ylim(0.0, top)
+            ax.set_aspect("equal")
+            if i == len(runs) - 1:
+                ax.set_xlabel(r"$(v_\parallel-\langle v_\parallel\rangle)/v_A$")
+            if j == 0:
+                ax.set_ylabel(run["label"] + "\n" + r"$v_\perp/v_A$")
+    for j, title in enumerate(("initial", "end of linear phase", "final")):
+        axes[0, j].set_title(title, fontsize=12)
+    cb = fig.colorbar(mesh, ax=axes, shrink=0.85, pad=0.01)
+    cb.set_label(r"$f(v_\parallel, v_\perp)/f_{\max}(t=0)$")
+    handles = [Line2D([], [], color="white", lw=0.9, path_effects=outline,
+                      label=r"PIC, $10^{-1,-2,-3}\,f_{\max}(0)$"),
+               Line2D([], [], color=ps.c("#E69F00"), lw=1.1, ls="--",
+                      label="initial model, same levels"),
+               Line2D([], [], color=ps.c("#56B4E9"), lw=1.2, ls=":",
+                      label=r"resonance $|v_\parallel|=|\omega_r-\Omega_{ci}|/k_\parallel$")]
+    fig.legend(handles=handles, loc="outside lower center", ncol=3, frameon=False, fontsize=10)
+    fig.suptitle(f"{species.capitalize()} velocity distribution, gyrotropic average", fontsize=13)
+    ps.save(fig, outdir / "vdf_evolution.png")
+
+
 def write_summary(runs, outdir):
     fields = ["run", "kappa", "k_par_di", "gamma_pic", "gamma_pic_err", "gamma_theory",
               "relative_difference_pct", "omega_r_theory", "v_res_over_vA",
@@ -359,6 +465,7 @@ def main() -> int:
     plot_brazil(runs, args.outdir)
     plot_resonance(runs, args.outdir)
     plot_kappa_local(runs, args.outdir)
+    plot_vdf_evolution(runs, args.outdir, runs[0]["profile"].get("driven_species", "ion"))
     write_summary(runs, args.outdir)
     print(f"Paper figures written to {args.outdir}")
     return 0

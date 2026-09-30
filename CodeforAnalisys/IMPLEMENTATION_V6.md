@@ -339,3 +339,55 @@ on the real v6b products and on a synthetic end-to-end run of the COSMA job.
   PASS, controls without theory stages, comparison, kappa evolution, paper
   figures and evidence report OK, no figure-QA issue that applies to real
   data.
+
+## Follow-up 7 (2026-09-30): figure pass for the thesis and the paper
+
+Why: the v6b figures were reviewed one by one for publication; the VDF
+figures in particular misled (a kappa model that looked wrongly normalised),
+and several diagnostics showed mostly noise or empty axis range.
+
+- **Kappa normalisation.** The bi-kappa formula was right: PSC loads a
+  Student t with nu = 2 kappa - 1 and a shared mixing variable, whose 1D
+  marginal (1 + v^2/((2 kappa - 3) sigma^2))^-kappa has variance sigma^2;
+  `test_vdf_models.py` checks the unit integral, the variance, the 3D, reduced
+  and speed densities, and the Poisson agreement with a sample drawn like the
+  loader. What was wrong was the comparison: the last snapshot against kappa0
+  at the *initial* temperature, off by the heating factor. Every model is now
+  drawn with the variance measured at the same time, and kappa is estimated by
+  maximum likelihood with that variance fixed (`plasma_physics.kappa_mle`,
+  bootstrap 68 % interval, unbiased on PSC-like samples; the least-squares fit
+  of the binned density gave 2.24 for a loaded kappa = 3). The t = 0 column of
+  `kappa_comparison_*` checks the loader. `synthetic_run.py` now draws its
+  bi-kappa particles the way PSC does.
+- **VDF figures redesigned.** plot_prt.py: `kappa_comparison_{parallel,
+  perpendicular}` (t = 0 and final, Poisson error bars, Maxwellian / MLE kappa
+  / kappa0, ratio panels), `goodness_of_fit` (F_PIC - F_model with the 95 % KS
+  band, KS and AD in a CSV), `distribution_change_{ions,electrons}`
+  (log10 f(v,t)/f(v,0)), `vdf_1d_evolution`. physical_diagnostics.py:
+  `vdf_2d_*` per d^3v with equal axes, a 5-sigma window, masked low-count bins,
+  contours at 1e-1..1e-3 of the peak and the initial model at the same levels
+  (white contours carry a dark rim, visible in the legend too), an .npz of each
+  histogram; `vdf_planes_*` replaces the unreadable 3D scatter;
+  `kappa_vs_maxwellian_*` in v/v_A with a ratio panel; `kappa_fit_vs_time`
+  with MLE error bars. paper_figures.py adds `vdf_evolution`: f(v||, v_perp)
+  of every run at t = 0, the end of the linear phase and the end, with the
+  initial model and the cyclotron-resonant velocities.
+- **Growth curves start after the quiet-start noise build-up.** t = 0 (uniform
+  field) and t < 2/(k v_th,i) (psc_units.noise_settling_time) are no longer
+  drawn in `growth_curve_*`, `mode_growth_*`, `growth_rate_fit_*` and
+  `mode_amplitude`; the hidden interval is stated on the figure.
+- **Dispersion diagrams.** The pipeline runs the generic preset, which had no
+  k cap: the omega-k diagram of v6b ran to k d_i = 40 with the ion-cyclotron
+  ridge in one corner, and grid noise striped the phase-velocity projection.
+  `--kmax-di` now defaults to psc_units.K_MAX_DI_DEFAULT (k d_i <= 2 ion-scale,
+  k d_e <= 2 electron-scale; never fewer than two modes per axis), and the
+  omega-k and mode-summary panels display that band.
+- Units and labels: diamagnetic current maps in n0 e v_A (were code units);
+  the heat-flux block maps use the truncated estimator (the untruncated third
+  moment of a kappa = 3 sample has infinite variance and one block set the
+  colour scale), a robust colour scale, and hatch the blocks within 2 sigma of
+  the symmetric null; the field-residual title no longer announces an abort
+  threshold that is not drawn; identically zero fluctuation maps (t = 0) are
+  not saved; one legend below the estimator panels; the helicity figure notes
+  that counter-propagating waves of the same polarization cancel in sigma_m;
+  the energy proxy says what it contains.

@@ -20,8 +20,9 @@ numbers checked against the input before any COSMA time is spent:
   handedness of psi_pm (polarization_dispersion.handedness_check).
 * ``pfd_moments.<step>_p000000.h5``: ``all_1st-0/{rho,px..pz,txx..tzx}_{i,e}``
   with n_i anticorrelated with |B| and P_perp in total-pressure balance.
-* ``prt_<case>.<step>.h5``: bi-Maxwellian ions and electrons (A from the
-  profile) inside the central 20 % window, with ``lo``/``hi`` attributes.
+* ``prt_<case>.<step>.h5``: bi-Maxwellian (or, for kappa profiles, bi-kappa
+  with PSC's Gamma-Normal mixture) ions and electrons (A from the profile)
+  inside the central 20 % window, with ``lo``/``hi`` attributes.
 * ``diag.asc``: DiagEnergies columns with an exactly conserved total.
 * ``psc_synthetic_<jobid>.out``: a job log with ``**** Step`` banners and
   ``gauss:``/``continuity:`` check lines.
@@ -159,8 +160,12 @@ def build(outdir: Path, case: str, ngrid: int, t_end_omegaci: float, n_snap: int
             count = ppc * ncell
             yy = (lo[1] + rng.random(count) * (hi[1] - lo[1])) * dx - length_de / 2
             zz = (lo[2] + rng.random(count) * (hi[2] - lo[2])) * dx - length_de / 2
-            v_perp = np.sqrt(tperp / m) * rng.standard_normal((2, count))
-            v_par = np.sqrt(tpar / m) * rng.standard_normal(count)
+            # Kappa profiles load the PSC mixture: one S = sqrt((kappa - 3/2)/Y),
+            # Y ~ Gamma(kappa - 1/2), shared by the three components.
+            scale = (np.sqrt((units.KAPPA - 1.5) / rng.gamma(units.KAPPA - 0.5, 1.0, count))
+                     if units.KAPPA else np.ones(count))
+            v_perp = np.sqrt(tperp / m) * rng.standard_normal((2, count)) * scale
+            v_par = np.sqrt(tpar / m) * rng.standard_normal(count) * scale
             rows.append((np.zeros(count), yy, zz, v_perp[0], v_perp[1], v_par,
                          np.full(count, q), np.full(count, m), np.full(count, weight)))
         data = np.concatenate([np.rec.fromarrays(r, names="x,y,z,px,py,pz,q,m,w") for r in rows])

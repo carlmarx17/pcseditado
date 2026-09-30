@@ -79,7 +79,16 @@ again; regenerate `09_physical_diagnostics` and `04_spectra`.
   and the local-frame 1/kappa_eff (the global-B0 fit of `kappa_evolution.py`
   reads the wave-tilted distribution at saturation as a tail), plus
   `series_summary.csv` with the numbers quoted in the text:
-  `python paper_figures.py RUN_MAXW RUN_K5 RUN_K3 --outdir OUT`.
+  `python paper_figures.py RUN_MAXW RUN_K5 RUN_K3 --outdir OUT`. With the
+  .npz histograms of v6c it also draws `vdf_evolution.png`, f(v||, v_perp) of
+  every run at t = 0, the end of the linear phase and the end.
+- **VDF figures and kappa (v6 follow-up 7).** Every model curve uses the
+  variance measured at the time it is compared with, and kappa is the
+  maximum-likelihood estimate at that variance (`plasma_physics.kappa_mle`,
+  bootstrap interval): the old comparison of the final snapshot with kappa0 at
+  the initial temperature made a correct normalisation look wrong. Growth
+  curves no longer draw t = 0 or the quiet-start noise build-up; dispersion
+  diagrams are limited to the physical k band.
 - **Mirror threshold with the measured electrons.** The Brazil plots and the
   anisotropy evolution of mirror cases use the Hellinger (2007) criterion for
   bi-Maxwellian ions and electrons with beta_e||(t) and A_e(t) measured at each

@@ -206,3 +206,23 @@ def test_exports_empty_and_perpendicular_only_spectra(tmp_path):
             assert path.exists()
             assert path.with_suffix(".pdf").exists()
         plot_omega_k_dispersion(result, tmp_path / f"{label}_wk.png", "total", 0.01)
+
+
+def test_displayed_k_range_is_capped_to_the_physical_band(tmp_path, monkeypatch):
+    # Broadband noise fills every retained k, so the marginal-power autocrop
+    # alone keeps the whole grid and the ion-scale peak ends up in a corner
+    # (the v6b omega-k diagrams ran to k d_i = 40).
+    import plot_style
+    from dispersion_analysis import plot_omega_k_dispersion
+    from dispersion_modes import plot_mode_summary
+    rng = np.random.default_rng(0)
+    t, wave, (_, kz) = signal()
+    result = analyse(wave + 0.05 * rng.standard_normal(wave.shape), t)
+    figures = []
+    monkeypatch.setattr(plot_style, "save", lambda fig, *args, **kwargs: figures.append(fig))
+    plot_omega_k_dispersion(result, tmp_path / "wk.png", "total", 0.01, kpar_cap_di=1.5)
+    plot_mode_summary(result, tmp_path / "modes.png", k_display_max=1.5)
+    wk_axis, modes_axis = figures[0].axes[0], figures[1].axes[0]
+    assert wk_axis.get_xlim()[1] == pytest.approx(1.5)
+    assert kz < modes_axis.get_xlim()[1] <= 1.5 + 1e-9
+    assert modes_axis.get_ylim() == pytest.approx(modes_axis.get_xlim())

@@ -47,7 +47,7 @@ from data_reader import PICDataReader
 from growth_fit import fit_exponential_growth
 from psc_units import (
     DX_DI, DI, DOMAIN_DI, RHO_I, INSTABILITY, K_MAX_DI_DEFAULT, PROFILE_LABEL,
-    step_to_omegaci,
+    noise_settling_time, step_to_omegaci,
 )
 
 warnings.filterwarnings("ignore")
@@ -725,8 +725,10 @@ class SpectralAnalyzer:
         fit = _fit_growth_rate(times, amplitude)
 
         fig, ax = _new_dark_fig((8.5, 5.5))
-        ax.set_xlim(float(np.min(times)), float(np.max(times)))
-        valid = (amplitude > 0) & ps.measured_fluctuation(times)
+        # Not drawn: t = 0 and the quiet-start noise build-up of this k.
+        t_min = noise_settling_time(k)
+        ax.set_xlim(max(float(np.min(times)), t_min), float(np.max(times)))
+        valid = (amplitude > 0) & ps.measured_fluctuation(times) & (times >= t_min)
         if np.count_nonzero(valid) < 2:
             # This channel never rose above zero/floating-point noise (e.g. a
             # non-fluctuating parallel field): say so instead of leaving a
@@ -835,6 +837,13 @@ class SpectralAnalyzer:
         ax.set_xlabel(r"$k\,d_i$")
         ax.set_ylabel(r"$\sigma_m(k)$")
         ax.set_title(f"Reduced magnetic helicity — {PROFILE_LABEL} ({plane})", fontsize=POSTER_TITLE)
+        # A k-shell holds both propagation directions: counter-propagating waves
+        # of the same polarization (e.g. ion-cyclotron waves growing along
+        # +B0 and -B0) carry opposite helicity and cancel here even when each is
+        # fully circular. The handedness per direction is in the psi_pm maps.
+        ax.text(0.01, 0.02, r"$\sigma_m\approx 0$ also for balanced counter-propagating circular waves; "
+                r"handedness per direction: $\psi_\pm$ maps",
+                transform=ax.transAxes, fontsize=9, color=ps.MUTED_CLR, va="bottom")
         out_file = self.outdir / f"helicity_vs_k_{plane}.png"
         ps.save(fig, out_file)
         print(f"Saved helicity plot: {out_file}")

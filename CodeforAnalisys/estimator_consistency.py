@@ -193,23 +193,30 @@ def plot(rows: list[dict], species_list: list[str], outdir: Path):
               ("A_mom_window_cellmean", "--", "#ff7b72", r"moments, window, $\langle A\rangle$"),
               ("A_mom_domain_ratio", "-", "#d2a8ff", r"moments, domain, $\langle P_\perp\rangle/\langle P_\parallel\rangle$")]
     order = sorted(species_list, key=lambda s: s != DRIVEN_SPECIES)
-    fig, axes = plt.subplots(len(order), 1, figsize=(8.8, 4.2 * len(order)), sharex=True, squeeze=False)
+    height = 3.6 * len(order) + 1.2
+    fig, axes = plt.subplots(len(order), 1, figsize=(8.8, height), sharex=True, squeeze=False)
+    handles = {}
     for ax, species in zip(axes[:, 0], order):
         sr = [r for r in rows if r["species"] == species]
         t = np.array([r["omega_ci_t"] for r in sr])
         for key, fmt, color, label in styles:
             y = np.array([r.get(key, np.nan) for r in sr], dtype=float)
             if np.any(np.isfinite(y)):
-                ax.plot(t, y, fmt, ms=3.5, color=ps.c(color), label=label)
+                line, = ax.plot(t, y, fmt, ms=2.5 if len(t) > 60 else 3.5, lw=1.3,
+                                color=ps.c(color), label=label)
+                handles.setdefault(label, line)
         s = SPECIES[species][0]
-        ax.set_ylabel(rf"$A_{s}$")
+        ax.set_ylabel(rf"$A_{s} = T_{{\perp {s}}}/T_{{\parallel {s}}}$")
         ax.set_title(f"{species}s" + (" (driven species)" if species == DRIVEN_SPECIES else ""),
                      fontsize=12)
         ps.style_axes(ax)
-        ps.legend(ax, fontsize=9)
     axes[-1, 0].set_xlabel(r"$t\,\Omega_{ci}$")
     fig.suptitle(f"Anisotropy estimators — {PROFILE_LABEL}", fontsize=13)
-    fig.tight_layout()
+    # One legend for both panels, below them: inside, it covers the curves.
+    if handles:
+        fig.legend(list(handles.values()), list(handles), loc="lower center", ncol=2,
+                   fontsize=9.5, frameon=False, bbox_to_anchor=(0.5, 0.0))
+    fig.tight_layout(rect=(0, 0.72 / height, 1, 1))
     ps.save(fig, outdir / "estimator_consistency.png")
 
 

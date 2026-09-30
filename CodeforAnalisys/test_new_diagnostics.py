@@ -197,3 +197,20 @@ class TheoryUnitTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_heat_flux_map_scale_ignores_a_lone_outlier_and_hatches_noise(tmp_path, monkeypatch):
+    # For kappa = 3 the untruncated third moment has infinite variance: one
+    # block with a few fast particles used to set the whole colour scale.
+    import plot_style
+    figures = []
+    monkeypatch.setattr(plot_style, "save", lambda fig, *args, **kwargs: figures.append(fig))
+    rng = np.random.default_rng(0)
+    blocks = [{"jz": jz, "jy": jy, "q_par_over_q0": rng.normal(0.0, 0.01), "q_par_null_se": 0.01}
+              for jz in range(8) for jy in range(8)]
+    blocks[5]["q_par_over_q0"] = 0.5
+    hf.plot_block_map(blocks, (0, 0, 0), (1, 80, 80), 8, "ion", 0, tmp_path, s_max=6.0)
+    axis = figures[0].axes[0]
+    assert axis.images[0].norm.vmax < 0.1
+    hatched = [patch for patch in axis.patches if patch.get_hatch()]
+    assert 55 <= len(hatched) <= 63

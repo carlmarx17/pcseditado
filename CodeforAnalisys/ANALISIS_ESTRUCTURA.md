@@ -369,11 +369,10 @@ CodeforAnalisys/
 │   │   reconnected-flux proxy, overview panels
 │   └── kappa_eff(t) via kappa_eff.py + B–kappa correlation (CSV/JSON/PNG)
 │
-├── plot_vdf_3d.py            ← 3D VDF (reads prt.*.h5)
-│   └── 3D surface f(vx, vy, vz)
-│
-├── plot_moments_scatter_3d.py ← 3D SCATTER (reads prt.*.h5)
-│   └── Momentum scatter + 3D histograms
+├── paper_figures.py          ← PUBLICATION FIGURES of a controlled series
+│   └── From analysis products only (no raw data): mode amplitude,
+│       gamma vs 1/kappa against theory, Brazil trajectories, resonance,
+│       local kappa, f(v_par, v_perp) evolution, series_summary.csv
 │
 └── Makefile                  ← ORCHESTRATOR
     ├── make brazil     → anisotropy_analysis.py
@@ -382,7 +381,7 @@ CodeforAnalisys/
     ├── make fields     → fluctuationofmagneticfiel.py
     ├── make spectral   → spectral_analysis.py
     ├── make validate   → validate_moments.py
-    ├── make particles  → plot_prt.py + plot_vdf_3d.py + plot_moments_scatter_3d.py
+    ├── make particles  → plot_prt.py
     └── make all        → everything except spectral and report
 ```
 
@@ -413,24 +412,22 @@ prt.*.h5                             pfd.*.h5 + pfd_moments.*.h5
    │                                        │
    ├── plot_prt.py                          ├── anisotropy_analysis.py
    │     └── prt_plots/                     │     └── anisotropy_plots/
-   │         ├── vdf_2d_ions.png            │         └── brazil_plot_anisotropy.png
-   │         ├── vdf_2d_electrons.png       │
-   │         ├── kappa_comparison_*.png     ├── mirror_physics.py
-   │         ├── goodness_of_fit_*_cdf.png  │     └── mirror_plots/
-   │         ├── vdf_2d_*_step*.png         │
-   │         ├── distribution_evolution_*.png │
-   │         ├── brazil_plot.png            ├── diamagnetic_current.py
-   │         ├── vdf_1d_parallel_evolution.png │     └── diamagnetic_plots/
-   │         ├── vdf_1d_perp_evolution.png  │
-   │         ├── particle_energy_partition.png │
-   │         ├── magnetic_energy_fluctuation.png │
-   │         ├── heat_flux_regions.png      ├── fluctuationofmagneticfiel.py
-   │         └── heat_flux_timeseries.png   │     └── field_images/
+   │         ├── kappa_comparison_*.png     │         └── brazil_plot_anisotropy.png
+   │         ├── kappa_mle_summary.csv      │
+   │         ├── goodness_of_fit.png        ├── mirror_physics.py
+   │         ├── goodness_of_fit_metrics.csv │     └── mirror_plots/
+   │         ├── distribution_change_*.png  │
+   │         ├── vdf_1d_evolution.png       │
+   │         ├── vdf_tail_fractions.csv     ├── diamagnetic_current.py
+   │         └── particle_energy_partition.png │     └── diamagnetic_plots/
    │                                        │
-   ├── validate_moments.py                  └── spectral_analysis.py
-   │     └── validation_plots/                    └── (under development)
-   ├── plot_vdf_3d.py
-   └── plot_moments_scatter_3d.py
+   │                                        │
+   │                                        │
+   │                                        ├── fluctuationofmagneticfiel.py
+   │                                        │     └── field_images/
+   │                                        │
+   └── validate_moments.py                  └── spectral_analysis.py
+         └── validation_plots/                    └── spectral_plots/
 ```
 
 ---
@@ -535,36 +532,55 @@ fields = PICDataReader.read_multiple_fields_3d(
 
 ### Plot 9 — Evolution of the 1D distribution function
 
-**What it does:** overlays `f(v_∥)` and `f(v_⊥)` at several times (blue→red
-colormap = early→late), with a reference Maxwellian drawn as a dashed black line.
-It quantifies the **suprathermal tail** as the fraction of particles with
-`|v| > 3 v_th`.
-
-```
-Outputs: `prt_plots/vdf_1d_parallel_evolution.png` and
-`prt_plots/vdf_1d_perp_evolution.png`.
-```
+**What it does:** `vdf_1d_evolution.png` overlays `f(v_∥)` and `f(v_⊥)` of the
+driven species at several times (early→late colour scale) in two panels, with
+two references at t = 0: the Maxwellian of the measured variance (dashed) and
+the loaded κ₀ model (dotted). It quantifies the **suprathermal tail** as the
+fraction of particles with `|v| > 3 v_th`, written to `vdf_tail_fractions.csv`.
 
 **Physics:** shows directly whether the kappa distribution keeps its power-law
 tail during the evolution or whether the instability modifies it.
+
+### Plot 9b — κ at t = 0 and at the end, and goodness of fit
+
+**What it does:** `kappa_comparison_{parallel,perpendicular}.png` show, for the
+first and the last particle snapshot, `f(v)` with Poisson error bars against
+three models that all use the variance *measured at that time*: the Maxwellian
+(dashed), the maximum-likelihood κ (solid; `plasma_physics.kappa_mle`, variance
+fixed, bootstrap 68 % interval) and the loaded κ₀ (dotted); the lower panels
+show PIC/Maxwellian. The t = 0 column checks the loader (κ̂ must return κ₀).
+Values in `kappa_mle_summary.csv`. `goodness_of_fit.png` plots F_PIC − F_model
+of the last snapshot with the 95 % Kolmogorov–Smirnov band;
+`goodness_of_fit_metrics.csv` holds the KS and Anderson–Darling statistics.
+
+**Model normalisation.** PSC loads a bi-kappa as a multivariate Student t with
+ν = 2κ − 1 and a shared mixing variable, scaled so that the variance is the
+profile temperature: the 1D marginal is ∝ (1 + v²/((2κ − 3)σ²))^(−κ) with
+variance σ². A model drawn with the *initial* temperature on a *late* snapshot
+is off by the heating factor and reads as a wrong normalisation; every model
+here uses the variance of the snapshot it is compared with.
+
+### Plot 9c — Change of the distribution
+
+**What it does:** `distribution_change_{ions,electrons}.png` maps
+log₁₀ f(v, t)/f(v, 0) (diverging, ±1) over time for v_∥ and v_⊥; bins with
+fewer than 25 particles are masked. Shows where in velocity space particles
+are removed and added (resonant scattering, heating).
 
 ---
 
 ### Plot 10 — Energy partition
 
-**What it does:** plots the time evolution of:
+**What it does:** `particle_energy_partition.png` plots the time evolution of
+the particle energies of the prt window:
 - `E_kin_bulk = ½ mᵢ ⟨v⟩²` (mean-flow energy)
 - `E_kin_therm = ½ mᵢ ⟨δv²⟩` (random kinetic energy)
 - `E_int_ion  = (3/2) Nᵢ Tᵢ` (ion internal energy)
 - `E_int_elec = (3/2) Nₑ Tₑ` (electron internal energy)
-- `E_B = (δB_rms)²/2` (if field files are available)
 
-All normalized to `E₀` (initial total energy).
-
-```
-Outputs: `prt_plots/particle_energy_partition.png` and
-`prt_plots/magnetic_energy_fluctuation.png`.
-```
+The magnetic fluctuation energy is not repeated here: it is measured over the
+whole domain by the field diagnostics (`fluctuationofmagneticfiel.py`) and
+the budget with J·E by `energy_exchange.py`.
 
 **Physics:** reproduces the methodology of PIC studies of anisotropy
 instabilities (Hellinger & Trávníček 2008; Kunz et al. 2014) to track how the
@@ -682,15 +698,25 @@ Generates `anisotropy_vs_time.png` and
 
 ### 5. Two-dimensional VDF
 
-Builds logarithmic $f(v_\perp,v_\parallel)$ maps for the selected particle
-snapshots: `vdf_2d_step_<step>.png`.
+Builds $f(v_\parallel,v_\perp)$ per $d^3v$ (log colour, equal axis scales, a
+window of 5 thermal spreads, bins with fewer than 8 particles masked) for the
+selected particle snapshots, with contours at $10^{-1,-2,-3}$ of the peak and
+the analytic initial bi-Maxwellian / bi-kappa at the same levels (dashed):
+`vdf_2d_<species>_step_<step>.png`. The histogram is saved as
+`vdf_2d_<species>_step_<step>.npz` so figures can be rebuilt without the
+particles (`paper_figures.py` uses it for `vdf_evolution.png`).
+`vdf_planes_<species>_step_<step>.png` shows the three reduced planes
+$(v_\parallel,v_x)$, $(v_\parallel,v_y)$, $(v_x,v_y)$ with the same overlays.
 
 ### 6. Maxwellian and Kappa fits
 
-Fits both distributions, compares global and tail errors, estimates $\kappa$ and
-computes the suprathermal fraction. Outputs: `fit_metrics.csv`,
-`kappa_fit_vs_time.png`, `suprathermal_fraction_vs_time.png` and
-`kappa_vs_maxwellian_step_<step>.png`.
+Fits both distributions, compares global and tail errors, estimates $\kappa$ by
+maximum likelihood at the measured variance (`kappa_mle`, with a bootstrap 68 %
+interval; `kappa_mle*` columns) and computes the suprathermal fraction.
+Outputs: `fit_metrics.csv`, `kappa_fit_vs_time.png` (global $B_0$ frame; the
+local-field estimate is `vdf_spatial.py`'s), `suprathermal_fraction_vs_time.png`
+and `kappa_vs_maxwellian_step_<step>.png` (first and last fit, $v/v_A$, model
+ratio panel).
 
 ### 7. Brazil plots
 

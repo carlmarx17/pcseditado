@@ -771,9 +771,10 @@ def plot_vdf2d_trapping(vdf2d: dict, b_ref_info: dict, step: int,
         ax.plot(par_b, perp_line, color=edge, lw=2.0)
         ax.plot(-par_b, perp_line, color=edge, lw=2.0,
                 label=r"$\sin^2\alpha = b_{\rm med}$")
-        for b_edge in (g["b_lo"], g["b_hi"]):
+        for j, b_edge in enumerate((g["b_lo"], g["b_hi"])):
             par_e = trapping_boundary(b_edge, perp_line)
-            ax.plot(par_e, perp_line, color=edge, lw=1.0, ls=":", alpha=0.9)
+            ax.plot(par_e, perp_line, color=edge, lw=1.0, ls=":", alpha=0.9,
+                    label=r"$b$ percentiles 16 / 84 of the population" if j == 0 else None)
             ax.plot(-par_e, perp_line, color=edge, lw=1.0, ls=":", alpha=0.9)
 
         # Numbers under the panel title, not on the distribution.
@@ -784,7 +785,7 @@ def plot_vdf2d_trapping(vdf2d: dict, b_ref_info: dict, step: int,
                      rf" (iso. ref. ${g['trapped_fraction_iso']:.3f}$)", fontsize=12)
     axes[0].set_ylabel(r"$v_\perp/v_A$")
     handles, names = axes[0].get_legend_handles_labels()
-    fig.legend(handles, names, loc="upper center", bbox_to_anchor=(0.5, -0.02), ncol=2,
+    fig.legend(handles, names, loc="upper center", bbox_to_anchor=(0.5, -0.02), ncol=3,
                frameon=False, fontsize=11)
 
     cb = fig.colorbar(pcm, ax=list(axes), pad=0.015, fraction=0.035)
@@ -793,9 +794,8 @@ def plot_vdf2d_trapping(vdf2d: dict, b_ref_info: dict, step: int,
     fig.suptitle(
         rf"VDF and trapped domain — {PROFILE_LABEL}, step {step}, "
         rf"$t\Omega_{{ci}} = {toci:.1f}$,  "
-        rf"$B_{{\rm ref}} = {b_ref_info['b_ref_over_B0']:.3f}\,B_0$"
-        "\n" r"dotted: $b$ percentiles 16 / 84 within each population",
-        y=1.06, fontsize=15)
+        rf"$B_{{\rm ref}} = {b_ref_info['b_ref_over_B0']:.3f}\,B_0$",
+        y=1.03, fontsize=15)
     out = outdir / f"{prefix}vdf_2d_trapping_step{step:09d}.png"
     ps.save(fig, out)
     return out

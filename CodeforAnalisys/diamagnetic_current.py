@@ -20,8 +20,10 @@ fluctuation for B ~ B0 z-hat; the out-of-plane J_dx is the one mapped here.
 P_perp is the *thermal* pressure: PSC's raw second moment t_ab = n m <u v>
 minus the bulk-flow part, projected on the local field (plasma_physics.
 central_pressure_tensor / field_aligned_pressures). Gradients are taken in
-code lengths (d_e), periodic, so J is in code current-density units; the
-same formula (plasma_physics.diamagnetic_current_x) is used by
+code lengths (d_e), periodic, so J comes out in code current-density units
+(e n0 c) and is reported in units of n0 e v_A (J_code / VA_OVER_C), the
+natural scale of an ion-scale current sheet. The same formula
+(plasma_physics.diamagnetic_current_x) and normalisation are used by
 physical_diagnostics.py.
 """
 
@@ -52,6 +54,7 @@ from psc_units import (
     M_ION,
     MOMENT_FILE_PATTERN,
     PROFILE_LABEL,
+    VA_OVER_C,
     step_to_omegaci,
 )
 
@@ -227,7 +230,8 @@ class DiamagneticCurrentAnalyzer:
             pperp = np.nan_to_num(pperp, nan=float(np.nanmean(pperp)))
             currents[suffix] = diamagnetic_current_x(
                 smooth(pperp), smooth(by), smooth(bz), DX_DE, DX_DE)
-        jdia_i, jdia_e = currents["i"], currents["e"]
+        # Code units (e n0 c) -> n0 e v_A.
+        jdia_i, jdia_e = currents["i"] / VA_OVER_C, currents["e"] / VA_OVER_C
         jdia_total = jdia_i + jdia_e
         b2 = smooth(bx) ** 2 + smooth(by) ** 2 + smooth(bz) ** 2
 
@@ -257,9 +261,9 @@ class DiamagneticCurrentAnalyzer:
         vmax_tot = vmax_tot or np.percentile(np.abs(Jtot), 99.5)
 
         configs = [
-            (Ji, ps.CMAP_DIVERGING, vmax_i, r"$J^{(d)}_x$ ions", r"$J_d^{(\rm i)}$ [code units]", "ions"),
-            (Je, ps.CMAP_DIVERGING, vmax_e, r"$J^{(d)}_x$ electrons", r"$J_d^{(\rm e)}$ [code units]", "electrons"),
-            (Jtot, ps.CMAP_DIVERGING, vmax_tot, r"$J^{(d)}_x$ total", r"$J_d^{(\rm tot)}$ [code units]", "total"),
+            (Ji, ps.CMAP_DIVERGING, vmax_i, r"$J^{(d)}_x$ ions", r"$J_d^{(\rm i)}/(e\,n_0\,v_A)$", "ions"),
+            (Je, ps.CMAP_DIVERGING, vmax_e, r"$J^{(d)}_x$ electrons", r"$J_d^{(\rm e)}/(e\,n_0\,v_A)$", "electrons"),
+            (Jtot, ps.CMAP_DIVERGING, vmax_tot, r"$J^{(d)}_x$ total", r"$J_d^{(\rm tot)}/(e\,n_0\,v_A)$", "total"),
         ]
 
         for field, cmap, vm, title, lbl, slug in configs:
@@ -335,9 +339,9 @@ class DiamagneticCurrentAnalyzer:
         fig.patch.set_facecolor(DARK_BG)
 
         configs = [
-            (Ji,   ps.CMAP_DIVERGING, vmax_i,   r"$J^{(d)}_x$ ions",      r"$J_d^{(\rm i)}$ [code units]"),
-            (Je,   ps.CMAP_DIVERGING, vmax_e,   r"$J^{(d)}_x$ electrons", r"$J_d^{(\rm e)}$ [code units]"),
-            (Jtot, ps.CMAP_DIVERGING, vmax_tot, r"$J^{(d)}_x$ total",     r"$J_d^{(\rm tot)}$ [code units]"),
+            (Ji,   ps.CMAP_DIVERGING, vmax_i,   r"$J^{(d)}_x$ ions",      r"$J_d^{(\rm i)}/(e\,n_0\,v_A)$"),
+            (Je,   ps.CMAP_DIVERGING, vmax_e,   r"$J^{(d)}_x$ electrons", r"$J_d^{(\rm e)}/(e\,n_0\,v_A)$"),
+            (Jtot, ps.CMAP_DIVERGING, vmax_tot, r"$J^{(d)}_x$ total",     r"$J_d^{(\rm tot)}/(e\,n_0\,v_A)$"),
         ]
 
         for ax, (field, cmap, vm, title, lbl) in zip(axes, configs):

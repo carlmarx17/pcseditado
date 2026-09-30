@@ -40,7 +40,9 @@ Outputs (``--outdir``, normally ``06_heat_flux/``):
   heat_flux_blocks_<step>.csv per-block values at the mapped steps
   heat_flux_vs_time.png      <q_par/q0> and <|q_par|/q0> with error bands
   heat_flux_truncation.png   sensitivity of <|q_par|/q0> to s_max
-  heat_flux_map_<s>_<step>.png  q_par/q0 per block over the window
+  heat_flux_map_<s>_<step>.png  q_par/q0 per block over the window, at the
+                             reference truncation; blocks within 2 sigma of
+                             the symmetric null are hatched
 
 Usage:
     python heat_flux_analysis.py --data-dir RUN --outdir out/06_heat_flux
@@ -226,7 +228,7 @@ def integrated_flux_ratio(blocks):
 # ── Driver ───────────────────────────────────────────────────────────────────
 
 def analyse_step(step: int, prt_file: str, field_file: str | None, species: str,
-                 args, rng) -> tuple[dict, list[dict]] | None:
+                 args, rng) -> tuple[dict, list[dict], list[dict], float | None] | None:
     rng = sample_rng(prt_file, species, "heatflux")
     part = load_species(prt_file, species, args.max_particles, rng)
     if part is None:
@@ -271,7 +273,7 @@ def analyse_step(step: int, prt_file: str, field_file: str | None, species: str,
     row["null_model"] = "symmetric observed distribution, central-moment influence, asymptotic normal; truncated finite-moment estimate"
     row["null_status"] = "WARN_asymptotic_requires_calibration" if ref is not None else "UNVERIFIED_untruncated_tail_variance"
     row["error_reference_s_max"] = ref if ref is not None else float("nan")
-    return row, blocks
+    return row, blocks, reference_blocks, ref
 
 
 def plot_time(rows: list[dict], outdir: Path, s_ref: float | None):
@@ -333,26 +335,57 @@ def plot_truncation(rows: list[dict], s_values: list[float], outdir: Path):
     ps.save(fig, outdir / "heat_flux_truncation.png")
 
 
+#: A block's q_par is shown as a measurement only above this many standard
+#: errors of the symmetric null (heat_flux_moments' q_par_null_se).
+MAP_SIGNIFICANCE = 2.0
+
+
 def plot_block_map(blocks: list[dict], lo, hi, nblocks: int, species: str,
-                   step: int, outdir: Path):
+                   step: int, outdir: Path, s_max: float | None = None):
+    """q_par/q0 per block, with the blocks consistent with zero hatched.
+
+    ``blocks`` should be the truncated estimate (``s_max``): for kappa = 3 the
+    untruncated third moment has infinite sampling variance and a single block
+    with a few fast particles sets the whole colour scale.
+    """
     grid = np.full((nblocks, nblocks), np.nan)
+    noise = np.full((nblocks, nblocks), np.nan)
     for r in blocks:
         grid[r["jz"], r["jy"]] = r["q_par_over_q0"]
+        noise[r["jz"], r["jy"]] = r.get("q_par_null_se", np.nan)
     if not np.any(np.isfinite(grid)):
         return
     dx_di = DX_CODE / DI
     # grid is (block_z, block_y); transposed, z (along B0) runs horizontally.
     extent = [lo[2] * dx_di, hi[2] * dx_di, lo[1] * dx_di, hi[1] * dx_di]
-    lim = float(np.nanmax(np.abs(grid))) or 1.0
-    fig, ax = plt.subplots(figsize=(6.4, 5.4))
+    finite = np.abs(grid[np.isfinite(grid)])
+    # Robust scale: a lone outlier block must not wash out the others, but
+    # the scale never drops below the sampling noise either.
+    lim = max(float(np.percentile(finite, 95)) if finite.size else 0.0,
+              MAP_SIGNIFICANCE * float(np.nanmedian(noise)) if np.any(np.isfinite(noise)) else 0.0)
+    lim = lim or float(finite.max()) or 1.0
+    fig, ax = plt.subplots(figsize=(6.6, 5.6))
     im = ax.imshow(grid.T, origin="lower", extent=extent, cmap=ps.CMAP_DIVERGING,
-                   vmin=-lim, vmax=lim, aspect="equal")
-    cb = fig.colorbar(im, ax=ax, pad=0.02)
+                   vmin=-lim, vmax=lim, aspect="equal", interpolation="nearest")
+    weak = np.isfinite(grid) & np.isfinite(noise) & (np.abs(grid) < MAP_SIGNIFICANCE * noise)
+    zb = np.linspace(extent[0], extent[1], nblocks + 1)
+    yb = np.linspace(extent[2], extent[3], nblocks + 1)
+    for jz, jy in zip(*np.nonzero(weak)):
+        ax.add_patch(plt.Rectangle((zb[jz], yb[jy]), zb[jz + 1] - zb[jz], yb[jy + 1] - yb[jy],
+                                   fill=False, hatch="////", edgecolor=ps.MUTED_CLR,
+                                   linewidth=0.0, alpha=0.55))
     s = SPECIES_SYMBOL[species]
+    cb = fig.colorbar(im, ax=ax, pad=0.02, extend="both" if finite.max() > lim else "neither")
     cb.set_label(rf"$q_{{\parallel {s}}}/q_{{0{s}}}$")
     ps.spatial_axes(ax)
-    ax.set_title(rf"$q_{{\parallel {s}}}/q_0$ per block — $t\Omega_{{ci}}={step_to_omegaci(step):.1f}$",
-                 fontsize=12)
+    trunc = rf", $|\mathbf{{v}}-\mathbf{{U}}|\leq{s_max:g}\,(T/m)^{{1/2}}$" if s_max is not None else ""
+    ax.set_title(rf"$q_{{\parallel {s}}}/q_{{0{s}}}$ per block{trunc} — $t\Omega_{{ci}}={step_to_omegaci(step):.1f}$",
+                 fontsize=11.5)
+    # Below the x label (offset in points, so it never collides with it).
+    ax.annotate(rf"hatched: $|q_\parallel| < {MAP_SIGNIFICANCE:g}\,\sigma_{{\rm null}}$ "
+                f"(consistent with zero): {int(weak.sum())} of {int(np.isfinite(grid).sum())} blocks",
+                xy=(0.5, 0.0), xycoords="axes fraction", xytext=(0, -46), textcoords="offset points",
+                ha="center", va="top", fontsize=9, color=ps.MUTED_CLR)
     ps.save(fig, outdir / f"heat_flux_map_{s}_{step}.png")
 
 
@@ -406,13 +439,17 @@ def main() -> int:
             result = analyse_step(step, prt[step], fields.get(step), species, args, rng)
             if result is None:
                 continue
-            row, blocks = result
+            row, blocks, ref_blocks, ref = result
             rows.append(row)
             print(f"  step {step} {species}: <|q_par|>/q0 = {row['abs_q_par_over_q0']:.3g} "
                   f"({row['frame']})")
             if step in map_steps:
                 lo, hi = PICDataReader.read_prt_window(prt[step])
-                plot_block_map(blocks, lo, hi, args.macrocells, species, step, outdir)
+                plot_block_map(ref_blocks, lo, hi, args.macrocells, species, step, outdir, ref)
+                if ref is not None:   # untruncated columns plus the mapped (truncated) estimate
+                    blocks = [{**b, f"q_par_over_q0_smax{ref:g}": r["q_par_over_q0"],
+                               f"q_par_null_se_smax{ref:g}": r["q_par_null_se"]}
+                              for b, r in zip(blocks, ref_blocks)]
                 write_csv(outdir / f"heat_flux_blocks_{SPECIES_SYMBOL[species]}_{step}.csv", blocks)
     write_csv(outdir / "heat_flux_table.csv", rows)
     s_ref = args.s_max[len(args.s_max) // 2] if args.s_max else None

@@ -244,6 +244,12 @@ class FieldImagePlotter:
         if panels is None:
             return False
         for panel in panels:
+            # The initial field is uniform (B = B0 z-hat): a saved map of an
+            # identically zero fluctuation is an empty figure. The GIFs keep
+            # that frame, where it marks the start of the sequence.
+            if not np.nanmax(np.abs(panel['data'])) > 0:
+                print(f"  {panel['filename']}: identically zero (uniform initial field), not saved")
+                continue
             ps.save(self._make_figure(panel, step), self.outdir / panel['filename'])
         return True
 

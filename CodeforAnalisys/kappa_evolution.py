@@ -97,7 +97,11 @@ def read_case(path: Path) -> dict:
                     return float("nan")
             rows.append({
                 "t": f("omega_ci_t"),
-                "kappa": f("kappa_fit"),
+                # Maximum-likelihood kappa when the pipeline wrote it (inf =
+                # no measurable tail, drawn at the Maxwellian limit); the
+                # least-squares fit of older fit_metrics.csv otherwise.
+                "kappa": (f("kappa_mle") if r.get("kappa_mle") not in (None, "")
+                          else f("kappa_fit")),
                 "err_max": f("error_maxwellian"),
                 "err_kap": f("error_kappa"),
                 "err_max_tail": f("error_tail_maxwellian"),
@@ -128,7 +132,7 @@ def _arrays(case: dict):
     t = np.array([r["t"] for r in rows])
     kap = np.array([r["kappa"] for r in rows])
     inv = 1.0 / np.where(kap > 0, kap, np.nan)
-    censored = kap >= KAPPA_CEILING
+    censored = (kap >= KAPPA_CEILING) | np.isposinf(kap)
     # Tail errors are the discriminating ones; fall back to the full-range
     # errors when the tail was too sparse to score (NaN in the CSV).
     em = np.array([r["err_max_tail"] for r in rows])

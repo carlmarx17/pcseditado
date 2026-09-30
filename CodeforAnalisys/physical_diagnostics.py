@@ -45,11 +45,17 @@ from data_reader import PICDataReader
 from vdf_validation import predictive_check
 from analysis_contract import sample_rng, stable_rng, cylindrical_density, atomic_json, effective_sample_size
 from growth_fit import BRANCH_SERIES, fit_exponential_growth
+from matplotlib import patheffects
+from matplotlib.lines import Line2D
 from plasma_physics import (
+    bi_distribution_3d,
+    kappa_marginal_pdf,
+    kappa_mle,
     central_pressure_tensor,
     central_uv,
     diamagnetic_current_x,
     field_aligned_pressures,
+    reduced_distribution_2d,
     reference_threshold,
     velocity_from_u,
 )
@@ -73,6 +79,9 @@ from psc_units import (
     PROFILE_LABEL,
     PRT_OUTPUT_HI,
     PRT_OUTPUT_LO,
+    TE_PAR,
+    TE_PERP,
+    noise_settling_time as _noise_settling_time,
     TI_PAR,
     TI_PERP,
     VA,
@@ -782,11 +791,8 @@ NOISE_SETTLING_TRANSITS = 2.0
 
 
 def noise_settling_time(k_di: float) -> float:
-    """Omega_ci t before which a mode at |k| d_i is still settling to its noise level."""
-    if DRIVEN_SPECIES != "ion" or not k_di > 0:
-        return 0.0
-    vth_over_va = np.sqrt(BETA_I_PAR * max(1.0, TI_PERP / TI_PAR) / 2.0)
-    return NOISE_SETTLING_TRANSITS / (k_di * vth_over_va)
+    """Omega_ci t before which a mode at |k| d_i is still settling (psc_units.noise_settling_time)."""
+    return _noise_settling_time(k_di)
 
 
 def classify_mode(theta_kB_deg: float, compressibility: float) -> str:
@@ -1053,8 +1059,17 @@ def fit_distribution(snapshot: ParticleSnapshot, species: str = "ion") -> dict:
                   / max(np.sum(weights), 1e-30))
 
     predictive = predictive_check(vz, weights, stable_rng(PROFILE_LABEL, snapshot.step, species, "vdf-heldout"), _fit_density_models)
+    # Maximum-likelihood kappa with the variance fixed to the measured one
+    # (plasma_physics.kappa_mle): unbiased and with a bootstrap interval of
+    # the right coverage, unlike the least-squares fit of the binned density
+    # above, which weights the core and gave kappa ~ 2.2 on a kappa = 3
+    # loading of ~7000 particles. The figures and kappa_evolution use it.
+    mle = kappa_mle(centered / VA, weights,
+                    rng=stable_rng(PROFILE_LABEL, snapshot.step, species, "kappa-mle"))
     return {
         **predictive,
+        "kappa_mle": mle["kappa"], "kappa_mle_lo": mle["kappa_lo"], "kappa_mle_hi": mle["kappa_hi"],
+        "sigma_parallel_vA": mle["sigma"],
         "step": snapshot.step,
         "omega_ci_t": snapshot.time,
         "kappa_fit_stderr_conditional": kappa_stderr,
@@ -1077,6 +1092,7 @@ def fit_distribution(snapshot: ParticleSnapshot, species: str = "ion") -> dict:
         "v_reliable_over_sigma": v_reliable_over_sigma,
         "hist_x": centers,
         "hist_y": hist,
+        "hist_valid": valid,
         "fit_x": np.linspace(-vmax, vmax, 700),
         "maxwellian_params": tuple(float(v) for v in popt_m),
         "kappa_params": tuple(float(v) for v in popt_k),
@@ -1187,175 +1203,181 @@ def plot_time_series(rows: list[dict], outdir: Path):
     _savefig(fig, outdir / "temperature_parallel_perp_vs_time.png")
 
 
-def plot_vdf2d(
-    snapshot: ParticleSnapshot, outdir: Path, species: str = "ion", min_counts: int = 8,
-) -> Path | None:
-    """f(v_parallel, v_perp) as a log-density heatmap.
+#: Half-width of the VDF panels in units of the larger of the initial and the
+#: current thermal spread: the ions barely change, the electrons heat by ~3x in
+#: sigma, and a fixed window in v/v_A would either crop them or waste the panel.
+VDF_SIGMAS = 5.0
 
-    The (v_parallel, v_perp) domain is a rectangle sized from independent
-    percentiles of each axis, but the underlying population is closer to
-    isotropic/elliptical: the rectangle's corners (large |v_par| *and* large
-    v_perp at once) are almost empty, so with only a handful of raw particles
-    landing there the weighted density in those bins is dominated by shot
-    noise -- a speckled black/white "broken" patch instead of a smooth falloff.
-    Masking bins with too few raw (unweighted) particles removes that without
-    touching the physically populated core.
-    """
+
+def _species_sigma0(species: str) -> tuple[float, float]:
+    """(sigma_par, sigma_perp) of one velocity component at t = 0, in v_A (profile temperatures)."""
+    if species == "ion":
+        return float(np.sqrt(TI_PAR / M_ION) / VA), float(np.sqrt(TI_PERP / M_ION) / VA)
+    return float(np.sqrt(TE_PAR / M_ELEC) / VA), float(np.sqrt(TE_PERP / M_ELEC) / VA)
+
+
+def _species_velocities(snapshot: ParticleSnapshot, species: str):
+    """v_par (along B0), v_x, v_y in v_A, centred on the window-mean flow, and weights."""
     mask = _species_mask(snapshot, species)
     if not np.any(mask):
         return None
     vx, vy, vz, _ = velocity_from_u(snapshot.px[mask], snapshot.py[mask], snapshot.pz[mask])
-    weights = snapshot.w[mask]
-    vpar = (vz - _weighted_mean(vz, weights)) / VA
-    vx_centered = (vx - _weighted_mean(vx, weights)) / VA
-    vy_centered = (vy - _weighted_mean(vy, weights)) / VA
-    vperp = np.sqrt(vx_centered**2 + vy_centered**2)
-    par_abs = np.nanpercentile(np.abs(vpar), 99.7)
-    perp_hi = np.nanpercentile(vperp, 99.7)
-    if par_abs <= 0 or perp_hi <= 0:
-        return None
-    bins = (220, 150)
-    hist_range = ((-par_abs, par_abs), (0.0, perp_hi))
-    xedges = np.linspace(*hist_range[0], bins[0] + 1)
-    yedges = np.linspace(*hist_range[1], bins[1] + 1)
-    hist, metadata = cylindrical_density(vpar, vperp, weights, xedges, yedges)
-    atomic_json(outdir / f"vdf_2d_{species}_step_{snapshot.step}_metadata.json", metadata)
-    counts, _, _ = np.histogram2d(vpar, vperp, bins=bins, range=hist_range)
-    if gaussian_filter is not None:
-        counts = counts.astype(float)  # raw occupancy; no smoothing across unequal annular volumes
-    hist = np.where(counts >= min_counts, hist, np.nan)
+    w = snapshot.w[mask]
+    return tuple((a - _weighted_mean(a, w)) / VA for a in (vz, vx, vy)) + (w,)
 
-    finite_hist = hist[np.isfinite(hist) & (hist > 0)]
-    if finite_hist.size == 0:
+
+def _smoothed_log(f: np.ndarray, sigma_bins: float = 1.0) -> np.ndarray:
+    """log10 f smoothed over ~1 bin, for contour lines only (the colours stay raw)."""
+    logf = np.log10(np.where(np.isfinite(f) & (f > 0), f, np.nan))
+    if gaussian_filter is None:
+        return logf
+    filled = np.where(np.isfinite(logf), logf, np.nanmin(logf) - 1.0)
+    return np.where(np.isfinite(logf), gaussian_filter(filled, sigma_bins), np.nan)
+
+
+#: White line with a dark rim: readable on every colour of the map and, in the
+#: legend, on the white page (a plain white handle there is invisible).
+CONTOUR_OUTLINE = [patheffects.Stroke(linewidth=2.3, foreground="0.15"), patheffects.Normal()]
+
+
+def _vdf_contours(ax, x, y, f_data, f_model, peak, model_label):
+    """Data contours (solid) and initial-model contours (dashed) at 1e-1..1e-3 of the peak."""
+    levels = np.log10(peak) + np.array([-3.0, -2.0, -1.0])
+    data = ax.contour(x, y, _smoothed_log(f_data).T, levels=levels, colors="white", linewidths=0.9)
+    data.set_path_effects(CONTOUR_OUTLINE)
+    ax.contour(x, y, np.log10(np.maximum(f_model, 1e-300)).T, levels=levels,
+               colors=ps.c("#E69F00"), linewidths=1.2, linestyles="--")
+    return [Line2D([], [], color="white", lw=0.9, path_effects=CONTOUR_OUTLINE,
+                   label=r"PIC, $10^{-1,-2,-3}\times$ peak"),
+            Line2D([], [], color=ps.c("#E69F00"), lw=1.2, ls="--", label=model_label)]
+
+
+def _initial_model_label(species: str) -> str:
+    kind = rf"bi-$\kappa$ ($\kappa_0={KAPPA:g}$)" if KAPPA is not None else "bi-Maxwellian"
+    return f"initial {kind}, same levels"
+
+
+def plot_vdf2d(snapshot: ParticleSnapshot, outdir: Path, species: str = "ion",
+               min_counts: int = 8) -> Path | None:
+    """Gyrotropic f(v_par, v_perp) per d^3v, with the initial distribution for reference.
+
+    Why this layout: equal axis scales, so an isotropic distribution is a
+    circle and the anisotropy an ellipse whose relaxation is read directly;
+    a fixed window of VDF_SIGMAS thermal spreads, so frames of one run are
+    comparable; bins with fewer than ``min_counts`` particles masked (shot
+    noise); contours of the smoothed log f at 1e-1, 1e-2, 1e-3 of the peak,
+    and the analytic initial bi-Maxwellian / bi-kappa (profile temperatures,
+    plasma_physics.bi_distribution_3d) at the same levels, dashed. The
+    histogram is also written as .npz so the figure can be rebuilt without
+    the particle data.
+    """
+    vel = _species_velocities(snapshot, species)
+    if vel is None:
         return None
-    vmin = max(np.nanpercentile(finite_hist, 1.0), np.nanmax(finite_hist) * 1e-5)
-    vmax = np.nanmax(finite_hist)
-    fig, ax = plt.subplots(figsize=(6.8, 5.4))
-    fig.patch.set_facecolor(DARK_BG)
+    vpar, vx, vy, weights = vel
+    vperp = np.hypot(vx, vy)
+    s0_par, s0_perp = _species_sigma0(species)
+    s_par = float(np.sqrt(_weighted_var(vpar, weights)))
+    s_perp = float(np.sqrt(0.5 * (_weighted_var(vx, weights) + _weighted_var(vy, weights))))
+    half = VDF_SIGMAS * max(s0_par, s_par)
+    top = VDF_SIGMAS * max(s0_perp, s_perp)
+    xedges = np.linspace(-half, half, 101)
+    yedges = np.linspace(0.0, top, 51)
+    hist, metadata = cylindrical_density(vpar, vperp, weights, xedges, yedges)
+    counts, _, _ = np.histogram2d(vpar, vperp, bins=(xedges, yedges))
+    hist = np.where(counts >= min_counts, hist, np.nan)
+    metadata.update({"sigma_parallel_vA": s_par, "sigma_perp_vA": s_perp,
+                     "sigma0_parallel_vA": s0_par, "sigma0_perp_vA": s0_perp,
+                     "min_counts": min_counts})
+    atomic_json(outdir / f"vdf_2d_{species}_step_{snapshot.step}_metadata.json", metadata)
+    np.savez_compressed(outdir / f"vdf_2d_{species}_step_{snapshot.step}.npz",
+                        par_edges=xedges, perp_edges=yedges, f=hist, counts=counts,
+                        omega_ci_t=snapshot.time, sigma0=(s0_par, s0_perp),
+                        kappa0=np.nan if KAPPA is None else KAPPA)
+    finite = hist[np.isfinite(hist) & (hist > 0)]
+    if finite.size == 0:
+        return None
+    peak = float(finite.max())
+    xc, yc = 0.5 * (xedges[:-1] + xedges[1:]), 0.5 * (yedges[:-1] + yedges[1:])
+    model = bi_distribution_3d(*np.meshgrid(xc, yc, indexing="ij"), s0_par, s0_perp, KAPPA)
+
+    fig, ax = plt.subplots(figsize=(8.4, 4.9))
     _style_axes(ax)
-    cmap = plt.get_cmap("magma").copy()
+    cmap = plt.get_cmap(ps.CMAP_SEQUENTIAL).copy()
     cmap.set_bad(PANEL_BG)
-    pcm = ax.pcolormesh(
-        xedges, yedges, hist.T, cmap=cmap,
-        norm=LogNorm(vmin=vmin, vmax=vmax),
-        shading="auto",
-    )
-    levels = vmax * np.array([1e-4, 1e-3, 1e-2, 1e-1])
-    levels = levels[(levels > vmin) & (levels < vmax)]
-    if levels.size:
-        ax.contour(
-            0.5 * (xedges[:-1] + xedges[1:]),
-            0.5 * (yedges[:-1] + yedges[1:]),
-            hist.T,
-            levels=levels,
-            colors=TEXT_CLR,
-            linewidths=0.65,
-            alpha=0.6,
-        )
-    cb = fig.colorbar(pcm, ax=ax, pad=0.02)
-    cb.set_label(r"$f(v_\parallel,v_\perp)$ [probability / $(v/v_A)^3$]", fontsize=13, color=TEXT_CLR)
-    cb.ax.tick_params(which="both", direction="in", labelsize=12, colors=TEXT_CLR)
-    plt.setp(plt.getp(cb.ax, "yticklabels"), color=TEXT_CLR)
-    ax.axvline(0.0, color=TEXT_CLR, lw=0.8, ls=":", alpha=0.6)
-    # v_perp starts at 0 in the corner where the first v_par label sits.
-    from matplotlib.ticker import MaxNLocator
-    ax.xaxis.set_major_locator(MaxNLocator(nbins=7, prune="lower"))
-    ax.set_xlabel(r"$(v_\parallel-\langle v_\parallel\rangle)/v_A$", fontsize=14, color=TEXT_CLR)
-    ax.set_ylabel(r"$v_\perp/v_A$", fontsize=14, color=TEXT_CLR)
-    ax.set_title(
-        rf"{species.capitalize()} VDF, step {snapshot.step}, $t\Omega_{{ci}}={snapshot.time:.2f}$",
-        fontsize=14, fontweight="bold", color=TEXT_CLR,
-    )
+    pcm = ax.pcolormesh(xedges, yedges, hist.T, cmap=cmap, shading="flat", rasterized=True,
+                        norm=LogNorm(vmin=peak * 1e-4, vmax=peak))
+    handles = _vdf_contours(ax, xc, yc, hist, model, peak, _initial_model_label(species))
+    ax.set_aspect("equal")
+    ax.set_xlim(-half, half)
+    ax.set_ylim(0.0, top)
+    ps.drop_corner_tick(ax, "x")   # the first v_par label sits on the v_perp = 0 one
+    cb = fig.colorbar(pcm, ax=ax, pad=0.02, shrink=0.9)
+    cb.set_label(r"$f(v_\parallel, v_\perp)\;[v_A^{-3}]$", color=TEXT_CLR)
+    ax.set_xlabel(r"$(v_\parallel-\langle v_\parallel\rangle)/v_A$", color=TEXT_CLR)
+    ax.set_ylabel(r"$v_\perp/v_A$", color=TEXT_CLR)
+    ax.set_title(rf"{species.capitalize()} $f(v_\parallel, v_\perp)$ — $t\,\Omega_{{ci}} = {snapshot.time:.1f}$",
+                 color=TEXT_CLR, fontweight="bold")
+    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.45, -0.04), ncol=2,
+               frameon=False, fontsize=10)
     path = outdir / f"vdf_2d_{species}_step_{snapshot.step}.png"
     _savefig(fig, path)
     return path
 
 
-def plot_vdf3d(
-    snapshot: ParticleSnapshot, outdir: Path, species: str = "ion", max_points: int = 35_000,
-) -> Path | None:
-    """3D velocity-space scatter of f(vx, vy, vz), points colored by local
-    phase-space density (from a coarse 3D histogram) rather than a flat
-    color, and density-weighted subsampling so the plotted cloud still reads
-    as a distribution instead of a diffuse haze of equally-likely points."""
-    mask = _species_mask(snapshot, species)
-    if not np.any(mask):
+def plot_vdf_planes(snapshot: ParticleSnapshot, outdir: Path, species: str = "ion",
+                    min_counts: int = 8) -> Path | None:
+    """Reduced distributions in the three velocity planes, replacing a 3-D scatter.
+
+    Why: a 3-D point cloud shows a blob and no number can be read from it. The
+    three planes (v_par, v_x), (v_par, v_y) and (v_x, v_y), each integrated
+    over the third component (per dv dv), show the anisotropy twice and the
+    gyrotropy in the (v_x, v_y) plane, which must be circular about B0. The
+    initial model's reduced distribution (plasma_physics.reduced_distribution_2d)
+    is dashed at the same levels.
+    """
+    vel = _species_velocities(snapshot, species)
+    if vel is None:
         return None
-    vx, vy, vz, _ = velocity_from_u(snapshot.px[mask], snapshot.py[mask], snapshot.pz[mask])
-    weights = snapshot.w[mask]
-    vx = (vx - _weighted_mean(vx, weights)) / VA
-    vy = (vy - _weighted_mean(vy, weights)) / VA
-    vz = (vz - _weighted_mean(vz, weights)) / VA
-
-    speed = np.sqrt(vx**2 + vy**2 + vz**2)
-    v_lim = np.nanpercentile(speed, 99.0)
-    if not np.isfinite(v_lim) or v_lim <= 0:
-        return None
-    keep = speed <= v_lim
-    vx, vy, vz, weights = vx[keep], vy[keep], vz[keep], weights[keep]
-    if vx.size < 50:
-        return None
-
-    nbins = 36
-    edges = np.linspace(-v_lim, v_lim, nbins + 1)
-    density3d, _ = np.histogramdd((vz, vx, vy), bins=(edges, edges, edges), weights=weights)
-    if gaussian_filter is not None:
-        density3d = gaussian_filter(density3d.astype(float), sigma=1.0)
-
-    iz = np.clip(np.digitize(vz, edges) - 1, 0, nbins - 1)
-    ix = np.clip(np.digitize(vx, edges) - 1, 0, nbins - 1)
-    iy = np.clip(np.digitize(vy, edges) - 1, 0, nbins - 1)
-    point_density = density3d[iz, ix, iy]
-    valid = point_density > 0
-    if np.count_nonzero(valid) < 50:
-        return None
-    vx, vy, vz, point_density = vx[valid], vy[valid], vz[valid], point_density[valid]
-
-    if vx.size > max_points:
-        prob = point_density / point_density.sum()
-        idx = stable_rng(PROFILE_LABEL, snapshot.step, species, "vdf3d-display").choice(vx.size, size=max_points, replace=False, p=prob)
-        vx, vy, vz, point_density = vx[idx], vy[idx], vz[idx], point_density[idx]
-
-    order = np.argsort(point_density)  # draw the densest points last (on top)
-    vx, vy, vz, point_density = vx[order], vy[order], vz[order], point_density[order]
-    log_density = np.log10(point_density)
-
-    fig = plt.figure(figsize=(7.6, 6.8))
-    fig.patch.set_facecolor(DARK_BG)
-    ax = fig.add_subplot(111, projection="3d")
-    ax.set_facecolor(DARK_BG)
-    sc = ax.scatter(
-        vz, vx, vy, c=log_density, cmap="magma", s=4, alpha=0.55,
-        linewidths=0, depthshade=True,
-    )
-    ax.set_box_aspect((1, 1, 1))
-    ax.set_xlim(-v_lim, v_lim)
-    ax.set_ylim(-v_lim, v_lim)
-    ax.set_zlim(-v_lim, v_lim)
-    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
-        axis.set_major_locator(plt.MaxNLocator(5))  # dense ticks overlap badly at this view angle
-    ax.set_xlabel(r"$v_\parallel/v_A$", color=TEXT_CLR, labelpad=14)
-    ax.set_ylabel(r"$v_{x,\perp}/v_A$", color=TEXT_CLR, labelpad=14)
-    ax.set_zlabel(r"$v_{y,\perp}/v_A$", color=TEXT_CLR, labelpad=10)
-    ax.tick_params(colors=TEXT_CLR, labelsize=10, pad=2)
-    ax.view_init(elev=18, azim=-55)
-    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
-        axis.pane.set_facecolor(PANEL_BG)
-        axis.pane.set_alpha(0.6)
-        axis._axinfo["grid"]["color"] = GRID_CLR
-        axis._axinfo["grid"]["linewidth"] = 0.5
-    ax.set_title(
-        rf"{species.capitalize()} 3D VDF, step {snapshot.step}, $t\Omega_{{ci}}={snapshot.time:.2f}$",
-        color=TEXT_CLR, fontweight="bold", pad=14,
-    )
-    cb = fig.colorbar(sc, ax=ax, shrink=0.65, pad=0.1)
-    cb.set_label(r"$\log_{10} f(v_x,v_y,v_z)$ [PDF]", color=TEXT_CLR)
-    cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
-    plt.setp(plt.getp(cb.ax, "yticklabels"), color=TEXT_CLR)
-    path = outdir / f"vdf_3d_{species}_step_{snapshot.step}.png"
-    # mplot3d's tight-bbox calculation doesn't account for the rotated 3D axis
-    # labels, so the default pad_inches clips the x-label off the bottom edge.
-    _savefig(fig, path, pad_inches=0.4)
+    vpar, vx, vy, w = vel
+    s0_par, s0_perp = _species_sigma0(species)
+    half_par = VDF_SIGMAS * max(s0_par, float(np.sqrt(_weighted_var(vpar, w))))
+    half_perp = VDF_SIGMAS * max(s0_perp, float(np.sqrt(0.5 * (_weighted_var(vx, w) + _weighted_var(vy, w)))))
+    e_par = np.linspace(-half_par, half_par, 81)
+    e_perp = np.linspace(-half_perp, half_perp, 81)
+    planes = [(vpar, vx, r"$v_\parallel/v_A$", r"$v_x/v_A$", (s0_par, s0_perp), (e_par, e_perp)),
+              (vpar, vy, r"$v_\parallel/v_A$", r"$v_y/v_A$", (s0_par, s0_perp), (e_par, e_perp)),
+              (vx, vy, r"$v_x/v_A$", r"$v_y/v_A$", (s0_perp, s0_perp), (e_perp, e_perp))]
+    hists = []
+    for a, b, _, _, _, (ea, eb) in planes:
+        area = np.diff(ea)[0] * np.diff(eb)[0]
+        h, _, _ = np.histogram2d(a, b, bins=(ea, eb), weights=w)
+        c, _, _ = np.histogram2d(a, b, bins=(ea, eb))
+        hists.append(np.where(c >= min_counts, h / (w.sum() * area), np.nan))
+    peak = max(float(np.nanmax(h)) for h in hists if np.any(np.isfinite(h)))
+    fig, axes = plt.subplots(1, 3, figsize=(14.5, 4.9), gridspec_kw={"wspace": 0.28})
+    cmap = plt.get_cmap(ps.CMAP_SEQUENTIAL).copy()
+    cmap.set_bad(PANEL_BG)
+    handles = []
+    for ax, h, (_, _, xlabel, ylabel, sig, (ea, eb)) in zip(axes, hists, planes):
+        _style_axes(ax)
+        pcm = ax.pcolormesh(ea, eb, h.T, cmap=cmap, shading="flat", rasterized=True,
+                            norm=LogNorm(vmin=peak * 1e-4, vmax=peak))
+        ca, cb_ = 0.5 * (ea[:-1] + ea[1:]), 0.5 * (eb[:-1] + eb[1:])
+        model = reduced_distribution_2d(*np.meshgrid(ca, cb_, indexing="ij"), sig[0], sig[1], KAPPA)
+        handles = _vdf_contours(ax, ca, cb_, h, model, peak, _initial_model_label(species))
+        ax.set_aspect("equal")
+        ax.set_xlabel(xlabel, color=TEXT_CLR)
+        ax.set_ylabel(ylabel, color=TEXT_CLR)
+    axes[2].set_title(r"gyrotropic $\Leftrightarrow$ circular", color=ps.MUTED_CLR, fontsize=11)
+    cb = fig.colorbar(pcm, ax=axes, pad=0.015, fraction=0.025)
+    cb.set_label(r"reduced $f\;[v_A^{-2}]$", color=TEXT_CLR)
+    fig.suptitle(rf"{species.capitalize()} reduced velocity distributions — $t\,\Omega_{{ci}} = {snapshot.time:.1f}$",
+                 color=TEXT_CLR, fontweight="bold", y=1.02)
+    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.45, -0.04), ncol=2,
+               frameon=False, fontsize=10)
+    path = outdir / f"vdf_planes_{species}_step_{snapshot.step}.png"
+    _savefig(fig, path)
     return path
 
 
@@ -1367,36 +1389,41 @@ def plot_fit_metrics(rows: list[dict], outdir: Path):
     supra = np.array([r["suprathermal_fraction"] for r in rows], dtype=float)
 
     # 1/kappa, so the Maxwellian limit is 0 instead of an arbitrary large
-    # number; fits pinned at the upper bound are drawn open and labelled.
-    at_bound = kfit >= 0.99 * KAPPA_FIT_MAX
-    inv = np.where(at_bound, 0.0, 1.0 / kfit)
+    # number. Maximum-likelihood kappa (fit_distribution) with its bootstrap
+    # 68 % interval; kappa = inf (no measurable tail) sits at 0 as an open marker.
+    kml = np.array([r.get("kappa_mle", np.nan) for r in rows], dtype=float)
+    klo = np.array([r.get("kappa_mle_lo", np.nan) for r in rows], dtype=float)
+    khi = np.array([r.get("kappa_mle_hi", np.nan) for r in rows], dtype=float)
+    with np.errstate(divide="ignore"):
+        inv, inv_up, inv_dn = 1.0 / kml, 1.0 / klo, 1.0 / khi
+    maxw = ~np.isfinite(kml) & ~np.isnan(kml)
+    fitted = np.isfinite(kml)
     fig, ax = plt.subplots(figsize=(8.5, 5))
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
-    # Conditional fit error propagated to 1/kappa: sigma(1/k) = sigma_k / k^2.
-    err = np.array([r.get("kappa_fit_stderr_conditional", np.nan) for r in rows], dtype=float)
-    inv_err = np.where(at_bound | ~np.isfinite(err), np.nan, err / kfit ** 2)
-    ax.plot(t, inv, color=ps.c("#d2a8ff"), lw=1.2, alpha=0.6)
-    ax.errorbar(t[~at_bound], inv[~at_bound], yerr=inv_err[~at_bound], fmt="o", capsize=3,
-                color=ps.c("#d2a8ff"), label=r"fitted ($\pm 1\sigma$, conditional)")
-    if at_bound.any():
-        ax.plot(t[at_bound], inv[at_bound], "o", mfc="none", color=ps.c("#d2a8ff"),
-                label=rf"at fit bound $\kappa={KAPPA_FIT_MAX:g}$: Maxwellian-consistent")
+    ax.plot(t, np.where(maxw, 0.0, inv), color=ps.c("#d2a8ff"), lw=1.0, alpha=0.5)
+    ax.errorbar(t[fitted], inv[fitted],
+                yerr=[np.clip(inv[fitted] - inv_dn[fitted], 0, None), np.clip(inv_up[fitted] - inv[fitted], 0, None)],
+                fmt="o", ms=4, capsize=2, color=ps.c("#d2a8ff"),
+                label=r"maximum likelihood, 68 % bootstrap interval")
+    if maxw.any():
+        ax.plot(t[maxw], np.zeros(maxw.sum()), "o", mfc="none", color=ps.c("#d2a8ff"),
+                label="no measurable tail (Maxwellian-consistent)")
     if KAPPA:
         ax.axhline(1.0 / KAPPA, color=ps.c("#f2cc60"), alpha=0.8, linestyle="--",
                    label=rf"initial $\kappa_0={KAPPA:g}$")
     ax.axhline(0.0, color=ps.MUTED_CLR, lw=0.8)
     ax.set_ylim(bottom=-0.02)
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
-    ax.set_ylabel(r"$1/\kappa_{\rm fit}$  (0 = Maxwellian)", color=TEXT_CLR)
-    ax.set_title("Fitted kappa index of the window VDF", color=TEXT_CLR, fontweight="bold", pad=24)
-    # u_par is taken along the global B0: once the waves tilt the local field
+    ax.set_ylabel(r"$1/\kappa$  (0 = Maxwellian)", color=TEXT_CLR)
+    ax.set_title("Kappa index of the parallel ion VDF", color=TEXT_CLR, fontweight="bold", pad=24)
+    # v_par is taken along the global B0: once the waves tilt the local field
     # (dB/B0 ~ 0.2) and scatter resonant ions, this fit reads the distortion
     # as a tail. The local-field kappa_eff (vdf_spatial.py) is the tail measure.
-    ax.text(0.5, 1.005, r"$u_\parallel$ along the global $B_0$; not a tail measure once "
+    ax.text(0.5, 1.005, r"$v_\parallel$ along the global $B_0$; not a tail measure once "
             r"$\delta B/B_0\gtrsim0.1$ (use the local-field $\kappa_{\rm eff}$)",
             transform=ax.transAxes, ha="center", va="bottom", fontsize=9, color=ps.MUTED_CLR)
-    ps.legend(ax, loc="best", fontsize=10)
+    ps.legend(ax, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2, fontsize=10, frameon=False)
     _savefig(fig, outdir / "kappa_fit_vs_time.png")
 
     fig, ax = plt.subplots(figsize=(8.5, 5))
@@ -1410,25 +1437,65 @@ def plot_fit_metrics(rows: list[dict], outdir: Path):
 
 
 def plot_distribution_fit(fit: dict, outdir: Path):
+    """Parallel ion f(v) against the Maxwellian and the maximum-likelihood kappa.
+
+    Both models carry the variance measured at that time (the same definition
+    as plot_prt.py's kappa_comparison figures, plasma_physics.kappa_marginal_pdf),
+    in v/v_A with the density per v_A; the vertical range is set by the data
+    (a Gaussian drawn to the fit edge used to reach 1e-10 and squeeze the
+    data into a third of the panel), and the ratio to the Maxwellian below
+    shows a tail as a rise at large |v|. Global B0 frame (see kappa_fit_vs_time).
+    """
     if not fit:
         return
-    x = fit["fit_x"]
-    fig, ax = plt.subplots(figsize=(8.5, 5.5))
-    fig.patch.set_facecolor(DARK_BG)
-    _style_axes(ax)
-    ax.step(fit["hist_x"], fit["hist_y"], where="mid", color=ps.c("#ff7b72"), lw=1.4, label="simulation")
-    ax.plot(x, maxwellian_pdf(x, *fit["maxwellian_params"]), "--", color=ps.c("#58a6ff"), lw=2.0,
-            label="Maxwellian fit")
-    ax.plot(x, kappa_pdf_shape(x, *fit["kappa_params"]), "-", color=ps.c("#d2a8ff"), lw=2.0,
-            label=(rf"Kappa fit at its bound $\kappa={KAPPA_FIT_MAX:g}$ (Maxwellian-consistent)"
-                   if fit["kappa_fit"] >= 0.99 * KAPPA_FIT_MAX else rf"Kappa fit, $\kappa={fit['kappa_fit']:.2f}$"))
-    ax.set_yscale("log")
-    ax.set_xlabel(r"$u_\parallel-\langle u_\parallel\rangle$", color=TEXT_CLR)
-    ax.set_ylabel("PDF", color=TEXT_CLR)
-    ax.set_title(rf"Kappa vs Maxwellian — $t\Omega_{{ci}} = {step_to_omegaci(fit['step']):.1f}$",
-                 color=TEXT_CLR, fontweight="bold")
-    # Under the axes: the curves span the whole panel, tails included.
-    ps.legend(ax, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2, fontsize=10, frameon=False)
+    hx = np.asarray(fit["hist_x"], dtype=float) / VA
+    hy = np.asarray(fit["hist_y"], dtype=float) * VA
+    # Bins with too few particles (MIN_BIN_COUNTS, the fit's own cut) are shot
+    # noise: a flat floor of single-particle bins at large |v|.
+    ok = np.isfinite(hy) & (hy > 0) & np.asarray(fit.get("hist_valid", np.ones_like(hy, bool)), bool)
+    if not ok.any() or not np.isfinite(fit.get("sigma_parallel_vA", np.nan)):
+        return
+    sigma = float(fit["sigma_parallel_vA"])
+    kappa = fit.get("kappa_mle", np.nan)
+    resolved = np.isfinite(kappa) and kappa <= 50.0
+    reach = float(np.max(np.abs(hx[ok])))
+    x = np.linspace(-1.06 * reach, 1.06 * reach, 600)
+    f_m = kappa_marginal_pdf(x, sigma, None)
+    fig, (top, bottom) = plt.subplots(2, 1, figsize=(8.4, 6.6), sharex=True,
+                                      gridspec_kw={"height_ratios": [2.3, 1.0], "hspace": 0.06})
+    for ax in (top, bottom):
+        _style_axes(ax)
+    top.plot(hx[ok], hy[ok], "o", ms=3.2, color=ps.c("#ff7b72"), label="PIC")
+    top.plot(x, f_m, "--", color=ps.c("#58a6ff"), lw=1.8, label=r"Maxwellian (measured $\sigma$)")
+    bottom.plot(hx[ok], hy[ok] / kappa_marginal_pdf(hx[ok], sigma, None), "o", ms=3.2,
+                color=ps.c("#ff7b72"))
+    if resolved:
+        lo, hi = fit.get("kappa_mle_lo", np.nan), fit.get("kappa_mle_hi", np.nan)
+        up = rf"^{{+{hi - kappa:.2f}}}" if np.isfinite(hi) else r"^{+\infty}"
+        f_k = kappa_marginal_pdf(x, sigma, kappa)
+        top.plot(x, f_k, "-", color=ps.c("#56d364"), lw=1.8,
+                 label=rf"$\kappa$ maximum likelihood $= {kappa:.2f}{up}_{{-{kappa - lo:.2f}}}$")
+        bottom.plot(x, f_k / f_m, "-", color=ps.c("#56d364"), lw=1.8)
+    else:
+        top.plot([], [], "-", color=ps.c("#56d364"), label=r"$\kappa$ maximum likelihood: no measurable tail")
+    if KAPPA is not None:
+        f_0 = kappa_marginal_pdf(x, sigma, KAPPA)
+        top.plot(x, f_0, ":", color=ps.MUTED_CLR, lw=1.6, label=rf"$\kappa_0 = {KAPPA:g}$ (measured $\sigma$)")
+        bottom.plot(x, f_0 / f_m, ":", color=ps.MUTED_CLR, lw=1.6)
+    top.set_yscale("log")
+    top.set_ylim(0.4 * float(np.min(hy[ok])), 2.0 * float(np.max(hy[ok])))
+    top.set_ylabel(r"$f(v_\parallel)\,v_A$", color=TEXT_CLR)
+    bottom.axhline(1.0, color=ps.MUTED_CLR, lw=0.8)
+    bottom.set_yscale("log")
+    bottom.set_ylim(0.1, 30.0)
+    bottom.set_ylabel("PIC / Maxwellian", color=TEXT_CLR)
+    bottom.set_xlabel(r"$(v_\parallel-\langle v_\parallel\rangle)/v_A$", color=TEXT_CLR)
+    bottom.set_xlim(x[0], x[-1])
+    ps.drop_corner_tick(bottom, "x")
+    top.set_title(rf"Parallel ion velocity distribution — $t\,\Omega_{{ci}} = {step_to_omegaci(fit['step']):.1f}$",
+                  color=TEXT_CLR, fontweight="bold")
+    fig.legend(*top.get_legend_handles_labels(), loc="upper center", bbox_to_anchor=(0.5, 0.02),
+               ncol=2, frameon=False, fontsize=10)
     _savefig(fig, outdir / f"kappa_vs_maxwellian_step_{fit['step']}.png")
 
 
@@ -1667,7 +1734,11 @@ def plot_growth(growth: dict, outdir: Path):
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
     series = growth.get("series_label", r"|\delta\mathbf{B}|_{\rm rms}")
-    shown = ps.measured_fluctuation(growth["time"])
+    # Not drawn: t = 0 (uniform field) and the quiet-start noise build-up
+    # before t_display_min (psc_units.noise_settling_time), which the fit
+    # also excludes; on a log axis they are a spike that hides the growth.
+    t_min = float(growth.get("t_display_min", 0.0))
+    shown = ps.measured_fluctuation(growth["time"]) & (np.asarray(growth["time"]) >= t_min)
     ax.plot(np.asarray(growth["time"])[shown], np.asarray(growth["ln_delta_b"])[shown],
             color=ps.c("#58a6ff"), label=rf"$\ln {series}$", **_series_style(int(shown.sum())))
     err = growth.get("gamma_err", float("nan"))
@@ -1680,6 +1751,9 @@ def plot_growth(growth: dict, outdir: Path):
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
     ax.set_ylabel(rf"$\ln {series}$", color=TEXT_CLR)
     ax.set_title(growth.get("title", "Linear growth-rate fit"), color=TEXT_CLR, fontweight="bold")
+    if t_min > 0:
+        ax.text(0.99, 0.03, rf"quiet-start noise build-up ($t\,\Omega_{{ci}}<{t_min:.1f}$) not shown",
+                transform=ax.transAxes, ha="right", va="bottom", fontsize=9, color=ps.MUTED_CLR)
     # Below the axes: a fit that is not valid spans the whole panel.
     ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR,
               loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2, frameon=False)
@@ -1883,15 +1957,15 @@ def _process_particle_step_worker(args):
                 row.update({f"{key}_{suffix}": value for key, value in
                             particle_kinematics_validity(snap, species).items()})
 
-        # Both species, both a 2D reduced (v_par,v_perp) heatmap and a true 3D
-        # (vx,vy,vz) scatter -- but only on the steps selected for the VDF
+        # Both species: the gyrotropic (v_par, v_perp) distribution and the
+        # three reduced planes -- only on the steps selected for the VDF
         # cadence; every other selected step still contributes its row above.
         vdf_paths = []
         if want_vdf:
             vdf_paths = [
                 path
                 for species in ("ion", "electron")
-                for path in (plot_vdf2d(snap, outdir, species), plot_vdf3d(snap, outdir, species))
+                for path in (plot_vdf2d(snap, outdir, species), plot_vdf_planes(snap, outdir, species))
                 if path is not None
             ]
         fit = fit_distribution(snap, "ion")
@@ -2102,7 +2176,7 @@ class PhysicalDiagnostics:
         rows = []
         fit_rows = []
         vdf_paths = []
-        first_fit = None
+        first_fit = last_fit = None
 
         tasks = [
             (step, self.particle_files[step], self.max_particles, self.outdir, step in vdf_steps)
@@ -2119,10 +2193,12 @@ class PhysicalDiagnostics:
             if fit:
                 if first_fit is None:
                     first_fit = fit
+                last_fit = fit
                 fit_rows.append({
                     **{key: value for key, value in fit.items() if key.startswith("heldout_") or key == "mixture_ambiguity"},
                     **{key: fit[key] for key in [
-                        "step", "omega_ci_t", "kappa_fit", "maxwellian_sigma",
+                        "step", "omega_ci_t", "kappa_fit", "kappa_mle", "kappa_mle_lo", "kappa_mle_hi",
+                        "sigma_parallel_vA", "maxwellian_sigma",
                         "kappa_sigma", "error_maxwellian", "error_kappa",
                         "error_tail_maxwellian", "error_tail_kappa",
                         "suprathermal_fraction",
@@ -2143,6 +2219,8 @@ class PhysicalDiagnostics:
         plot_time_series(rows, self.outdir)
         plot_fit_metrics(fit_rows, self.outdir)
         plot_distribution_fit(first_fit, self.outdir)
+        if last_fit is not None and last_fit is not first_fit:
+            plot_distribution_fit(last_fit, self.outdir)
         return rows
 
     def write_validation_summary(self, rows: list[dict]):
@@ -2240,7 +2318,10 @@ class PhysicalDiagnostics:
                 continue
             if shared:
                 growth["window_source"] = "dominant-mode"
-            growth.update(series_label=label, figure_name=figure)
+            # The domain rms carries every k; its slowest-settling part is the
+            # box fundamental.
+            growth.update(series_label=label, figure_name=figure,
+                          t_display_min=noise_settling_time(2.0 * np.pi / max(DOMAIN_DI_Y, DOMAIN_DI_Z)))
             plot_growth(growth, self.outdir)
             summary_rows.append({"series": series, "amplitude": column,
                                  **{key: growth[key] for key in fit_keys}})
@@ -2390,7 +2471,7 @@ class PhysicalDiagnostics:
                                 f"compressibility={row['compressibility']:.2g}"),
                 series_label=(rf"|\delta\hat{{\mathbf{{B}}}}(k_\parallel d_i={kpar:.2f},"
                               rf"\,k_\perp d_i={kperp:.2f})|"),
-                figure_name=figure, title=title,
+                figure_name=figure, title=title, t_display_min=noise_settling_time(mode["k_di"]),
             )
             plot_growth(fit, self.outdir)
             return fit
@@ -2501,16 +2582,16 @@ class PhysicalDiagnostics:
                 # In units of n0 e v_A (n0 = e = 1 in code units).
                 plot_map(jdia[key] / VA, self.outdir / f"{key}_map_step_{step}.png",
                          rf"${label}$ — $t\Omega_{{ci}} = {toci:.1f}$",
-                         rf"${label}/(n_0 e v_A)$", cmap=ps.CMAP_DIVERGING, symmetric=True)
+                         rf"${label}/(e\,n_0\,v_A)$", cmap=ps.CMAP_DIVERGING, symmetric=True)
             scatter["deltaB"].append((toci, maps["A"], PICDataReader.flatten_2d_slice(fmet["delta_B_over_B0"])))
             scatter["B"].append((toci, maps["A"], PICDataReader.flatten_2d_slice(fmet["B_magnitude"]) / abs(B0)))
-            scatter["Jdia"].append((toci, maps["A"], jdia["J_dia_total"]))
+            scatter["Jdia"].append((toci, maps["A"], jdia["J_dia_total"] / VA))
         plot_scatter_series(scatter["deltaB"], self.outdir / f"A_{s}_vs_deltaB_scatter.png", rf"$A_{s}$",
                             r"$(|B|-B_0)/B_0$", "Anisotropy vs local field change")
         plot_scatter_series(scatter["B"], self.outdir / f"A_{s}_vs_B_scatter.png", rf"$A_{s}$",
                             r"$|B|/B_0$", "Anisotropy vs local field strength")
         plot_scatter_series(scatter["Jdia"], self.outdir / f"A_{s}_vs_Jdia_scatter.png", rf"$A_{s}$",
-                            r"$J_{{\rm dia},x}$ [code units]", "Anisotropy vs diamagnetic current")
+                            r"$J_{{\rm dia},x}/(e\,n_0\,v_A)$", "Anisotropy vs diamagnetic current")
 
         _write_csv(self.outdir / "anisotropy_spatial_stats.csv", rows)
         _write_csv(self.outdir / "spatial_correlations.csv", corr_rows)
@@ -2683,7 +2764,7 @@ class PhysicalDiagnostics:
                            rf"($R^2$={heating['r_squared']:.3f})"))
         ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
         ax.set_ylabel(r"energy / $E_{\rm proxy}(0)$", color=TEXT_CLR)
-        ax.set_title("Partial energy proxy", color=TEXT_CLR, fontweight="bold")
+        ax.set_title("Partial energy proxy (not a conserved total)", color=TEXT_CLR, fontweight="bold")
         ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR,
                   fontsize=11, loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=3,
                   frameon=False)
@@ -2697,8 +2778,12 @@ class PhysicalDiagnostics:
             ax.plot(t, err, color=ps.c("#d2a8ff"), **_series_style(len(t)))
             ax.axhline(0, color=TEXT_CLR, alpha=0.35, linestyle=":")
             ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
-            ax.set_ylabel(r"$(E(t)-E(0))/E(0)$", color=TEXT_CLR)
-            ax.set_title("Relative change of partial energy proxy", color=TEXT_CLR, fontweight="bold")
+            ax.set_ylabel(r"$[E_{\rm proxy}(t)-E_{\rm proxy}(0)]/E_{\rm proxy}(0)$", color=TEXT_CLR)
+            ax.set_title("Relative change of the partial energy proxy", color=TEXT_CLR, fontweight="bold")
+            ax.text(0.01, 0.98, "prt-window thermal + bulk energy and domain " r"$\delta B^2/2$" "; no electric "
+                    "or electron bulk energy.\nNot a conservation diagnostic: the global budget is "
+                    "energy_exchange / energy_audit.",
+                    transform=ax.transAxes, va="top", fontsize=9, color=ps.MUTED_CLR)
             _savefig(fig, self.outdir / "energy_proxy_relative_change.png")
 
 
