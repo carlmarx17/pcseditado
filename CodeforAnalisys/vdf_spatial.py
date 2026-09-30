@@ -1061,7 +1061,26 @@ def summary_rows(groups: dict, mac: dict, step: int) -> list[dict]:
 
 # ── Kappa at every particle snapshot (no figures) ────────────────────────────
 
-def kappa_time_series(series: dict, fields: dict, lo, hi, args) -> tuple[list[dict], list[dict]]:
+#: Bins of the standardised velocity u = (v - <v>)/sigma of the shape series.
+SHAPE_EDGES = np.linspace(-6.0, 6.0, 97)
+
+
+def standardised_histogram(v: np.ndarray, w: np.ndarray, edges: np.ndarray = SHAPE_EDGES):
+    """Density per unit u of u = (v - <v>)/sigma, the raw counts, and sigma.
+
+    Measured in its own standard deviation, a distribution is compared by
+    shape alone: heating and the relaxation of the anisotropy change sigma,
+    not the density of u.
+    """
+    mean = np.average(v, weights=w)
+    sigma = float(np.sqrt(np.average((v - mean) ** 2, weights=w)))
+    u = (v - mean) / sigma
+    density, _ = np.histogram(u, bins=edges, weights=w)
+    counts, _ = np.histogram(u, bins=edges)
+    return density / (np.sum(w) * np.diff(edges)), counts, sigma
+
+
+def kappa_time_series(series: dict, fields: dict, lo, hi, args) -> tuple[list[dict], list[dict], dict]:
     """kappa_eff of the window, of the hole / ambient / peak populations and per b bin
     at every prt snapshot.
 
@@ -1078,6 +1097,8 @@ def kappa_time_series(series: dict, fields: dict, lo, hi, args) -> tuple[list[di
         steps = [steps[i] for i in dict.fromkeys(pick.round().astype(int))]
     b_edges = np.linspace(args.b_min, args.b_max, args.b_bins + 1)
     rows, b_rows = [], []
+    shape = {key: [] for key in ("t", "par_density", "par_counts", "par_sigma_vA",
+                                 "perp_density", "perp_counts", "perp_sigma_vA")}
     for step in steps:
         near = int(field_steps[np.argmin(np.abs(field_steps - step))])
         if abs(near - step) > args.max_step_mismatch:
@@ -1088,6 +1109,18 @@ def kappa_time_series(series: dict, fields: dict, lo, hi, args) -> tuple[list[di
         groups = condition_on_field(part, vel, lo, hi, args.percentile,
                                     s_max=args.s_max, n_boot=0)
         toci = step_to_omegaci(step)
+        whole = groups.get("all")
+        if whole:
+            # Shape of f(v_par) and of the pooled perpendicular components in
+            # units of their own sigma (kappa_dynamics.plot_shape_evolution).
+            idx, w = whole["idx"], part["w"][whole["idx"]]
+            d, c, sig = standardised_histogram(vel["v_par"][idx], w)
+            dp, cp, sigp = standardised_histogram(
+                np.concatenate([vel["v_perp1"][idx], vel["v_perp2"][idx]]), np.concatenate([w, w]))
+            for key, value in (("t", toci), ("par_density", d), ("par_counts", c),
+                               ("par_sigma_vA", sig / VA), ("perp_density", dp),
+                               ("perp_counts", cp), ("perp_sigma_vA", sigp / VA)):
+                shape[key].append(value)
         for name in ("all", "hole", "ambient", "peak"):
             g = groups.get(name)
             if not g:
@@ -1112,7 +1145,7 @@ def kappa_time_series(series: dict, fields: dict, lo, hi, args) -> tuple[list[di
                                                     "inv_kappa_signed", "inv_kappa_signed_err")}})
         print(f"  kappa series: step {step:>9}  t Omega_ci = {toci:6.1f}  "
               f"1/kappa = {groups.get('all', {}).get('inv_kappa_signed', float('nan')):+.4f}")
-    return rows, b_rows
+    return rows, b_rows, {k: np.asarray(v) for k, v in shape.items()}
 
 
 def _tail_fraction(v: np.ndarray, w: np.ndarray, nsigma: float = 3.0) -> float:
@@ -1253,9 +1286,12 @@ def main() -> int:
         print(f"Summary: {summary}")
 
     if args.kappa_series:
-        k_rows, kb_rows = kappa_time_series(series, fields, lo, hi, args)
+        k_rows, kb_rows, shape = kappa_time_series(series, fields, lo, hi, args)
         _write_rows(outdir / f"{args.prefix}vdf_kappa_series.csv", k_rows)
         _write_rows(outdir / f"{args.prefix}vdf_kappa_b_series.csv", kb_rows)
+        if shape["t"].size:
+            np.savez_compressed(outdir / f"{args.prefix}vdf_shape_series.npz",
+                                edges=SHAPE_EDGES, species=args.species, **shape)
         print(f"Kappa series:    {len({r['step'] for r in k_rows})} snapshots")
 
     meta = outdir / f"{args.prefix}vdf_spatial_metadata.json"

@@ -141,3 +141,50 @@ def test_joint_fit_recovers_one_wave_coefficient_for_different_backgrounds(tmp_p
     assert joint["nu0"]["mirror_bikappa5_moderate"] == pytest.approx(
         2 * NU0, abs=3 * joint["nu0_err"]["mirror_bikappa5_moderate"])
     assert joint["chi2_dof"] < 2.0
+
+
+def _shape_run(tmp_path, density_of_time, t=np.linspace(0.0, 100.0, 11), n=2_000_000):
+    """A product tree whose standardised f(v_par) at each time is density_of_time(t, u)."""
+    from vdf_spatial import SHAPE_EDGES
+    root = make_run(tmp_path / "tree" / "mirror_bimaxwellian_moderate", 3.0, NU0, C)
+    fine = np.linspace(SHAPE_EDGES[0], SHAPE_EDGES[-1], 96 * 40 + 1)
+    dens, counts = [], []
+    for tk in t:
+        f = density_of_time(tk, fine)
+        mass = np.array([np.trapezoid(f[40 * i:40 * i + 41], fine[40 * i:40 * i + 41]) for i in range(96)])
+        counts.append(np.round(mass * n))
+        dens.append(mass / np.diff(SHAPE_EDGES))
+    np.savez_compressed(root / "03_particles" / "vdf_shape_series.npz", edges=SHAPE_EDGES, species="ion",
+                        t=t, par_density=np.array(dens), par_counts=np.array(counts),
+                        par_sigma_vA=np.full(t.size, 1.58), perp_density=np.array(dens),
+                        perp_counts=np.array(counts), perp_sigma_vA=np.full(t.size, 2.2))
+    return root
+
+
+def test_shape_metrics_tell_a_tail_from_a_flattening(tmp_path):
+    from plasma_physics import kappa_marginal_pdf
+    gauss = lambda u: np.exp(-0.5 * u * u) / np.sqrt(2 * np.pi)
+    # Gaussian, then a kappa = 3 tail, then a flattened (p = 3) core
+    shapes = {0.0: gauss, 50.0: lambda u: kappa_marginal_pdf(u, 1.0, 3.0), 100.0: kd._flat_top}
+    root = _shape_run(tmp_path, lambda t, u: shapes[min(shapes, key=lambda k: abs(k - t))](u),
+                      t=np.array([0.0, 50.0, 100.0]))
+    rows = {r["omega_ci_t"]: r for r in kd.shape_metrics(kd.load_run(root))}
+    assert rows[0.0]["core_ratio"] == pytest.approx(1.0, abs=0.01)
+    assert rows[0.0]["tail_ratio"] == pytest.approx(1.0, abs=0.02)
+    assert rows[50.0]["core_ratio"] > 1.1 and rows[50.0]["shoulder_ratio"] < 0.95 and rows[50.0]["tail_ratio"] > 3.5
+    assert rows[100.0]["core_ratio"] < 0.95 and rows[100.0]["shoulder_ratio"] > 1.05 and rows[100.0]["tail_ratio"] < 0.5
+    out = kd.analyse([root], [], tmp_path / "out")
+    assert (tmp_path / "out" / "kappa_shape_evolution.png").exists()
+    assert out["runs"][0]["shape"] is not None
+
+
+def test_standardised_histogram_measures_shape_not_width():
+    from vdf_spatial import SHAPE_EDGES, standardised_histogram
+    rng = np.random.default_rng(8)
+    narrow, wide = rng.normal(0.0, 0.5, 400_000), rng.normal(3.0, 4.0, 400_000)
+    d1, c1, s1 = standardised_histogram(narrow, np.ones(narrow.size))
+    d2, c2, s2 = standardised_histogram(wide, np.ones(wide.size))
+    assert (s1, s2) == (pytest.approx(0.5, rel=0.01), pytest.approx(4.0, rel=0.01))
+    assert np.sum(d1 * np.diff(SHAPE_EDGES)) == pytest.approx(1.0, abs=1e-3)
+    core = np.abs(0.5 * (SHAPE_EDGES[1:] + SHAPE_EDGES[:-1])) < 2
+    np.testing.assert_allclose(d1[core], d2[core], rtol=0.05)   # same shape, any width

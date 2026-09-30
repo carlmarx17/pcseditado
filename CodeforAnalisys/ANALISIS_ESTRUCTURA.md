@@ -370,9 +370,10 @@ CodeforAnalisys/
 │   └── kappa_eff(t) via kappa_eff.py + B–kappa correlation (CSV/JSON/PNG)
 │
 ├── kappa_dynamics.py         ← KAPPA INDEX vs MAGNETIC FIELD (analysis products)
-│   └── 1/kappa(t) at every particle snapshot with <|dB|^2>/B0^2, the
-│       relaxation fit -nu_0 t - c int W dt (with isotropic controls), and
-│       1/kappa(b) against the local |B| (slope and hole - peak vs time)
+│   └── 1/kappa(t) at every particle snapshot with the tail content and
+│       <|dB|^2>/B0^2, the relaxation fit -nu_0 t - c int W dt (with isotropic
+│       controls), 1/kappa(b) against the local |B| (slope and hole - peak vs
+│       time), and the shape of f(v_par)/Gaussian(same variance) in time
 │
 ├── paper_figures.py          ← PUBLICATION FIGURES of a controlled series
 │   └── From analysis products only (no raw data): mode amplitude,
@@ -712,7 +713,9 @@ the analytic initial bi-Maxwellian / bi-kappa at the same levels (dashed):
 particles (`paper_figures.py` uses it for `vdf_evolution.png`).
 The kappa index of the window, of the hole / ambient / peak populations and of
 every b bin is also written at *every* particle snapshot, without figures
-(`vdf_kappa_series.csv`, `vdf_kappa_b_series.csv`, influence-function errors),
+(`vdf_kappa_series.csv`, `vdf_kappa_b_series.csv`, influence-function errors;
+`vdf_shape_series.npz`: histograms of v_par and v_perp in units of their own
+sigma),
 as 1/kappa continued through the Maxwellian (negative = flatter than a
 Maxwellian); `kappa_dynamics.py` reads them.
 `vdf_planes_<species>_step_<step>.png` shows the three reduced planes

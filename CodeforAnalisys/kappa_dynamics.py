@@ -54,6 +54,11 @@ Outputs (--outdir):
                              and the fluctuation energy at the same times
   kappa_relaxation.png       the two-term relaxation model and the rate against W
   kappa_vs_local_field.png   1/kappa(b) at several times, S(t), hole - peak(t)
+  kappa_shape_evolution.png  f(v_par) over the Gaussian of the same variance in
+                             time and at four instants, with the cyclotron
+                             resonance: tail (wings above 1) against flattening
+                             (shoulders above 1, core and wings below)
+  kappa_shape_metrics.csv    core / shoulder / tail probability over the Gaussian
   kappa_dynamics_timeseries.csv, kappa_relaxation_rates.csv,
   kappa_local_field.csv, kappa_relaxation_fit.json
 
@@ -203,6 +208,33 @@ def load_tail(root: Path, series_rows: list[dict]) -> dict | None:
     return {"t": a[:, 0], "frac": a[:, 1], "frame": r"global $B_0$"} if a.size else None
 
 
+def load_shape(root: Path) -> dict | None:
+    """Standardised histograms of v_par and v_perp at every snapshot (vdf_spatial.py)."""
+    path = root / "03_particles" / "vdf_shape_series.npz"
+    if not path.exists():
+        return None
+    with np.load(path) as data:
+        return {key: data[key] for key in data.files}
+
+
+def resonant_speed(root: Path, profile: dict) -> float:
+    """|v_res|/v_A = (1 - |omega|/Omega_ci)/(|k_par| d_i) of the dominant measured mode.
+
+    The n = 1 cyclotron resonance of an ion-cyclotron wave (0 < omega < Omega_ci),
+    from the frequency the dispersion analysis resolved; nan for another
+    branch, an electron-driven profile or an unresolved frequency.
+    """
+    if profile.get("driven_species", "ion") != "ion":
+        return float("nan")
+    for path in sorted((root / "04_spectra").glob("dispersion_modes*.json")):
+        report = json.loads(path.read_text())
+        mode = report.get("dominant") or report.get("strongest_spatial_peak") or {}
+        k, w = abs(_f(mode.get("k_parallel_d_i"))), abs(_f(mode.get("omega_over_omega_ci")))
+        if mode.get("frequency_resolved") and k > 0 and 0 < w < 1:
+            return float((1.0 - w) / k)
+    return float("nan")
+
+
 def load_run(root) -> dict | None:
     """Everything this module uses from one run root; None without a kappa product."""
     root = Path(root)
@@ -238,6 +270,8 @@ def load_run(root) -> dict | None:
         "pop": series, "field": load_field(root), "t_lin_end": linear_phase_end(root),
         "b_profiles": load_b_profiles(root, step_time),
         "tail": load_tail(root, source_rows),
+        "shape": load_shape(root),
+        "v_res": resonant_speed(root, profile),
         "window_di": float(min(window)) if window else float("nan"),
         # thermal speed along B of the driven ions, in v_A (profile)
         "vth_par": float(np.sqrt(profile.get("beta_i_par", np.nan) / 2.0)),
@@ -454,7 +488,7 @@ def plot_field_evolution(runs: list[dict], colors: dict, path: Path) -> Path:
     with_tail = any(r.get("tail") for r in runs)
     heights = [1.35, 0.95, 1.0] if with_tail else [1.35, 1.0]
     fig, axes = plt.subplots(len(heights), 1, figsize=(8.2, 7.6 + 2.6 * with_tail), sharex=True,
-                             gridspec_kw={"height_ratios": heights, "hspace": 0.08})
+                             gridspec_kw={"height_ratios": heights, "hspace": 0.16 if with_tail else 0.08})
     top, bottom = axes[0], axes[-1]
     middle = axes[1] if with_tail else None
     frames = set()
@@ -491,15 +525,14 @@ def plot_field_evolution(runs: list[dict], colors: dict, path: Path) -> Path:
     if middle is not None:
         middle.axhline(1.0, color=ps.MUTED_CLR, lw=0.8, ls="--")
         middle.set_yscale("log")
-        lo, hi = middle.get_ylim()
-        middle.set_ylim(min(lo, 0.3), hi)          # room for the note under the curves
         middle.yaxis.set_major_locator(LogLocator(base=10.0, subs=(1.0, 2.0, 5.0)))
         middle.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:g}"))
         middle.yaxis.set_minor_formatter(NullFormatter())
         middle.set_ylabel("ions beyond " r"$3\sigma_\parallel$" "\n(Gaussian = 1)")
-        middle.text(0.01, 0.04, "model-free tail content (" + ", ".join(sorted(frames)) +
-                    r" frame): above 1 a suprathermal tail, below 1 a flattened core",
-                    transform=middle.transAxes, fontsize=8.8, color=ps.MUTED_CLR)
+        # Above the panel, not inside: the curves can reach any height.
+        middle.set_title("model-free tail content (" + ", ".join(sorted(frames)) +
+                         r" frame): above 1 a suprathermal tail, below 1 a flattened core",
+                         fontsize=8.8, color=ps.MUTED_CLR, loc="left", pad=3)
     bottom.set_yscale("log")
     ps.plain_log_axis(bottom, "y")
     bottom.set_ylabel(r"$\langle|\delta\mathbf{B}|^2\rangle/B_0^2$")
@@ -683,6 +716,171 @@ def mixing_note(runs: list[dict], relax: dict) -> str:
             rf"[$\Omega_{{ci}}^{{-1}}$] " + ", ".join(taus))
 
 
+def _gauss_in_bins(edges: np.ndarray) -> np.ndarray:
+    """Standard normal density averaged over each bin."""
+    from scipy.stats import norm
+    return np.diff(norm.cdf(edges)) / np.diff(edges)
+
+
+def shape_metrics(run: dict) -> list[dict]:
+    """Probability in the core, the shoulders and the tails of u, over the Gaussian one.
+
+    A kappa tail: core > 1, shoulders < 1, tails > 1. A flattened (plateau-
+    like) distribution: core < 1, shoulders > 1, tails < 1.
+    """
+    shape = run.get("shape")
+    if shape is None:
+        return []
+    edges = shape["edges"]
+    centres, width = 0.5 * (edges[1:] + edges[:-1]), np.diff(edges)
+    gauss = _gauss_in_bins(edges)
+    a = np.abs(centres)
+    bands = {"core_ratio": a < 0.5, "shoulder_ratio": (a > 1.0) & (a < 2.0), "tail_ratio": a > 3.0}
+    rows = []
+    for k, t in enumerate(shape["t"]):
+        d = shape["par_density"][k]
+        row = {"run": run["name"], "omega_ci_t": float(t),
+               "sigma_par_vA": float(shape["par_sigma_vA"][k]),
+               "u_res": float(run["v_res"] / shape["par_sigma_vA"][k]) if np.isfinite(run["v_res"]) else float("nan")}
+        for key, band in bands.items():
+            row[key] = float(np.sum((d * width)[band]) / np.sum((gauss * width)[band]))
+        rows.append(row)
+    return rows
+
+
+def _shape_times(run: dict, t: np.ndarray) -> list[float]:
+    """t = 0, end of the linear phase, 30 Omega_ci^-1 into saturation, last snapshot."""
+    t_end = run["t_lin_end"]
+    wanted = ([t[0], t_end, t_end + 30.0, t[-1]] if np.isfinite(t_end)
+              else list(np.quantile(t, [0.0, 0.33, 0.66, 1.0])))
+    picks = []
+    for w in wanted:
+        k = int(np.argmin(np.abs(t - w)))
+        if k not in picks:
+            picks.append(k)
+    return picks
+
+
+def _flat_top(u: np.ndarray, p: float = 3.0) -> np.ndarray:
+    """Unit-variance generalised normal of exponent p > 2: flatter than a Gaussian."""
+    from scipy.special import gamma as gamma_fn
+    a = np.sqrt(gamma_fn(1.0 / p) / gamma_fn(3.0 / p))
+    return p / (2.0 * a * gamma_fn(1.0 / p)) * np.exp(-np.abs(u / a) ** p)
+
+
+def plot_shape_evolution(runs: list[dict], colors: dict, path: Path) -> Path | None:
+    """f(v_par) over the Gaussian of the same variance, in time and at four instants.
+
+    u = (v_par - <v_par>)/sigma_par(t): heating and anisotropy relaxation are
+    divided out, only the shape is left. A suprathermal tail is red at |u| > 3;
+    a flattening by resonant diffusion is red shoulders near the resonant
+    velocity with blue core and wings.
+    """
+    shaped = [r for r in runs if r.get("shape") is not None]
+    shaped = ([r for r in shaped if not r["control"]] + [r for r in shaped if r["control"]])[:5]
+    if not shaped:
+        return None
+    from plasma_physics import kappa_marginal_pdf
+    n = len(shaped)
+    fig = plt.figure(figsize=(3.9 * (n + 1), 8.4))
+    fig.set_layout_engine("none")          # the GridSpec places every panel
+    grid = GridSpec(2, n + 1, figure=fig, height_ratios=[1.15, 1.0], hspace=0.42, wspace=0.34,
+                    top=0.84, bottom=0.2, left=0.06, right=0.98)
+    cmap = plt.get_cmap("RdBu_r").with_extremes(bad=ps.PANEL_BG)
+    norm = plt.Normalize(-0.5, 0.5)
+    tcolors = plt.get_cmap("viridis")
+    mesh = None
+    for i, run in enumerate(shaped):
+        sh = run["shape"]
+        edges, t = sh["edges"], sh["t"]
+        centres = 0.5 * (edges[1:] + edges[:-1])
+        gauss = _gauss_in_bins(edges)
+        ratio = sh["par_density"] / gauss[None, :]
+        counts = sh["par_counts"]
+        # Map: change of shape since the first snapshot (same standardisation),
+        # so a kappa run's own tail does not saturate the colours; the absolute
+        # comparison with the Gaussian is the row below.
+        change = sh["par_density"] / np.where(sh["par_density"][0] > 0, sh["par_density"][0], np.nan)[None, :]
+        good = (counts >= 30) & (counts[0] >= 30)[None, :] & (change > 0)
+        logr = np.log10(np.where(good, change, np.nan))
+        mid = 0.5 * (t[1:] + t[:-1]) if t.size > 1 else np.array([])
+        t_edges = (np.concatenate([[t[0] - (mid[0] - t[0])], mid, [t[-1] + (t[-1] - mid[-1])]])
+                   if t.size > 1 else np.array([t[0] - 0.5, t[0] + 0.5]))
+        ax = fig.add_subplot(grid[0, i])
+        mesh = ax.pcolormesh(t_edges, edges, logr.T, cmap=cmap, norm=norm, shading="flat",
+                             rasterized=True)
+        if np.isfinite(run["v_res"]):
+            u_res = run["v_res"] / sh["par_sigma_vA"]
+            for sign in (1.0, -1.0):
+                ax.plot(t, sign * u_res, "--", color="0.1", lw=1.1)
+        if np.isfinite(run["t_lin_end"]):
+            ax.axvline(run["t_lin_end"], color="0.1", lw=0.9, ls=(0, (5, 2, 1, 2)))
+        ax.set_ylim(-5, 5)
+        ax.set_xlabel(r"$t\,\Omega_{ci}$")
+        if i == 0:
+            ax.set_ylabel(r"$u = \delta v_\parallel/\sigma_\parallel(t)$")
+        ax.set_title(run["label"], fontsize=11)
+
+        bx = fig.add_subplot(grid[1, i])
+        picks = _shape_times(run, t)
+        for j, k in enumerate(picks):
+            ok = counts[k] >= 30
+            r = ratio[k][ok]
+            err = r / np.sqrt(np.maximum(counts[k][ok], 1))
+            col = tcolors(j / max(len(picks) - 1, 1))
+            bx.plot(centres[ok], r, color=col, lw=1.4, label=rf"$t\Omega_{{ci}}={t[k]:.0f}$")
+            bx.fill_between(centres[ok], r - err, r + err, color=col, alpha=0.25, lw=0)
+        if run["kappa0"]:
+            uu = np.linspace(-5, 5, 400)
+            bx.plot(uu, kappa_marginal_pdf(uu, 1.0, run["kappa0"]) / _gauss_in_bins(np.linspace(-5, 5, 401)),
+                    ":", color=ps.MUTED_CLR, lw=1.3, label=rf"loaded $\kappa_0={run['kappa0']:g}$")
+        if np.isfinite(run["v_res"]) and len(picks) > 2:
+            u_sat = run["v_res"] / sh["par_sigma_vA"][picks[2]]
+            for sign in (1.0, -1.0):
+                bx.axvline(sign * u_sat, color="0.1", lw=0.9, ls="--")
+        bx.axhline(1.0, color=ps.MUTED_CLR, lw=0.8)
+        bx.set_yscale("log")
+        bx.set_ylim(0.2, 8.0)
+        bx.set_xlim(-5, 5)
+        bx.yaxis.set_major_locator(LogLocator(base=10.0, subs=(1.0, 2.0, 5.0)))
+        bx.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:g}"))
+        bx.yaxis.set_minor_formatter(NullFormatter())
+        bx.set_xlabel(r"$u$")
+        if i == 0:
+            bx.set_ylabel(r"$f(u)\,/\,$Gaussian")
+        bx.legend(fontsize=7.8, loc="upper center", bbox_to_anchor=(0.5, -0.3), frameon=False, ncol=2)
+
+    cell = fig.add_subplot(grid[0, n])
+    cell.axis("off")
+    cax = cell.inset_axes([0.08, 0.12, 0.08, 0.76])
+    fig.colorbar(mesh, cax=cax).set_label(r"$\log_{10}[f(u,t)/f(u,0)]$" "\nred: gained, blue: lost",
+                                          fontsize=10)
+    rx = fig.add_subplot(grid[1, n])
+    uu = np.linspace(-5, 5, 400)
+    g = _gauss_in_bins(np.linspace(-5, 5, 401))
+    rx.plot(uu, kappa_marginal_pdf(uu, 1.0, 3.0) / g, color=ps.c("#D55E00"), lw=1.6,
+            label=r"$\kappa=3$: suprathermal tail")
+    rx.plot(uu, _flat_top(uu) / g, color=ps.c("#0072B2"), lw=1.6, label="flattened (plateau-like)")
+    rx.axhline(1.0, color=ps.MUTED_CLR, lw=0.8, label="Gaussian")
+    rx.set_yscale("log")
+    rx.set_ylim(0.2, 8.0)
+    rx.set_xlim(-5, 5)
+    rx.yaxis.set_major_locator(LogLocator(base=10.0, subs=(1.0, 2.0, 5.0)))
+    rx.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:g}"))
+    rx.yaxis.set_minor_formatter(NullFormatter())
+    rx.set_xlabel(r"$u$")
+    rx.set_title("reference shapes, same variance", fontsize=10.5)
+    rx.legend(fontsize=7.8, loc="upper center", bbox_to_anchor=(0.5, -0.3), frameon=False)
+    fig.suptitle(r"Shape of the ion $f(v_\parallel)$: change since $t=0$ (top) and against a Gaussian "
+                 "of the same variance (bottom)", fontsize=13, y=0.975)
+    fig.text(0.5, 0.925, r"local-field frame, $u=(v_\parallel-\langle v_\parallel\rangle)/\sigma_\parallel(t)$; "
+             r"dashed: $n=1$ cyclotron resonance $\pm|v_{\rm res}|/\sigma_\parallel$ of the measured mode; "
+             "dash-dot: end of the linear phase; bins with fewer than 30 ions left blank",
+             ha="center", fontsize=9, color=ps.MUTED_CLR)
+    ps.save(fig, path)
+    return path
+
+
 # ── Tables ───────────────────────────────────────────────────────────────────
 
 def _write(path: Path, rows: list[dict]) -> None:
@@ -754,6 +952,8 @@ def analyse(roots: list, controls: list, outdir: Path) -> dict:
     plot_relaxation(everything, colors, relax, rates, outdir / "kappa_relaxation.png", joint)
     plot_local_field([r for r in everything if not r["control"]] or everything, colors, slopes,
                      relax, outdir / "kappa_vs_local_field.png")
+    plot_shape_evolution(everything, colors, outdir / "kappa_shape_evolution.png")
+    _write(outdir / "kappa_shape_metrics.csv", [row for r in everything for row in shape_metrics(r)])
 
     _write(outdir / "kappa_dynamics_timeseries.csv", [row for r in everything for row in timeseries_rows(r)])
     _write(outdir / "kappa_relaxation_rates.csv", [row for rows in rates.values() for row in rows])

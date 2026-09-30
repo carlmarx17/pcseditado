@@ -441,3 +441,15 @@ organised by the magnetic field at the same instant?
   kappa_field_evolution.png now shows this model-free tail content between
   the index and the field energy (vdf_kappa_series.csv carries it in the
   local frame; fit_metrics.csv in the global one for older deliveries).
+- **The shape figure** (`kappa_shape_evolution.png`, kappa_dynamics.py):
+  f(v_par) in units of its own sigma at every snapshot (vdf_spatial.py writes
+  the standardised histograms, `vdf_shape_series.npz`, local-field frame),
+  as the change since t = 0 in time (map) and against the Gaussian of the
+  same variance at t = 0, the end of the linear phase, 30 Omega_ci^-1 later
+  and the end, with the n = 1 cyclotron resonance of the measured mode and
+  the reference shapes of a kappa tail (wings above 1) and of a flattening
+  (shoulders above 1, core and wings below). Dividing by sigma(t) removes
+  the heating and the anisotropy relaxation, so the figure shows the shape
+  alone: it is the direct test of "flattening at saturation, not a tail".
+  `kappa_shape_metrics.csv`: core (|u| < 0.5), shoulder (1 < |u| < 2) and tail
+  (|u| > 3) probability over the Gaussian at every snapshot.

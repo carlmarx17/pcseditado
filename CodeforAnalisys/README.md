@@ -90,7 +90,10 @@ again; regenerate `09_physical_diagnostics` and `04_spectra`.
   relaxation fit ln[(1/kappa)/(1/kappa_0)] = -nu_0 t - c int W dt, which
   separates a rate that follows the fluctuation energy from one present from
   t = 0 (isotropic controls with the same kappa measure the latter); and
-  1/kappa against the local b = |B|/B_ref (slope and hole - peak vs time).
+  1/kappa against the local b = |B|/B_ref (slope and hole - peak vs time);
+  and the shape of f(v_par) in units of its own sigma against a Gaussian of
+  the same variance, in time and with the cyclotron resonance, which tells a
+  suprathermal tail from a flattening by resonant diffusion.
   `python kappa_dynamics.py RUN_MAXW RUN_K5 RUN_K3 --outdir OUT`.
 - **VDF figures and kappa (v6 follow-up 7).** Every model curve uses the
   variance measured at the time it is compared with, and kappa is the
