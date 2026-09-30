@@ -27,12 +27,15 @@ raw run data:
                           shoulder of the distribution, where a kappa plasma of
                           equal temperature has fewer ions.
 * ``kappa_local``         1/kappa_eff from the local-field, kurtosis-based
-                          estimator of vdf_spatial.py. Why: the global-B0 fit of
-                          kappa_evolution.py reads the wave-tilted, resonantly
-                          distorted distribution at saturation as a "tail"
-                          (kappa ~ 13 in the bi-Maxwellian run while the local
-                          estimator gives a Maxwellian); only the local one is
-                          quoted.
+                          estimator of vdf_spatial.py, above the magnetic
+                          fluctuation energy at the same times
+                          (kappa_dynamics.plot_field_evolution). Why: the
+                          global-B0 fit of kappa_evolution.py reads the wave-
+                          tilted, resonantly distorted distribution at
+                          saturation as a "tail" (kappa ~ 13 in the bi-
+                          Maxwellian run while the local estimator gives a
+                          Maxwellian); only the local one is quoted. The
+                          relaxation analysis itself is kappa_dynamics.py.
 * ``vdf_evolution``       f(v||, v_perp) of the driven species for every run at
                           t = 0, the end of the linear phase and the last frame,
                           with the initial model at the same levels and the
@@ -304,24 +307,14 @@ def plot_resonance(runs, outdir):
 
 
 def plot_kappa_local(runs, outdir):
-    fig, ax = plt.subplots(figsize=(7.0, 4.4))
-    for i, run in enumerate(runs):
-        t, kap, err = run["kappa_local"]
-        if t.size == 0:
-            continue
-        inv = np.where(np.isfinite(kap) & (kap > 0), 1.0 / kap, 0.0)
-        inv_err = np.where(np.isfinite(err) & np.isfinite(kap) & (kap > 0), err / kap ** 2, 0.0)
-        ax.errorbar(t, inv, yerr=inv_err, fmt="o-", ms=5, capsize=3, lw=1.6,
-                    color=ps.c(SERIES[i]), label=run["label"])
-        t_end = run["t_lin"][1]
-        if np.isfinite(t_end):
-            ax.axvline(t_end, color=ps.c(SERIES[i]), lw=0.9, ls=":")
-    ax.axhline(0.0, color=ps.MUTED_CLR, lw=0.8, ls="--")
-    ax.set_xlabel(r"$t\,\Omega_{ci}$")
-    ax.set_ylabel(r"$1/\kappa_{\rm eff}$  (0 = Maxwellian)")
-    ax.set_title("Ion suprathermal index, local-field frame (dotted: end of linear phase)")
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.17), ncol=3, frameon=False)
-    ps.save(fig, outdir / "kappa_local.png")
+    """1/kappa in the local-field frame with <|dB|^2>/B0^2 at the same times (kappa_dynamics.py)."""
+    import kappa_dynamics
+    loaded = [r for r in (kappa_dynamics.load_run(run["root"]) for run in runs) if r is not None]
+    if not loaded:
+        print("[SKIP] kappa_local: no local-field kappa product in these runs")
+        return
+    colors = {r["name"]: ps.c(SERIES[i % len(SERIES)]) for i, r in enumerate(loaded)}
+    kappa_dynamics.plot_field_evolution(loaded, colors, outdir / "kappa_local.png")
 
 
 def vdf_frames(root: Path, species: str = "ion") -> dict:
@@ -416,11 +409,30 @@ def plot_vdf_evolution(runs, outdir, species="ion"):
     ps.save(fig, outdir / "vdf_evolution.png")
 
 
+def kappa_numbers(run) -> dict:
+    """Local-field kappa at the first and last snapshot, and the relaxation fit (kappa_dynamics)."""
+    import kappa_dynamics
+    loaded = kappa_dynamics.load_run(run["root"])
+    if loaded is None:
+        return {}
+    s = loaded["pop"]["all"]
+    as_kappa = lambda inv: f"{1.0 / inv:.3f}" if inv > 0 else "inf"
+    out = {"kappa_local_initial": as_kappa(s["inv"][0]), "kappa_local_final": as_kappa(s["inv"][-1])}
+    fit = kappa_dynamics.relaxation(loaded)
+    if fit:
+        out.update({"relax_nu0": f"{fit['nu0']:.3e}", "relax_nu0_err": f"{fit['nu0_err']:.1e}",
+                    "relax_c": f"{fit['c']:.4f}", "relax_c_err": f"{fit['c_err']:.4f}"})
+    return out
+
+
 def write_summary(runs, outdir):
     fields = ["run", "kappa", "k_par_di", "gamma_pic", "gamma_pic_err", "gamma_theory",
               "relative_difference_pct", "omega_r_theory", "v_res_over_vA",
               "f_at_v_res_over_maxwellian", "peak_dB_over_B0", "t_peak", "t_half_relaxation",
-              "A_i_final", "beta_e_final", "compressibility"]
+              "A_i_final", "beta_e_final", "compressibility",
+              # kappa_dynamics.py: local-field index and ln[(1/k)/(1/k0)] = -nu0 t - c int W dt
+              "kappa_local_initial", "kappa_local_final", "relax_nu0", "relax_nu0_err",
+              "relax_c", "relax_c_err"]
     with (outdir / "series_summary.csv").open("w", newline="") as handle:
         w = csv.DictWriter(handle, fieldnames=fields)
         w.writeheader()
@@ -438,6 +450,7 @@ def write_summary(runs, outdir):
                 "A_i_final": f"{run['aniso']['anisotropy_global'][-1]:.3f}",
                 "beta_e_final": f"{run['aniso']['beta_e_parallel_global'][-1]:.2f}",
                 "compressibility": f"{run['compressibility']:.2g}",
+                **kappa_numbers(run),
             })
 
 

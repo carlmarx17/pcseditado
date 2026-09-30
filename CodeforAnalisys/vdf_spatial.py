@@ -290,9 +290,13 @@ def condition_on_field(part: dict, vel: dict, lo, hi, percentile: float,
                 weights=part["w"][idx], s_max=s_max, n_boot=n_boot)
             stats["kappa_eff"] = res["kappa"]
             stats["kappa_err"] = res["kappa_err"]
+            stats["inv_kappa_signed"] = res["inv_kappa_signed"]
+            stats["inv_kappa_signed_err"] = res["inv_kappa_signed_err"]
         else:
             stats["kappa_eff"] = float("nan")
             stats["kappa_err"] = float("nan")
+            stats["inv_kappa_signed"] = float("nan")
+            stats["inv_kappa_signed_err"] = float("nan")
         out[name] = stats
     return out
 
@@ -515,6 +519,7 @@ def bin_by_b(part: dict, trap: dict, edges: np.ndarray, s_max: float,
             "trapped_fraction_iso": float("nan"),
             "kappa_eff": float("nan"), "kappa_err": float("nan"),
             "kappa_lo": float("nan"), "kappa_hi": float("nan"),
+            "inv_kappa_signed": float("nan"), "inv_kappa_signed_err": float("nan"),
         }
         if sel.size < min_count or cell_hist[j] == 0:
             rows.append(row)
@@ -543,6 +548,8 @@ def bin_by_b(part: dict, trap: dict, edges: np.ndarray, s_max: float,
             row["kappa_eff"] = res["kappa"]
             row["kappa_err"] = res["kappa_err"]
             row["kappa_lo"], row["kappa_hi"] = res["kappa_lo"], res["kappa_hi"]
+            row["inv_kappa_signed"] = res["inv_kappa_signed"]
+            row["inv_kappa_signed_err"] = res["inv_kappa_signed_err"]
         rows.append(row)
     return rows
 
@@ -1033,6 +1040,8 @@ def summary_rows(groups: dict, mac: dict, step: int) -> list[dict]:
             "A_global_z": g["A_global_z"],
             "kappa_eff": g.get("kappa_eff", float("nan")),
             "kappa_eff_error": g.get("kappa_err", float("nan")),
+            "inv_kappa_signed": g.get("inv_kappa_signed", float("nan")),
+            "inv_kappa_signed_error": g.get("inv_kappa_signed_err", float("nan")),
             "count": g["count"],
             "b_lo_over_B0": thr.get("b_lo_over_B0", float("nan")),
             "b_hi_over_B0": thr.get("b_hi_over_B0", float("nan")),
@@ -1048,6 +1057,67 @@ def summary_rows(groups: dict, mac: dict, step: int) -> list[dict]:
                for k in mixture_keys},
         })
     return rows
+
+
+# ── Kappa at every particle snapshot (no figures) ────────────────────────────
+
+def kappa_time_series(series: dict, fields: dict, lo, hi, args) -> tuple[list[dict], list[dict]]:
+    """kappa_eff of the window, of the hole / ambient / peak populations and per b bin
+    at every prt snapshot.
+
+    The figures of main() are thinned to --max-snapshots; kappa_dynamics.py
+    follows the index against the fluctuation energy and needs it at the
+    cadence of the particle output. Without figures and bootstrap (the error is
+    the influence-function one, kappa_eff._K_standard_error) a snapshot costs
+    one read.
+    """
+    field_steps = np.array(sorted(fields))
+    steps = sorted(series)
+    if args.series_max_snapshots and len(steps) > args.series_max_snapshots:
+        pick = np.linspace(0, len(steps) - 1, args.series_max_snapshots)
+        steps = [steps[i] for i in dict.fromkeys(pick.round().astype(int))]
+    b_edges = np.linspace(args.b_min, args.b_max, args.b_bins + 1)
+    rows, b_rows = [], []
+    for step in steps:
+        near = int(field_steps[np.argmin(np.abs(field_steps - step))])
+        if abs(near - step) > args.max_step_mismatch:
+            continue
+        part = load_particles(series[step], args.species, args.max_particles)
+        bfield = load_b_field(fields[near])
+        vel = local_frame_velocities(part, bfield)
+        groups = condition_on_field(part, vel, lo, hi, args.percentile,
+                                    s_max=args.s_max, n_boot=0)
+        toci = step_to_omegaci(step)
+        for name in ("all", "hole", "ambient", "peak"):
+            g = groups.get(name)
+            if not g:
+                continue
+            rows.append({"step": step, "omega_ci_t": toci, "population": name,
+                         "count": g["count"], "b_mean_over_B0": g["b_mean_over_B0"],
+                         "A_local_b": g["A"], "T_parallel": g["T_parallel"],
+                         "T_perp": g["T_perp"], "kappa_eff": g["kappa_eff"],
+                         "inv_kappa_signed": g["inv_kappa_signed"],
+                         "inv_kappa_signed_error": g["inv_kappa_signed_err"]})
+        trap = trapping_classification(part, vel, bfield, lo, hi, args.b_ref_percentile)
+        for r in bin_by_b(part, trap, b_edges, args.s_max, n_boot=0):
+            if r["count"]:
+                b_rows.append({"step": step, "omega_ci_t": toci,
+                               "b_ref_over_B0": trap["b_ref_over_B0"],
+                               **{k: r[k] for k in ("b_center", "b_mean", "count", "A",
+                                                    "trapped_fraction", "kappa_eff",
+                                                    "inv_kappa_signed", "inv_kappa_signed_err")}})
+        print(f"  kappa series: step {step:>9}  t Omega_ci = {toci:6.1f}  "
+              f"1/kappa = {groups.get('all', {}).get('inv_kappa_signed', float('nan')):+.4f}")
+    return rows, b_rows
+
+
+def _write_rows(path: Path, rows: list[dict]) -> None:
+    if not rows:
+        return
+    with open(path, "w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 # ── Driver ───────────────────────────────────────────────────────────────────
@@ -1169,6 +1239,12 @@ def main() -> int:
             writer.writerows(all_rows)
         print(f"Summary: {summary}")
 
+    if args.kappa_series:
+        k_rows, kb_rows = kappa_time_series(series, fields, lo, hi, args)
+        _write_rows(outdir / f"{args.prefix}vdf_kappa_series.csv", k_rows)
+        _write_rows(outdir / f"{args.prefix}vdf_kappa_b_series.csv", kb_rows)
+        print(f"Kappa series:    {len({r['step'] for r in k_rows})} snapshots")
+
     meta = outdir / f"{args.prefix}vdf_spatial_metadata.json"
     with open(meta, "w") as fh:
         json.dump({"profile": PROFILE_LABEL, "species": args.species,
@@ -1218,7 +1294,12 @@ def parse_args():
                         "(whitened units)")
     p.add_argument("--kappa-boot", type=int, default=24,
                    help="bootstrap replicas for the kappa_eff error "
-                        "(0 = no error)")
+                        "(0 = influence-function error only)")
+    p.add_argument("--kappa-series", action=argparse.BooleanOptionalAction, default=True,
+                   help="also write kappa_eff at every prt snapshot (vdf_kappa_series.csv, "
+                        "vdf_kappa_b_series.csv; no figures) for kappa_dynamics.py")
+    p.add_argument("--series-max-snapshots", type=int, default=0,
+                   help="thin the kappa series to this many snapshots (0 = all)")
     p.add_argument("--vdf2d-bins", type=int, default=90,
                    help="bins per axis of the 2D VDF (v_par, v_perp)")
     p.add_argument("--vdf2d-min-counts", type=int, default=8,

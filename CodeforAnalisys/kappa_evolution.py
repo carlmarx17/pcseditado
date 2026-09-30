@@ -124,7 +124,30 @@ def read_case(path: Path) -> dict:
                     growth[k] = float(v)
                 except (TypeError, ValueError):
                     continue
-    return {"rows": rows, "growth": growth}
+    return {"rows": rows, "growth": growth, "local": read_local(path)}
+
+
+def read_local(path: Path) -> dict | None:
+    """The local-field-frame index of vdf_spatial.py for the same run, when it was written.
+
+    It is the index the paper quotes (see the frame note above): drawn as the
+    main curve, with the global-B0 fit of fit_metrics.csv kept for reference.
+    """
+    from kappa_dynamics import index_of      # lazy: plot_style / psc_units only when needed
+    part = path.parent / "03_particles"
+    source = next((p for p in (part / "vdf_kappa_series.csv",
+                               part / "vdf_hole_vs_peak_summary.csv") if p.exists()), None)
+    if source is None:
+        return None
+    with open(source, newline="") as fh:
+        rows = [r for r in csv.DictReader(fh) if r.get("population") == "all"]
+    if not rows:
+        return None
+    rows.sort(key=lambda r: float(r["omega_ci_t"]))
+    pairs = [index_of(r) for r in rows]
+    return {"t": np.array([float(r["omega_ci_t"]) for r in rows]),
+            "inv": np.array([p[0] for p in pairs]), "err": np.array([p[1] for p in pairs]),
+            "dense": source.name == "vdf_kappa_series.csv"}
 
 
 def _arrays(case: dict):
@@ -149,24 +172,42 @@ def plot_evolution(cases: dict, outdir: Path) -> Path:
         2, 1, figsize=(6.6, 5.6), sharex=True,
         gridspec_kw={"height_ratios": [1.25, 1.0], "hspace": 0.12})
 
+    any_local = any(case.get("local") for case in cases.values())
     for i, (label, case) in enumerate(cases.items()):
         col = _c(SERIES[i % len(SERIES)])
         t, inv, cens, ratio, _ = _arrays(case)
         g = case["growth"]
+        local = case.get("local")
+        # With the local-field index available, the global-B0 fit becomes the
+        # faint reference and the local index the curve that is read.
+        faint = 0.35 if any_local else 1.0
 
         # The trajectory is drawn through every sample, censored ones included,
         # because skipping them interpolates across the interval where the VDF
         # was *most* Maxwellian and hides the dip. Censored segments are dashed
         # and their markers are upper limits, never filled points.
-        ax1.plot(t, inv, color=col, lw=1.8, ls=(0, (3, 2)), alpha=0.75, zorder=2)
+        ax1.plot(t, inv, color=col, lw=1.2 if any_local else 1.8, ls=(0, (3, 2)),
+                 alpha=0.75 * faint, zorder=2)
         # Markers only: a solid chord between two uncensored samples would
         # imply the fit was resolved in between, and it was not.
-        ax1.plot(t[~cens], inv[~cens], color=col, ls="none", marker="o", ms=5.5,
-                 zorder=4, label=label)
+        ax1.plot(t[~cens], inv[~cens], color=col, ls="none", marker="o",
+                 ms=3.5 if any_local else 5.5, alpha=faint, zorder=4,
+                 label=None if any_local else label)
         if cens.any():
             ax1.errorbar(t[cens], inv[cens], yerr=0.005, uplims=True,
-                         fmt="v", ms=5, mfc="none", color=col, alpha=0.75,
-                         lw=1.2, capsize=0, zorder=3)
+                         fmt="v", ms=4 if any_local else 5, mfc="none", color=col,
+                         alpha=0.75 * faint, lw=1.2, capsize=0, zorder=3)
+        if local is not None:
+            band = np.isfinite(local["err"])
+            if local["dense"]:
+                ax1.plot(local["t"], local["inv"], "-", color=col, lw=2.2, zorder=5, label=label)
+            else:
+                ax1.errorbar(local["t"], local["inv"],
+                             yerr=np.where(band, local["err"], 0.0), fmt="o-", ms=6, lw=2.2,
+                             capsize=2.5, color=col, mec="white", mew=0.8, zorder=5, label=label)
+            ax1.fill_between(local["t"][band], (local["inv"] - local["err"])[band],
+                             (local["inv"] + local["err"])[band], color=col, alpha=0.2,
+                             lw=0, zorder=4)
 
         ax2.plot(t, ratio, color=col, lw=2.0, marker="s", ms=5, zorder=3,
                  label=label)
@@ -180,7 +221,7 @@ def plot_evolution(cases: dict, outdir: Path) -> Path:
     ax1.axhline(0.0, color=MUTED, lw=0.9, ls=(0, (4, 3)), zorder=1)
     ax1.text(1.005, 0.0, "Maxwellian\nlimit", transform=ax1.get_yaxis_transform(),
              fontsize=8, color=MUTED, va="center", ha="left")
-    ax1.set_ylabel(r"$1/\kappa_{\rm fit}$")
+    ax1.set_ylabel(r"$1/\kappa$")
     ax1.set_ylim(-0.008, None)
 
     ax2.axhline(1.0, color=MUTED, lw=0.9, ls=(0, (4, 3)), zorder=1)
@@ -192,10 +233,11 @@ def plot_evolution(cases: dict, outdir: Path) -> Path:
         ax.grid(True, which="major", color=GRID, lw=0.5, ls=":", zorder=0)
         for sp in ("top", "right"):
             ax.spines[sp].set_visible(False)
+    title = ("thick: local-field frame (kappa_eff); faint: global-B0 fit; "
+             "dotted vertical: end of linear phase" if any_local else
+             "global-B0 fit; dotted vertical: end of linear phase")
     ax1.legend(frameon=False, fontsize=9, loc="lower center", ncol=len(cases),
-               bbox_to_anchor=(0.5, 1.0),
-               title="global-B0 fit; dotted vertical: end of linear phase",
-               title_fontsize=7.5)
+               bbox_to_anchor=(0.5, 1.0), title=title, title_fontsize=7.5)
 
     # Outside the frame, on the right: inside they cover the trajectories.
     ax2.text(1.01, 0.97, r"$>1$: Kappa" "\n" "fits better", transform=ax2.transAxes,

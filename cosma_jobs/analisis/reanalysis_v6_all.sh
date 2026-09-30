@@ -37,6 +37,10 @@
 #       changes), only between runs whose physics stage passed:
 #         mirror moderate 20 d_i:  bi-Maxwellian / kappa 5 / kappa 3
 #         firehose strong 40 d_i:  bi-Maxwellian / kappa 3
+#       each with kappa_evolution.py and kappa_dynamics.py (kappa(t) against
+#       the fluctuation energy and the local |B|, paired with the isotropic
+#       controls present in the tree; a later job that analyses a control
+#       re-runs the comparisons of its series);
 #    5. evidence report over all runs (quality_report.py, with the energy
 #       audit across runs) in <NEW_ROOT>/quality_report/index.html;
 #    6. summary: <NEW_ROOT>/REANALYSIS_SUMMARY_<jobid>.txt
@@ -258,10 +262,12 @@ EOF
 # =====================================================================
 pd() { echo "$NEW_ROOT/$1/09_physical_diagnostics"; }
 compare_series() {  # compare_series NAME LABEL=CASE... (all must have succeeded)
-    local name="$1" pair label c cases_arg="" kev=() fresh=0
+    local name="$1" pair label c cases_arg="" kev=() roots=() fresh=0
     shift
-    for pair in "$@"; do    # only when this job analysed at least one member
-        [[ " ${CASES[*]} " == *" ${pair#*=} "* ]] && fresh=1
+    for pair in "$@"; do    # only when this job analysed a member or its isotropic control
+        c="${pair#*=}"
+        [[ " ${CASES[*]} " == *" $c "* ]] && fresh=1
+        [[ " ${CASES[*]} " == *" ${c%_*}_isotropic "* ]] && fresh=1
     done
     if [ "$fresh" = 0 ]; then
         say "comparison $name: no member analysed in this job; kept as is"
@@ -276,6 +282,7 @@ compare_series() {  # compare_series NAME LABEL=CASE... (all must have succeeded
         fi
         cases_arg="$cases_arg $label=$(pd "$c")"
         kev+=(--case "$label=$(pd "$c")")
+        roots+=("$NEW_ROOT/$c")
     done
     say "comparison $name:${cases_arg//$NEW_ROOT\//}"
     run "${STEP[@]}" --job-name="compare:$name" \
@@ -287,11 +294,15 @@ compare_series() {  # compare_series NAME LABEL=CASE... (all must have succeeded
         "$PY" kappa_evolution.py "${kev[@]}" --outdir "$NEW_ROOT/kappa_evolution_$name" \
         > "$LOG_DIR/kappa_evolution_$name.log" 2>&1
     echo $? > "$LOG_DIR/comparison_${name}.kappa-evolution.rc"
+    # kappa(t) against the fluctuation energy and the local |B|; isotropic
+    # controls analysed in $NEW_ROOT (*_isotropic) are paired automatically.
+    run "${STEP[@]}" --job-name="kappa_dyn:$name" \
+        "$PY" kappa_dynamics.py "${roots[@]}" --outdir "$NEW_ROOT/kappa_dynamics_$name" \
+        > "$LOG_DIR/kappa_dynamics_$name.log" 2>&1
+    echo $? > "$LOG_DIR/comparison_${name}.kappa-dynamics.rc"
     # Publication figures of the series (ion-cyclotron mode, gamma vs kappa
     # against theory, trajectories, resonance, local kappa): mirror series.
     if [[ "$name" == mirror_* ]]; then
-        local roots=()
-        for pair in "$@"; do roots+=("$NEW_ROOT/${pair#*=}"); done
         run "${STEP[@]}" --job-name="paper_fig:$name" \
             "$PY" paper_figures.py "${roots[@]}" --outdir "$NEW_ROOT/paper_figures/$name" \
             > "$LOG_DIR/paper_figures_$name.log" 2>&1

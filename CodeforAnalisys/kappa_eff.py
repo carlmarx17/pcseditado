@@ -71,6 +71,7 @@ __all__ = [
     "KAPPA_MIN", "KAPPA_MAX", "DEFAULT_S_MAX",
     "untruncated_K", "kappa_from_K_untruncated",
     "truncated_K_kappa", "truncated_K_maxwellian", "kappa_from_K",
+    "signed_inverse_kappa",
     "whiten", "kappa_eff_from_velocities", "kappa_eff_from_grid",
     "sample_bikappa", "sample_bimaxwellian",
 ]
@@ -168,6 +169,33 @@ def kappa_from_K(K: float, s_max: float = DEFAULT_S_MAX) -> float:
         KAPPA_MIN, KAPPA_MAX, xtol=1e-10, rtol=1e-12))
 
 
+@lru_cache(maxsize=64)
+def _maxwellian_slope(s_max: float) -> float:
+    """dK_t/d(1/kappa) at the Maxwellian (finite difference over [0, 1/KAPPA_MAX])."""
+    return (truncated_K_kappa(KAPPA_MAX, s_max) - truncated_K_maxwellian(s_max)) * KAPPA_MAX
+
+
+def signed_inverse_kappa(K: float, s_max: float = DEFAULT_S_MAX) -> float:
+    """1/kappa of a truncated kurtosis, continued through the Maxwellian.
+
+    Above the Maxwellian value the truncated relation is inverted
+    (`kappa_from_K`). At and below it there is no kappa to return (the
+    estimator says inf) and the value is continued linearly with the slope
+    dK_t/d(1/kappa) at the Maxwellian: 0 is the Maxwellian and a negative value
+    is a distribution *flatter* than a Maxwellian, such as the plateau that
+    resonant diffusion leaves in the core. Near 0 it has the units of 1/kappa,
+    so bi-Maxwellian and kappa runs share one axis and error bars exist on
+    both sides of the Maxwellian; below 0 it is a kurtosis deficit, not the
+    index of a kappa law.
+    """
+    if not np.isfinite(K):
+        return float("nan")
+    edge = truncated_K_kappa(KAPPA_MAX, s_max)
+    if K > edge:
+        return 1.0 / kappa_from_K(K, s_max)
+    return 1.0 / KAPPA_MAX + (K - edge) / _maxwellian_slope(float(s_max))
+
+
 # ── Whitening and the estimator ──────────────────────────────────────────────
 
 def _weighted_mean_var(values: np.ndarray, weights: np.ndarray):
@@ -218,6 +246,26 @@ def _K_from_s2(s2: np.ndarray, w: np.ndarray, s_max: float):
     return float(m4 / (m2 * m2)), float(n_eff), float(frac_in)
 
 
+def _K_standard_error(s2: np.ndarray, w: np.ndarray, s_max: float) -> float:
+    """Sampling error of the truncated K from its influence function.
+
+    K = m4/m2^2 over the kept particles; the influence of one particle is
+    (x^2 - m4)/m2^2 - 2 m4 (x - m2)/m2^3 with x = s^2. It holds the whitening
+    scales fixed, which the bootstrap does not (the two agree within ~10 % on
+    PSC-like samples, test_kappa_dynamics.py), and costs one pass instead of
+    n_boot resamples: the per-snapshot kappa series uses it.
+    """
+    cut = s2 <= s_max * s_max
+    x, wi = s2[cut], w[cut]
+    wsum = np.sum(wi)
+    if wsum <= 0 or x.size < 10:
+        return float("nan")
+    m2 = np.sum(wi * x) / wsum
+    m4 = np.sum(wi * x * x) / wsum
+    influence = (x * x - m4) / m2 ** 2 - 2.0 * m4 * (x - m2) / m2 ** 3
+    return float(np.sqrt(np.sum((wi * influence) ** 2)) / wsum)
+
+
 def kappa_eff_from_velocities(v_par, v_p1, v_p2, weights=None, *,
                               s_max: float = DEFAULT_S_MAX,
                               n_boot: int = 0,
@@ -242,17 +290,26 @@ def kappa_eff_from_velocities(v_par, v_p1, v_p2, weights=None, *,
     wh = whiten(v_par, v_p1, v_p2, w)
     K, n_eff, frac_in = _K_from_s2(wh["s2"], w, s_max)
     kappa = kappa_from_K(K, s_max)
+    K_se = _K_standard_error(wh["s2"], w, s_max)
+    inv = signed_inverse_kappa(K, s_max)
+    inv_lo, inv_hi = (signed_inverse_kappa(K - K_se, s_max),
+                      signed_inverse_kappa(K + K_se, s_max))
 
     out = {"kappa": kappa, "K": K, "n_eff": n_eff, "s_max": s_max,
            "fraction_inside": frac_in,
            "var_par": wh["var_par"], "var_perp": wh["var_perp"],
            "kappa_err": float("nan"),
-           "kappa_lo": float("nan"), "kappa_hi": float("nan")}
+           "kappa_lo": float("nan"), "kappa_hi": float("nan"),
+           # 1/kappa continued through the Maxwellian (signed_inverse_kappa),
+           # with the influence-function error; replaced by the bootstrap
+           # interval below when n_boot > 0.
+           "K_se": K_se, "inv_kappa_signed": inv,
+           "inv_kappa_signed_err": 0.5 * (inv_hi - inv_lo)}
 
     if n_boot > 0:
         rng = rng or np.random.default_rng(0)
         p = w / np.sum(w)
-        boots = []
+        boots, inv_boots = [], []
         for _ in range(n_boot):
             idx = rng.choice(n, size=n, replace=True, p=p)
             try:
@@ -262,6 +319,12 @@ def kappa_eff_from_velocities(v_par, v_p1, v_p2, weights=None, *,
                 continue
             Kb, _, _ = _K_from_s2(wb["s2"], np.ones(idx.size), s_max)
             boots.append(kappa_from_K(Kb, s_max))
+            inv_boots.append(signed_inverse_kappa(Kb, s_max))
+        inv_boots = np.asarray(inv_boots, dtype=float)
+        inv_boots = inv_boots[np.isfinite(inv_boots)]
+        if inv_boots.size >= max(8, n_boot // 4):
+            lo_i, hi_i = np.percentile(inv_boots, [16.0, 84.0])
+            out["inv_kappa_signed_err"] = float(0.5 * (hi_i - lo_i))
         boots = np.asarray(boots, dtype=float)
         finite = boots[np.isfinite(boots)]
         if finite.size >= max(8, n_boot // 4):

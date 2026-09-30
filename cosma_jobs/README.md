@@ -491,9 +491,14 @@ What it does:
    and grows in these runs, never a mirror prediction), firehose runs
    `theory`; isotropic controls (`*_isotropic`) run neither;
 5. comparisons of the controlled series, only between runs whose `physics`
-   stage passed (`compare-physics`, `kappa_evolution`), and for the mirror
-   series the publication figures (`paper_figures.py`) in
-   `analysis_results/v6c/paper_figures/`;
+   stage passed (`compare-physics`, `kappa_evolution`, `kappa_dynamics`), and
+   for the mirror series the publication figures (`paper_figures.py`) in
+   `analysis_results/v6c/paper_figures/`. `kappa_dynamics_<series>/` holds the
+   ion kappa index at every particle snapshot against the magnetic fluctuation
+   energy and the local |B|, and the fit ln[(1/kappa)/(1/kappa_0)] = -nu_0 t -
+   c int W dt; the isotropic controls with the same kappa, once analysed in the
+   same tree, are paired automatically and measure nu_0 on their own (the
+   kappa 3 control is the one that failed at start-up and must be resubmitted);
 6. `analysis_results/v6c/quality_report/index.html`: evidence matrix of every
    run and the energy audit across runs (an isotropic control present in the
    tree is paired with its twin and its heating subtracted);

@@ -391,3 +391,43 @@ and several diagnostics showed mostly noise or empty axis range.
   not saved; one legend below the estimator panels; the helicity figure notes
   that counter-propagating waves of the same polarization cancel in sigma_m;
   the energy proxy says what it contains.
+
+## Follow-up 8 (2026-09-30): the kappa index against the magnetic field
+
+Question from the review: how does kappa change in time, and is the change
+organised by the magnetic field at the same instant?
+
+- **What the v6b products already show** (local-field frame, truncated
+  whitened kappa_eff, 6 snapshots): kappa 3.01 -> 4.81 and 5.03 -> 8.92 by
+  t Omega_ci = 158; the bi-Maxwellian run stays Maxwellian. The index is the
+  same in |B| holes, ambient plasma and peaks and flat in b = |B|/B_ref at
+  every time (slope d(1/kappa)/d ln b consistent with 0; hole - peak within
+  +-5e-3): an ion crosses the 4 d_i window in ~2.5 Omega_ci^-1 at the thermal
+  speed, against an e-folding time of 1/kappa of ~280-340 Omega_ci^-1, so no
+  spatial structure in kappa can survive; kappa is a property of the whole
+  population, not of the local field strength. In time, ln[(1/kappa)/(1/kappa_0)]
+  = -nu_0 t - c int_0^t W dt with W = <|dB|^2>/B0^2 fits both runs (R^2 >
+  0.997): c = 0.069 +- 0.007 (kappa 3) and 0.063 +- 0.007 (kappa 5), the same
+  within errors (one c for both runs: 0.066 +- 0.005, chi2/dof 4.7 against
+  4.7 and 5.8 for the separate fits), and nu_0 = (1.45 +- 0.11)e-3 and
+  (2.17 +- 0.11)e-3 Omega_ci. About half of the final decrement is the wave term; the other half
+  acts from t = 0, before the waves grow, as the numerical relaxation of a PIC
+  plasma would. The isotropic controls with the same kappa measure nu_0
+  without waves and decide it.
+- `kappa_dynamics.py` (new): that analysis from products, three figures and
+  the tables; controls are paired automatically in the same tree. Run by the
+  COSMA job for every series; a later job that analyses a control re-runs the
+  comparisons of its series. paper_figures.py `kappa_local` is its first
+  figure.
+- vdf_spatial.py writes the index at *every* particle snapshot
+  (`vdf_kappa_series.csv`, `vdf_kappa_b_series.csv`; ~120 points instead of
+  24), without figures and with the influence-function error of the truncated
+  kurtosis (kappa_eff._K_standard_error; Monte Carlo: equal to the scatter of
+  independent samples within 10 %, like the bootstrap).
+- kappa_eff.signed_inverse_kappa: 1/kappa continued through the Maxwellian
+  (negative = flatter than Maxwellian, e.g. a resonant plateau), so the
+  bi-Maxwellian runs get a value with an error instead of "inf", and the
+  index is continuous on one axis for all runs.
+- kappa_evolution.py draws the local-field index as the main curve and the
+  global-B0 fit faintly: the fit's bump at t Omega_ci ~ 60-90, present even
+  in the bi-Maxwellian run, is the frame artefact, now visible as such.
