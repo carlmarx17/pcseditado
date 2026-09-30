@@ -1023,7 +1023,7 @@ def plot_energy_partition(
     ax.set_xlabel(r"$t\Omega_{ci}$", fontsize=14)
     ax.set_title("Particle energy components (normalised to $E_0$)",
                  fontsize=15, fontweight="bold")
-    ax.legend(fontsize=12)
+    ax.legend(fontsize=11, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2, frameon=False)
     fig.tight_layout()
     _save_paper_figure(fig, output_file(outdir, "particle_energy_partition.png"))
 

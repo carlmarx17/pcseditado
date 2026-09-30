@@ -407,12 +407,18 @@ def main() -> int:
     )
     electron_driven = DRIVEN_SPECIES == "electron"
 
-    if INSTABILITY == "mirror" and not args.force:
-        print("ERROR: el modo mirror es oblicuo y aperiodico; esta relacion de "
-              "dispersion es de propagacion paralela y no lo describe. Usa "
-              "--force solo si sabes que quieres las ramas paralelas de este "
-              "caso (firehose/EMIC), no el mirror.")
-        return 2
+    # T_perp > T_par ions drive two branches: the oblique, aperiodic mirror
+    # mode, which this parallel relation does not describe, and the parallel,
+    # left-hand ion-cyclotron (EMIC) wave, which it describes exactly. In the
+    # v6b "mirror" runs the IC wave is the mode that grows (k_perp = 0,
+    # compressibility ~1e-11), so for these cases the solver writes the
+    # competing IC branch ('plus' channel) and says so; it is never quoted as
+    # a mirror prediction.
+    competitor_only = INSTABILITY == "mirror" and not args.force
+    if competitor_only:
+        print("[NOTE] mirror case: the oblique mirror mode is not a parallel mode and is "
+              "not computed; writing the competing parallel ion-cyclotron branch "
+              "('plus' channel) that the same T_perp > T_par ions drive.")
 
     beta_par_i = args.beta_par if args.beta_par is not None else BETA_I_PAR
     A_i = args.anisotropy if args.anisotropy is not None else BETA_I_PERP_OVER_PAR
@@ -435,7 +441,8 @@ def main() -> int:
     sqrt_mr = math.sqrt(MASS_RATIO)
     k_min = args.k_min if args.k_min is not None else (0.05 * sqrt_mr if electron_driven else 0.02)
     k_max = args.k_max if args.k_max is not None else (2.0 * sqrt_mr if electron_driven else 2.0)
-    polarizations = args.polarizations or (["minus"] if electron_driven else ["plus", "minus"])
+    polarizations = args.polarizations or (["minus"] if electron_driven else
+                                           ["plus"] if competitor_only else ["plus", "minus"])
     guess_fn = (lambda k: whistler_guess(k, MASS_RATIO)) if electron_driven else None
     if electron_driven:
         print("Whistler (electron-driven) branch: 'minus' channel, k d_e = "
@@ -491,7 +498,8 @@ def parse_args():
                    help="default: plus y minus; solo minus (rama whistler) en casos "
                         "impulsados por electrones")
     p.add_argument("--force", action="store_true",
-                   help="permite ejecutar en un caso mirror pese al aviso")
+                   help="en un caso mirror, resuelve ambos canales paralelos en vez de "
+                        "solo la rama ion-ciclotron competidora")
     p.add_argument("--out", default="linear_theory.csv")
     return p.parse_args()
 

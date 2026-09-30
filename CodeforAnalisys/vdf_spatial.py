@@ -773,19 +773,16 @@ def plot_vdf2d_trapping(vdf2d: dict, b_ref_info: dict, step: int,
             ax.plot(par_e, perp_line, color=edge, lw=1.0, ls=":", alpha=0.9)
             ax.plot(-par_e, perp_line, color=edge, lw=1.0, ls=":", alpha=0.9)
 
-        ax.text(0.97, 0.96,
-                "\n".join([rf"$b = {g['b_med']:.3f}$",
-                           rf"trapped $= {g['trapped_fraction']:.3f}$",
-                           rf"iso. ref. $= {g['trapped_fraction_iso']:.3f}$"]),
-                transform=ax.transAxes, ha="right", va="top", fontsize=11,
-                bbox={"facecolor": ps.LEGEND_BG, "edgecolor": ps.GRID_CLR,
-                      "alpha": 0.85, "pad": 3.5})
+        # Numbers under the panel title, not on the distribution.
         ax.set_xlim(par_edges[0], par_edges[-1])
         ax.set_ylim(0.0, perp_edges[-1])
         ax.set_xlabel(r"$(v_\parallel - \langle v_\parallel \rangle)/v_A$")
-        ax.set_title(labels[name], fontsize=14)
+        ax.set_title(labels[name] + "\n" + rf"$b = {g['b_med']:.3f}$, trapped $= {g['trapped_fraction']:.3f}$"
+                     rf" (iso. ref. ${g['trapped_fraction_iso']:.3f}$)", fontsize=12)
     axes[0].set_ylabel(r"$v_\perp/v_A$")
-    axes[0].legend(loc="upper left", framealpha=0.9, fontsize=10.5)
+    handles, names = axes[0].get_legend_handles_labels()
+    fig.legend(handles, names, loc="upper center", bbox_to_anchor=(0.5, -0.02), ncol=2,
+               frameon=False, fontsize=11)
 
     cb = fig.colorbar(pcm, ax=list(axes), pad=0.015, fraction=0.035)
     cb.set_label(r"$f(v_\parallel, v_\perp)$  [probability per $v_A^3$]", labelpad=4)
@@ -898,7 +895,9 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
     ax.set_xlabel(r"$v_\parallel/v_A$")
     ax.set_ylabel(r"$f(v_\parallel)$  [per $v_A$]")
     ax.set_title(r"Parallel VDF conditioned on local $|B|$")
-    ax.legend(framealpha=0.9)
+    # Below the panel: the three populations overlap everywhere inside it.
+    ax.legend(framealpha=0.9, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=3,
+              frameon=False, fontsize=10)
 
     # (e) f(v_perp) per population
     ax = fig.add_subplot(gs[1, 1])
@@ -911,7 +910,8 @@ def plot_overview(bfield, mac, window, groups, profiles, step, outdir, prefix):
     ax.set_xlabel(r"$v_\perp/v_A$")
     ax.set_ylabel(r"$f(v_\perp)$  [per $v_A^2$ of the $\perp$ plane]")
     ax.set_title(r"Perpendicular VDF conditioned on local $|B|$")
-    ax.legend(framealpha=0.9)
+    ax.legend(framealpha=0.9, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=3,
+              frameon=False, fontsize=10)
 
     # (f) numerical summary
     ax = fig.add_subplot(gs[1, 2])
@@ -1189,7 +1189,11 @@ def parse_args():
     p.add_argument("--prefix", default="")
     p.add_argument("--species", choices=["ion", "electron"], default="ion")
     p.add_argument("--steps", nargs="*", type=int)
-    p.add_argument("--max-snapshots", type=int, default=6)
+    # 24 snapshots (every ~6.6 Omega_ci^-1 over 158): the local-field kappa_eff
+    # is the one the paper quotes (the global-B0 fit of kappa_evolution.py
+    # misreads the saturated state), and 6 points could not place the tail
+    # erosion relative to the linear phase.
+    p.add_argument("--max-snapshots", type=int, default=24)
     p.add_argument("--macrocells", type=int, default=8,
                    help="number of blocks per axis inside the prt window")
     p.add_argument("--percentile", type=float, default=15.0,

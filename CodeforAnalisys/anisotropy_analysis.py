@@ -241,9 +241,14 @@ def _draw_thresholds(ax, xmin, xmax, ymin, ymax, electrons=None):
     """
     b = np.logspace(np.log10(xmin * 0.5), np.log10(xmax * 2), 600)
 
+    def visible(x, y):
+        # Only the part inside the frame: vertices beyond it are clipped on
+        # screen but still count as data under a legend placed outside.
+        return np.isfinite(y) & (x >= xmin) & (x <= xmax) & (y >= ymin) & (y <= ymax)
+
     if INSTABILITY == "whistler":
         wh = whistler_threshold(b)
-        ok = (wh >= ymin * 0.7) & (wh <= ymax * 1.5)
+        ok = visible(b, wh)
         ax.plot(b[ok], wh[ok], "--", color=ps.c("#c084fc"), lw=2.2, zorder=8,
                 label=r"Whistler  $1+0.21/\beta_{e\parallel}^{0.6}$")
         ax.fill_between(b, np.clip(wh, ymin, ymax * 2), ymax * 2,
@@ -257,7 +262,7 @@ def _draw_thresholds(ax, xmin, xmax, ymin, ymax, electrons=None):
     curves = ([(mirror_threshold_electrons(b, be, ae), label, ls) for be, ae, label, ls in states]
               or [(mirror_threshold(b), "Mirror reference (cold electrons)", "--")])
     for m, label, ls in curves:
-        ok = (m >= ymin * 0.7) & (m <= ymax * 1.5)
+        ok = visible(b, m)
         ax.plot(b[ok], m[ok], ls, color=ps.c("#ff6b6b"), lw=2.2, zorder=8, alpha=0.9, label=label)
     m = curves[-1][0]
     ax.fill_between(b, np.clip(m, ymin, ymax * 2), ymax * 2,
@@ -266,20 +271,20 @@ def _draw_thresholds(ax, xmin, xmax, ymin, ymax, electrons=None):
     # Firehose (fluid and oblique kinetic approximations)
     bf = b[b > 2.05]
     fh = firehose_threshold(bf)
-    ok = (fh >= ymin * 0.5) & (fh <= ymax * 1.5)
+    ok = visible(bf, fh)
     ax.plot(bf[ok], fh[ok], "--", color=ps.c("#74b9ff"), lw=2.2, zorder=8, alpha=0.9,
             label=r"Firehose  $1-2/\beta_\parallel$")
     ax.fill_between(bf, ymin * 0.3, np.clip(fh, ymin * 0.3, ymax),
                     alpha=0.08, color=ps.c("#0984e3"), zorder=2)
     bfo = b[b > 0.12]
     ofh = oblique_firehose_threshold(bfo)
-    ok = np.isfinite(ofh) & (ofh >= ymin * 0.5) & (ofh <= ymax * 1.5)
+    ok = visible(bfo, ofh)
     ax.plot(bfo[ok], ofh[ok], "-.", color=ps.c("#c084fc"), lw=1.7, zorder=8,
             alpha=0.9, label="Oblique firehose")
 
     # Ion-cyclotron
     ic = ic_threshold(b)
-    ok = (ic >= ymin * 0.7) & (ic <= ymax * 1.5)
+    ok = visible(b, ic)
     ax.plot(b[ok], ic[ok], ":", color=ps.c("#55efc4"), lw=1.8, zorder=8, alpha=0.85,
             label=r"IC  $1+0.43/\beta_\parallel^{0.42}$")
 
@@ -473,9 +478,13 @@ def plot_brazil_accumulated(
             transform=ax.transAxes, ha="center", va="bottom",
             fontsize=BRAZIL_ANNOT, color=ps.MUTED_CLR)
 
-    ax.legend(fontsize=BRAZIL_LEGEND, framealpha=0.55,
-              facecolor=ps.c("#1c2128"), edgecolor=ps.c("#30363d"), labelcolor=TEXT_CLR,
-              loc="upper right")
+    # Below the axes: inside it covered the trajectory labels. A threshold
+    # with no visible segment gets no legend entry.
+    handles, labels = ax.get_legend_handles_labels()
+    keep = [(h, l) for h, l in zip(handles, labels)
+            if not hasattr(h, "get_xdata") or len(h.get_xdata())]
+    ax.legend(*zip(*keep), fontsize=BRAZIL_LEGEND - 3, frameon=False, labelcolor=TEXT_CLR,
+              loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=2)
 
     out = output_path(outdir, "brazil_trayectoria")
     ps.save(fig, out)
@@ -541,8 +550,8 @@ def plot_temporal_evolution(snap_data: list, outdir: Path):
     ax1.set_ylim(max(0.05, np.nanpercentile(finite_a, 1) * 0.8),
                  np.nanpercentile(finite_a, 99) * 1.2)
     _style_ax(ax1, f"Temporal Evolution — {PROFILE_LABEL}")
-    ax1.legend(fontsize=POSTER_LEGEND, framealpha=0.5,
-               facecolor=ps.c("#1c2128"), edgecolor=ps.c("#30363d"), labelcolor=TEXT_CLR)
+    ax1.legend(fontsize=POSTER_LEGEND - 1, framealpha=0.5, loc="upper center",
+               bbox_to_anchor=(0.5, -0.17), ncol=2, frameon=False, labelcolor=TEXT_CLR)
 
     # La razón inversa evita ambigüedad en Firehose: T_par/T_perp decrece
     # mientras A=T_perp/T_par aumenta hacia la isotropía.

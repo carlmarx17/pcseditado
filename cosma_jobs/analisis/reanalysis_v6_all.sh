@@ -30,8 +30,9 @@
 #       its stages as `srun` steps, one node per step, longest first:
 #       manifest preflight -> physics -> spectral (with the accepted linear
 #       phase), every other stage alongside. Mirror runs add the Liouville
-#       closures; firehose runs the parallel linear theory for the
-#       polarization overlay (never for the mirror).
+#       closures and the parallel theory of the competing ion-cyclotron
+#       branch; firehose runs the parallel linear theory for the
+#       polarization overlay.
 #    4. comparisons of the controlled series (only the distribution
 #       changes), only between runs whose physics stage passed:
 #         mirror moderate 20 d_i:  bi-Maxwellian / kappa 5 / kappa 3
@@ -222,8 +223,10 @@ for i in "${!CASES[@]}"; do
     stages=(manifest residuals physics brazil spectral structures energy-exchange estimators
             heatflux particles validate diamagnetic fields vdf-spatial)
     case "$c" in
-        mirror_*)   stages+=(theory-liouville) ;;
-        firehose_*) stages+=(theory) ;;   # parallel theory; never a mirror prediction
+        # mirror: the theory stage solves the competing parallel ion-cyclotron
+        # branch (the mode that grows in these runs), never the mirror mode.
+        mirror_*)   stages+=(theory-liouville theory) ;;
+        firehose_*) stages+=(theory) ;;
     esac
     resume=(); [ "$RESUME" = 1 ] && resume=(--resume)
     say "start runner $c"

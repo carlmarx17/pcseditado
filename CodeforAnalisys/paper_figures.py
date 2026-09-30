@@ -112,6 +112,18 @@ def load_run(root: Path) -> dict:
     run["kt_shell"] = float(shell)
     run["kt_t"] = np.array([_f(r["omega_ci_t"]) for r in sel])
     run["kt_amp"] = np.sqrt(np.clip([_f(r["E_perp"]) for r in sel], 0, None))
+    run["amp_label"] = rf"$|\delta\hat{{B}}_\perp|$, $|k|d_i\simeq{shell:.2f}$ shell (arb. units)"
+    # Exact amplitude of the dominant mode when physical_diagnostics wrote its
+    # history (pipeline >= this revision); the k-shell energy otherwise.
+    history = phys / "mode_amplitude_timeseries.csv"
+    tag = (f"amp_over_B0_kpar{phase['mode']['k_parallel_di']:.3f}"
+           f"_kperp{phase['mode']['k_perp_di']:+.3f}")
+    if history.exists():
+        rows = _rows(history)
+        if rows and tag in rows[0]:
+            run["kt_t"] = np.array([_f(r["omega_ci_t"]) for r in rows])
+            run["kt_amp"] = np.array([_f(r[tag]) for r in rows])
+            run["amp_label"] = rf"$|\delta\hat{{\mathbf{{B}}}}(k_\parallel d_i={run['k_mode']:.2f})|/B_0$"
     aniso = _rows(next((root / "01_anisotropy").glob("*anisotropy_evolution.csv")))
     run["aniso"] = {key: np.array([_f(r.get(key)) for r in aniso]) for key in (
         "omega_ci_t", "anisotropy_global", "beta_parallel_global",
@@ -167,7 +179,7 @@ def plot_mode_amplitude(runs, outdir):
     ax.plot([], [], "--", color=ps.MUTED_CLR, label=r"linear-theory $\gamma$ (shifted $\times1.8$ for visibility)")
     ax.set_yscale("log")
     ax.set_xlabel(r"$t\,\Omega_{ci}$")
-    ax.set_ylabel(rf"$|\delta\hat{{B}}_\perp|$, $|k|d_i\simeq{runs[0]['kt_shell']:.2f}$ shell (arb. units)")
+    ax.set_ylabel(runs[0]["amp_label"])
     ax.set_title(r"Growth of the ion-cyclotron mode ($k_\parallel d_i = 0.31$)")
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.17), ncol=2, frameon=False)
     ps.plain_log_axis(ax, "y")

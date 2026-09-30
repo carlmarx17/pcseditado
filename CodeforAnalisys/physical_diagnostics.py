@@ -1254,6 +1254,9 @@ def plot_vdf2d(
     cb.ax.tick_params(which="both", direction="in", labelsize=12, colors=TEXT_CLR)
     plt.setp(plt.getp(cb.ax, "yticklabels"), color=TEXT_CLR)
     ax.axvline(0.0, color=TEXT_CLR, lw=0.8, ls=":", alpha=0.6)
+    # v_perp starts at 0 in the corner where the first v_par label sits.
+    from matplotlib.ticker import MaxNLocator
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=7, prune="lower"))
     ax.set_xlabel(r"$(v_\parallel-\langle v_\parallel\rangle)/v_A$", fontsize=14, color=TEXT_CLR)
     ax.set_ylabel(r"$v_\perp/v_A$", fontsize=14, color=TEXT_CLR)
     ax.set_title(
@@ -2303,6 +2306,22 @@ class PhysicalDiagnostics:
             row["fastest_accepted"] = int(bool(row["fit_ok"]) and row["gamma"] == fastest)
             row["candidate_snapshot_fractions"] = ";".join(map(str, MODE_CANDIDATE_FRACTIONS))
         dominant_row = table[dominant]
+        # Amplitude history of the modes a paper figure may show: the dominant
+        # one, each branch leader and the ten strongest. Without it the mode
+        # growth can only be re-plotted from the raw fields.
+        keep = sorted({dominant, *leaders.values(),
+                       *np.argsort(-np.nanmax(amplitude, axis=0))[:10].tolist()})
+        history = []
+        for n, time in enumerate(t):
+            entry = {"omega_ci_t": float(time)}
+            for j in keep:
+                mode = modes[j]
+                tag = f"kpar{mode['k_parallel_di']:.3f}_kperp{mode['k_perp_di']:+.3f}"
+                entry[f"amp_over_B0_{tag}"] = float(amplitude[n, j] / abs(B0))
+                entry[f"compressive_fraction_{tag}"] = (
+                    float(power[n, 1, j] / total[n, j]) if total[n, j] > 0 else float("nan"))
+            history.append(entry)
+        _write_csv(self.outdir / "mode_amplitude_timeseries.csv", history)
         _write_csv(self.outdir / "mode_growth_table.csv",
                    [{k: v for k, v in r.items() if k != "_index"}
                     for r in sorted(table, key=lambda r: -r["max_amplitude_over_B0"])])
@@ -2512,10 +2531,15 @@ class PhysicalDiagnostics:
         families = ("whistler",) if DRIVEN_SPECIES == "electron" else ("mirror", "firehose")
         styles = {"mirror": ps.c("#ff7b72"), "firehose": ps.c("#58a6ff"),
                   "whistler": ps.c("#d2a8ff")}
+        x_lo, x_hi = np.nanmin(beta) * 0.85, np.nanmax(beta) * 1.15
         for family in families:
             curve, label = reference_threshold(family, bgrid)
-            visible = np.any((curve >= y_lo) & (curve <= y_hi))
-            ax.plot(bgrid, curve, "--", color=styles[family], label=label if visible else None)
+            # Drawn only inside the frame: clipped vertices would still sit
+            # under the legend placed below the axes.
+            inside = (curve >= y_lo) & (curve <= y_hi) & (bgrid >= x_lo) & (bgrid <= x_hi)
+            visible = np.any(inside)
+            ax.plot(bgrid, np.where(inside, curve, np.nan), "--", color=styles[family],
+                    label=label if visible else None)
             if family == "firehose":
                 ax.fill_between(bgrid, 1e-3, curve, color=styles[family], alpha=0.08,
                                 where=np.isfinite(curve))
@@ -2542,7 +2566,8 @@ class PhysicalDiagnostics:
         ax.set_ylabel(rf"$A_{s}$", color=TEXT_CLR)
         ax.set_title(f"Brazil plot from moment averages ({DRIVEN_SPECIES}s)",
                      color=TEXT_CLR, fontweight="bold")
-        ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
+        ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR,
+                  loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=2, frameon=False)
         cb = fig.colorbar(sc, ax=ax, pad=0.02)
         cb.set_label(r"$t\Omega_{ci}$", color=TEXT_CLR)
         cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
@@ -2627,7 +2652,8 @@ class PhysicalDiagnostics:
         ax.set_ylabel("energy proxy [code]", color=TEXT_CLR)
         ax.set_title("Partial energy proxy", color=TEXT_CLR, fontweight="bold")
         ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR,
-                  fontsize=11)
+                  fontsize=11, loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=3,
+                  frameon=False)
         _savefig(fig, self.outdir / "energy_partition.png")
 
         err = np.array([r.get("energy_proxy_relative_change", np.nan) for r in rows], dtype=float)

@@ -179,3 +179,21 @@ def test_reduced_pdf_is_normalised_with_unit_variance(kappa):
     f = reduced_pdf(np.abs(x), kappa)
     assert np.trapezoid(f, x) == pytest.approx(1.0, rel=1e-4)
     assert np.trapezoid(x ** 2 * f, x) == pytest.approx(1.0, rel=2e-2)
+
+
+def test_theory_of_a_mirror_case_is_the_competing_ion_cyclotron_branch(tmp_path):
+    """The parallel solver no longer refuses a mirror case: it writes the IC
+    ('plus') branch, the mode that grows in the v6b runs, and nothing else."""
+    out = tmp_path / "theory.csv"
+    env = {**os.environ, "PSC_PROFILE": CASE, "MPLCONFIGDIR": str(tmp_path / "mpl")}
+    env.pop("PSC_ANALYSIS_DATA_DIR", None)
+    # Default k range, as the pipeline runs it: the root is followed up from
+    # k d_i = 0.02, where the seed lands on the ion-cyclotron branch.
+    result = subprocess.run([sys.executable, "linear_theory.py", "--case", CASE, "--out", str(out)],
+                            cwd=HERE, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    rows = _rows(out)
+    assert {r["polarization"] for r in rows} == {"plus"}
+    best = max(rows, key=lambda r: float(r["gamma_over_Omegai"]))
+    assert 0.12 < float(best["gamma_over_Omegai"]) < 0.13      # 0.127 at k d_i ~ 0.36
+    assert 0.3 < float(best["omega_r_over_Omegai"]) < 0.6

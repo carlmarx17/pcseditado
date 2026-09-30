@@ -269,3 +269,32 @@ electrons heat to beta_e ~ 8.
   (beta_e||, A_e); CSV columns `beta_e_parallel_global`,
   `anisotropy_e_global`, `marginal_threshold_cold_electrons`.
 - Tests: `test_branches_handedness.py` (15 tests).
+
+## Follow-up 5 (2026-09-30): what the v6b mirror results required
+
+Why: the v6b reanalysis showed that the "mirror" runs are dominated by the
+parallel ion-cyclotron instability (k_par d_i = 0.314, k_perp = 0,
+compressibility ~1e-11, left-hand), with growth rates within 2 % of the
+parallel kinetic theory (0.1226 / 0.1191 / 0.1114 vs 0.1236 / 0.1194 /
+0.1134 Omega_ci for Maxwellian / kappa 5 / kappa 3), and no measurable mirror
+growth. The pipeline was adapted to that result.
+
+- Mode fits start after the quiet-start noise settles, 2 / (k v_th,i): weak
+  modes had been accepted at gamma ~ 2-6 Omega_ci on [0.13, 0.3] Omega_ci^-1.
+- `theory` runs for mirror cases and writes the competing parallel IC branch
+  ('plus' channel only); the runner no longer refuses it and the COSMA job
+  runs it for mirror_*. Polarization maps and growth tables get gamma_theory.
+- omega-k maps are shown in |k| <= 2, |omega| <= 2 (ion units) with the
+  theory at +-k, unstable band bold and damped part thin; the full transform
+  spanned |k d_i| ~ 90 and the modes were a pixel at the origin.
+- `mode_amplitude_timeseries.csv`: amplitude and compressive fraction of the
+  dominant mode, the branch leaders and the ten strongest modes.
+- `vdf_spatial.py` measures the local-field kappa_eff at 24 snapshots
+  (was 6); `kappa_evolution.py` documents that its global-B0 fit reads the
+  wave-tilted distribution at saturation as a tail.
+- Log-scale fluctuation plots skip the t = 0 uniform field
+  (`plot_style.measured_fluctuation`).
+- `paper_figures.py` builds the series figures from analysis products only.
+- Legends and annotations moved off the data in every figure the QA flagged
+  on the v6b runs (Brazil, anisotropy evolution, energy partitions, trapping
+  VDFs, comparisons, kappa evolution).

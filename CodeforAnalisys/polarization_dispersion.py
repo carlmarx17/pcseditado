@@ -453,9 +453,30 @@ def growth_rate_rows(
 
 # ── Plotting ──────────────────────────────────────────────────────────────
 
+#: Displayed (|k_par|, |omega|) of the omega-k maps, in the map's own units:
+#: ion normalization (k d_i, omega/Omega_ci) and electron normalization
+#: (k d_e, omega/|Omega_ce|). The transforms span the grid Nyquist, |k d_i| ~ 90
+#: and |omega| ~ 50 Omega_ci here, where the ion-scale modes are a single pixel
+#: at the origin; the window keeps the region where ion-cyclotron, firehose and
+#: whistler branches live, and the full-range data stay in the transform.
+MAP_WINDOW = {"ion": (2.0, 2.0), "electron": (2.0, 1.0)}
+
+
+def _apply_window(ax, k_par, omega, window):
+    if window is None:
+        return
+    kmax, wmax = window
+    ax.set_xlim(max(-kmax, float(np.min(k_par))), min(kmax, float(np.max(k_par))))
+    ax.set_ylim(max(-wmax, float(np.min(omega))), min(wmax, float(np.max(omega))))
+    # Symmetric limits put -kmax and -wmax labels in the same corner.
+    from matplotlib.ticker import MaxNLocator
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=6, prune="lower"))
+
+
 def plot_dispersion_map(
     power: np.ndarray, k_par: np.ndarray, omega: np.ndarray, title: str, outpath: Path,
     k_label: str, omega_label: str, theory: dict | None = None, vmin: float = -8.0, vmax: float = 0.0,
+    window: tuple[float, float] | None = None,
 ):
     normalized = power / max(float(np.max(power)), np.finfo(float).tiny)
     log_power = np.log10(normalized + 1e-12)
@@ -463,8 +484,17 @@ def plot_dispersion_map(
     fig, ax = _new_dark_fig((9.2, 7.2))
     mesh = ax.pcolormesh(k_par, omega, log_power, shading="auto", cmap=ps.CMAP_SEQUENTIAL, vmin=vmin, vmax=vmax)
     if theory is not None and len(theory["kdi"]):
-        ax.plot(theory["kdi"], theory["omega_r"], "--", color=ps.c("#ff7b72"), lw=1.8, label="linear theory")
-        ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
+        # The branch propagates both ways: omega_r(k) at +k and at -k.
+        # Unstable band (gamma > 0) bold, damped part thin.
+        kdi, wr = np.asarray(theory["kdi"]), np.asarray(theory["omega_r"])
+        grow = np.asarray(theory.get("gamma", np.ones_like(kdi))) > 0
+        for sign in (1.0, -1.0):
+            ax.plot(sign * kdi, np.where(grow, wr, np.nan), "--", color=ps.c("#ff7b72"), lw=2.0,
+                    label=r"linear theory, $\gamma>0$" if sign > 0 else None)
+            ax.plot(sign * kdi, np.where(grow, np.nan, wr), ":", color=ps.c("#ff7b72"), lw=1.0,
+                    label=r"linear theory, damped" if sign > 0 else None)
+        ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR, loc="lower right")
+    _apply_window(ax, k_par, omega, window)
     cb = fig.colorbar(mesh, ax=ax)
     cb.set_label(r"$\log_{10}(P/P_{\max})$", color=TEXT_CLR)
     cb.ax.yaxis.set_tick_params(color=TEXT_CLR)
@@ -477,11 +507,13 @@ def plot_dispersion_map(
     print(f"Saved dispersion map: {outpath}")
 
 
-def plot_sigma_map(sigma: np.ndarray, k_par: np.ndarray, omega: np.ndarray, title: str, outpath: Path, k_label: str, omega_label: str):
+def plot_sigma_map(sigma: np.ndarray, k_par: np.ndarray, omega: np.ndarray, title: str, outpath: Path,
+                   k_label: str, omega_label: str, window: tuple[float, float] | None = None):
     fig, ax = _new_dark_fig((9.2, 7.2))
     cmap = plt.get_cmap("RdBu_r").copy()
     cmap.set_bad(PANEL_BG)  # masked (below-noise-floor) bins blend into the background
     mesh = ax.pcolormesh(k_par, omega, sigma, shading="auto", cmap=cmap, vmin=-1.0, vmax=1.0)
+    _apply_window(ax, k_par, omega, window)
     cb = fig.colorbar(mesh, ax=ax)
     cb.set_label(r"$\sigma_m = (P_+-P_-)/(P_++P_-)$" + "\n" + r"$+1$ at $\omega>0$: left-hand (ion sense)",
                  color=TEXT_CLR)
@@ -778,14 +810,17 @@ def main() -> int:
     plot_dispersion_map(
         power_plus, k_par, omega, fr"$P_+(k_\parallel,\omega)$, {CHANNEL_HANDEDNESS['plus']} — {PROFILE_LABEL}",
         outdir / f"polarization_dispersion_plus_{series['plane']}.png", k_label, omega_label, theories["plus"],
+        window=MAP_WINDOW[normalization],
     )
     plot_dispersion_map(
         power_minus, k_par, omega, fr"$P_-(k_\parallel,\omega)$, {CHANNEL_HANDEDNESS['minus']} — {PROFILE_LABEL}",
         outdir / f"polarization_dispersion_minus_{series['plane']}.png", k_label, omega_label, theories["minus"],
+        window=MAP_WINDOW[normalization],
     )
     plot_sigma_map(
         sigma, k_par, omega, fr"Reduced helicity $\sigma_m(k_\parallel,\omega)$ — {PROFILE_LABEL}",
         outdir / f"polarization_sigma_m_{series['plane']}.png", k_label, omega_label,
+        window=MAP_WINDOW[normalization],
     )
 
     k_target = args.k_target_di

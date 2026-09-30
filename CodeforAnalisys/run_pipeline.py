@@ -142,8 +142,8 @@ def main():
         instability = case_instability(a.case)
     except ValueError as exc:
         p.error(str(exc))
-    if 'theory' in selected and instability == 'mirror':
-        p.error('The parallel linear solver is not a mirror prediction; theory is only for parallel-propagating cases')
+    # For a mirror case the theory stage writes the competing parallel
+    # ion-cyclotron branch, never a mirror prediction (linear_theory.py).
     data = a.data_dir.resolve(); out = (a.results_root / a.case).resolve()
     if not data.is_dir(): p.error('Data directory does not exist')
     # A job that overrides grid, ppc, nmax or cadence writes the values it ran
