@@ -185,6 +185,20 @@ def style_axes(ax, title: str = "") -> None:
         ax.set_title(title, color=TEXT_CLR, fontweight="bold")
 
 
+def measured_fluctuation(t) -> np.ndarray:
+    """Mask of the samples of a fluctuation time series that can go on a log axis.
+
+    At t = 0 the field is the uniform initial B0: dB there is float rounding
+    (1e-8 to 1e-12 of B0), not a fluctuation, and on a log axis that single
+    point stretches the scale by several decades and flattens the noise
+    level, the linear growth and the saturation into a thin band. PIC noise
+    is established within a few plasma periods, well before the first output
+    snapshot, so every t > 0 sample is a measurement.
+    """
+    t = np.asarray(t, dtype=float)
+    return np.isfinite(t) & (t > 0.0)
+
+
 def plain_log_axis(ax, which: str = "both") -> None:
     """Readable labels on a log axis whose limits are already set.
 

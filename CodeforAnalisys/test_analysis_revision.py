@@ -139,3 +139,24 @@ def test_heldout_models_do_not_certify_global_mixture():
     assert np.isfinite(r['heldout_mse_maxwellian']) and np.isfinite(r['heldout_mse_kappa'])
     assert 'not_physical_identification' in r['model_validation_status']
     assert 'mixture' in r['mixture_ambiguity']
+
+
+def test_initial_uniform_field_does_not_stretch_log_axes(tmp_path):
+    """dB(t=0) is float rounding of the uniform B0; it must not set the log scale."""
+    import matplotlib.pyplot as plt
+    import compare_physical_cases as cpc
+    import plot_style as ps
+    t = np.linspace(0.0, 40.0, 81)
+    db = np.where(t > 0, 1e-3 * np.exp(0.2 * np.minimum(t, 25.0)), 1e-12)
+    assert list(ps.measured_fluctuation([0.0, 0.5, np.nan])) == [False, True, False]
+    rows = [{"omega_ci_t": ti, "delta_B_vec_rms_over_B0": v} for ti, v in zip(t, db)]
+    captured = {}
+    original = cpc._save
+    cpc._save = lambda fig, path: captured.setdefault("ylim", fig.axes[0].get_ylim())
+    try:
+        cpc.plot_timeseries([{"name": "run", "rows": rows}], ["delta_B_vec_rms_over_B0"],
+                            ["dB"], tmp_path / "x.png", "t", yscale="log")
+    finally:
+        cpc._save = original
+        plt.close("all")
+    assert captured["ylim"][0] > 1e-4

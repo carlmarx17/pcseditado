@@ -238,6 +238,8 @@ def plot_timeseries(cases: list[dict], ykeys: list[str], labels: list[str], path
         color = ps.c(CASE_COLORS[i % len(CASE_COLORS)])
         for j, (ykey, label) in enumerate(zip(ykeys, labels)):
             y = np.array([r[ykey] for r in rows], dtype=float)
+            if yscale == "log":   # t = 0 is the uniform initial field (ps.measured_fluctuation)
+                y = np.where(ps.measured_fluctuation(t_all), y, np.nan)
             # Columns sampled at the particle cadence (anisotropy, heat flux)
             # are NaN on every other field snapshot of the merged table; a
             # line through the NaNs draws nothing, so plot the finite samples.

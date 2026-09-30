@@ -1636,8 +1636,9 @@ def plot_growth(growth: dict, outdir: Path):
     fig.patch.set_facecolor(DARK_BG)
     _style_axes(ax)
     series = growth.get("series_label", r"|\delta\mathbf{B}|_{\rm rms}")
-    ax.plot(growth["time"], growth["ln_delta_b"], color=ps.c("#58a6ff"),
-            label=rf"$\ln {series}$", **_series_style(len(growth["time"])))
+    shown = ps.measured_fluctuation(growth["time"])
+    ax.plot(np.asarray(growth["time"])[shown], np.asarray(growth["ln_delta_b"])[shown],
+            color=ps.c("#58a6ff"), label=rf"$\ln {series}$", **_series_style(int(shown.sum())))
     err = growth.get("gamma_err", float("nan"))
     err_txt = rf"\pm{err:.2g}" if np.isfinite(err) else ""
     status = "" if growth.get("fit_ok") else " (not valid)"

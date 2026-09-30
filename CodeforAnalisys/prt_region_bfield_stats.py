@@ -173,6 +173,10 @@ def time_average(times: np.ndarray, series: dict, window: tuple[float, float]) -
 def plot_series(times, series, noise_window, avg_window, averages, b0,
                 outname: Path) -> None:
     fig, (ax_db, ax_b) = plt.subplots(2, 1, figsize=(11.0, 9.0), sharex=True)
+    # t = 0 is the uniform initial field: kept out of the log panel only.
+    fluct = ps.measured_fluctuation(times)
+    series = {k: np.where(fluct, np.asarray(v, dtype=float), np.nan) if k.startswith("dB") else v
+              for k, v in series.items()}
 
     ax_db.semilogy(times, series["dB_rms_raw"] / b0, color=ps.c("#999999"),
                    lw=1.2, label="raw")

@@ -504,7 +504,7 @@ def plot_mode_growth(
     fit = _fit_growth_rate(times_norm, amplitude)
 
     fig, ax = _new_dark_fig((8.5, 5.5))
-    valid = power > 0
+    valid = (power > 0) & ps.measured_fluctuation(times_norm)
     if np.count_nonzero(valid) < 2:
         ax.text(0.5, 0.5, "no measurable power in this mode", transform=ax.transAxes,
                 ha="center", va="center", color=TEXT_CLR, fontsize=13)

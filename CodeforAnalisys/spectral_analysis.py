@@ -726,7 +726,7 @@ class SpectralAnalyzer:
 
         fig, ax = _new_dark_fig((8.5, 5.5))
         ax.set_xlim(float(np.min(times)), float(np.max(times)))
-        valid = amplitude > 0
+        valid = (amplitude > 0) & ps.measured_fluctuation(times)
         if np.count_nonzero(valid) < 2:
             # This channel never rose above zero/floating-point noise (e.g. a
             # non-fluctuating parallel field): say so instead of leaving a

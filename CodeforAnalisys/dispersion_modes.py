@@ -216,6 +216,8 @@ def plot_mode_fit(result, output):
     else:
         m = result["mode_candidates"][0]
         t, amp, phase = trace["times"], trace["amplitude"], trace["phase"]
+        shown = ps.measured_fluctuation(t)   # t = 0: uniform initial field
+        t, amp, phase = np.asarray(t)[shown], np.asarray(amp)[shown], np.asarray(phase)[shown]
         tc = t - t.mean()
         amp = amp / amp.max()
         fit_amp = np.exp(np.mean(np.log(amp)) + m["gamma_over_omega_ci"] * tc)
