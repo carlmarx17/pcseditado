@@ -156,3 +156,12 @@ def test_mirror_threshold_with_measured_electrons():
     at5 = lambda be, ae: float(mirror_threshold_electrons(5.0, be, ae))
     assert at5(0, 1) < at5(1, 1) < at5(8, 1) < 1.01 * at5(0, 1)
     assert at5(8, 1.05) < at5(8, 1) - 0.05 and at5(8, 0.95) > at5(8, 1) + 0.05
+
+
+def test_modes_are_fitted_only_after_the_noise_settles():
+    """v6b: weak modes 'grew' at 2-6 Omega_ci on [0.13, 0.3] while the quiet-start
+    noise built up; the ion transit time 1/(k v_th,i) excludes that interval."""
+    import physical_diagnostics as pd
+    # mirror moderate: beta_i|| = 5, A_i = 2 -> v_th,perp / v_A = sqrt(5)
+    assert pd.noise_settling_time(2 * np.pi / 20) == pytest.approx(2 / (0.314159 * 5 ** 0.5), rel=1e-4)
+    assert pd.noise_settling_time(0.0) == 0.0

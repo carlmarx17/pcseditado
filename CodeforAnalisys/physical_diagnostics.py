@@ -770,6 +770,25 @@ IC_MAX_THETA_DEG = 30.0
 IC_MAX_COMPRESSIBILITY = 0.2
 
 
+#: Noise-settling time of a Fourier mode, in units of 1/(k v_th,i). The
+#: quiet start has no fluctuations: the ion noise of a mode at wavenumber k
+#: builds up over the ion transit time 1/(k v_th,i), and a mode followed from
+#: t = 0 "grows" by a factor of a few during that time at a rate unrelated
+#: to any instability (v6b mirror runs: gamma ~ 2-6 Omega_ci on windows
+#: [0.13, 0.3-1.8] Omega_ci^-1 for weak modes). Real linear phases start from
+#: the settled noise, so a mode is fitted only on t >= NOISE_SETTLING_TRANSITS
+#: / (k v_th,i) (ion-driven cases; v_th,i from the larger of T_par, T_perp).
+NOISE_SETTLING_TRANSITS = 2.0
+
+
+def noise_settling_time(k_di: float) -> float:
+    """Omega_ci t before which a mode at |k| d_i is still settling to its noise level."""
+    if DRIVEN_SPECIES != "ion" or not k_di > 0:
+        return 0.0
+    vth_over_va = np.sqrt(BETA_I_PAR * max(1.0, TI_PERP / TI_PAR) / 2.0)
+    return NOISE_SETTLING_TRANSITS / (k_di * vth_over_va)
+
+
 def classify_mode(theta_kB_deg: float, compressibility: float) -> str:
     """Geometric branch of one Fourier mode of dB (see the comment above)."""
     if not (np.isfinite(theta_kB_deg) and np.isfinite(compressibility)):
@@ -2235,7 +2254,8 @@ class PhysicalDiagnostics:
         anisotropy = TI_PERP / TI_PAR
         table, fits = [], []
         for j, mode in enumerate(modes):
-            fit = growth_rate(t, amplitude[:, j], t_start=t_start, t_end=t_end)
+            settled = t >= noise_settling_time(mode["k_di"])
+            fit = growth_rate(t[settled], amplitude[settled, j], t_start=t_start, t_end=t_end)
             fits.append(fit)
             # Compressibility of the mode where it is measured as a linear
             # mode (the accepted fit window), otherwise power-weighted over
