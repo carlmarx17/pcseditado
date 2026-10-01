@@ -53,6 +53,8 @@ Outputs (--outdir):
   kappa_field_evolution.png  1/kappa(t), the model-free tail content P(|dv_par| > 3 sigma)
                              and the fluctuation energy at the same times
   kappa_relaxation.png       the two-term relaxation model and the rate against W
+  kappa_energy_collapse.png  kappa against the accumulated fluctuation energy, and the
+                             wave-driven part of every run on the single line -c F
   kappa_vs_local_field.png   1/kappa(b) at several times, S(t), hole - peak(t)
   kappa_shape_evolution.png  f(v_par) over the Gaussian of the same variance in
                              time and at four instants, with the cyclotron
@@ -621,6 +623,55 @@ def plot_relaxation(runs: list[dict], colors: dict, fits: dict, rates: dict, pat
     return path
 
 
+def plot_energy_collapse(runs: list[dict], colors: dict, fits: dict, joint: dict | None,
+                         path: Path) -> Path | None:
+    """The index against the accumulated fluctuation energy, with the background removed.
+
+    (a) kappa itself against F = int W dt: the runs start from different
+    kappa_0 and do not share a curve. (b) the wave-driven part of the change,
+    ln[(1/kappa)/(1/kappa_0)] + nu_0 t, against F: if the erosion of the tail
+    is proportional to the fluctuation energy with one coupling, every run
+    falls on the single line -c F.
+    """
+    shown = [r for r in runs if not r["control"] and fits.get(r["name"])
+             and np.isfinite(fits[r["name"]].get("c", np.nan))]
+    if not shown:
+        return None
+    fig, (left, right) = plt.subplots(1, 2, figsize=(11.6, 4.7), gridspec_kw={"wspace": 0.3})
+    f_max = 0.0
+    for run in shown:
+        col, fit = colors[run["name"]], fits[run["name"]]
+        nu0 = joint["nu0"][run["name"]] if joint else fit["nu0"]
+        f, tt = fit["F"], fit["t"] - fit["t0"]
+        f_max = max(f_max, float(f.max()))
+        kappa = 1.0 / (fit["inv0"] * np.exp(fit["y"]))
+        left.plot(np.concatenate([[0.0], f]), np.concatenate([[1.0 / fit["inv0"]], kappa]), "o-", ms=5,
+                  lw=1.6, color=col, label=run["label"])
+        right.errorbar(f, fit["y"] + nu0 * tt, yerr=fit["y_err"], fmt="o", ms=5, capsize=2.5,
+                       color=col, label=run["label"])
+    c = joint["c"] if joint else np.mean([fits[r["name"]]["c"] for r in shown])
+    c_err = joint["c_err"] if joint else float("nan")
+    ff = np.linspace(0.0, 1.05 * f_max, 50)
+    right.plot(ff, -c * ff, "-", color=ps.MUTED_CLR, lw=1.5,
+               label=rf"$-c\,F$, $c = {c:.3f}$" + (rf"$\,\pm\,{c_err:.3f}$" if np.isfinite(c_err) else ""))
+    if np.isfinite(c_err):
+        right.fill_between(ff, -(c + c_err) * ff, -(c - c_err) * ff, color=ps.MUTED_CLR, alpha=0.18, lw=0)
+    right.axhline(0.0, color=ps.MUTED_CLR, lw=0.8)
+    for ax in (left, right):
+        ax.set_xlabel(r"$F=\int_0^t W\,\Omega_{ci}\,dt'$")
+    fig.suptitle(r"Ion $\kappa$ against the accumulated fluctuation energy, "
+                 r"$W=\langle|\delta\mathbf{B}|^2\rangle/B_0^2$", fontsize=13, y=1.0)
+    left.set_ylabel(r"$\kappa$ (local-field frame)")
+    left.set_title("(a) the index against the accumulated wave energy", fontsize=12)
+    right.set_ylabel(r"$\ln[(1/\kappa)/(1/\kappa_0)] + \nu_0 t$")
+    right.set_title("(b) wave-driven part: one line for every run", fontsize=12)
+    handles, labels = right.get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=len(handles),
+               frameon=False, fontsize=10)
+    ps.save(fig, path)
+    return path
+
+
 def plot_local_field(runs: list[dict], colors: dict, slopes: dict, relax: dict, path: Path) -> Path | None:
     profiled = [r for r in runs if any(np.isfinite(b["inv"]) and b["count"] >= MIN_BIN_COUNT
                                        for b in r["b_profiles"])
@@ -956,6 +1007,7 @@ def analyse(roots: list, controls: list, outdir: Path) -> dict:
     plot_relaxation(everything, colors, relax, rates, outdir / "kappa_relaxation.png", joint)
     plot_local_field([r for r in everything if not r["control"]] or everything, colors, slopes,
                      relax, outdir / "kappa_vs_local_field.png")
+    plot_energy_collapse(everything, colors, relax, joint, outdir / "kappa_energy_collapse.png")
     plot_shape_evolution(everything, colors, outdir / "kappa_shape_evolution.png")
     _write(outdir / "kappa_shape_metrics.csv", [row for r in everything for row in shape_metrics(r)])
 

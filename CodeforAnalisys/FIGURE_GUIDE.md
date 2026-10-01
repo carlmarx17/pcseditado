@@ -65,6 +65,26 @@ explanation of section 1.
 ion-cyclotron contour. Shows that the runs relax towards the ion-cyclotron
 contour, and why no mirror growth is measured.
 
+### 3b. Mirror against ion-cyclotron
+
+`mirror_ic_competition/mirror_drive.png` (script `mirror_ic_competition.py`,
+from products)
+
+![mirror drive](../analysis_results/v6b/mirror_ic_competition/mirror_drive.png)
+
+Ion anisotropy and the mirror drive Gamma = beta_perp (A - 1) - 1 (Hellinger
+2007, with the measured electrons and with cold electrons) through the runs.
+
+**Result.** Gamma = 8.6 at t = 0 and about 1 at the end: the mirror mode is
+linearly unstable for the whole run and still does not grow (oblique dB
+0.003-0.008 B0 against 0.20-0.25 for the ion-cyclotron wave). The threshold
+does not explain its absence. Candidates, not separated by these runs: the
+ion-cyclotron mode grows at least as fast and removes the anisotropy; the box
+is 8.9 rho_i, so its first oblique mode sits at k_perp rho_i = 0.70; the 2D
+geometry favours the ion-cyclotron wave (Shoji et al. 2009). The near-threshold
+mirror formula gives ~0.12 Omega_ci but is outside its validity (Gamma << 1);
+a quantitative comparison needs an oblique kinetic solver or a larger box.
+
 ## 4. Velocity distributions
 
 | Figure | Where | Shows |
@@ -123,6 +143,15 @@ is proportional to the fluctuation energy with the same coupling. nu_0 =
 controls (same kappa, no waves) decide whether it is numerical. Do not state
 its origin before they are analysed.
 
+### 5b-bis. `kappa_energy_collapse.png`
+
+![kappa against wave energy](../analysis_results/v6b/kappa_dynamics_mirror_moderate_kappa/kappa_energy_collapse.png)
+
+The same result as 5b in the form to show: (a) the index against the
+accumulated fluctuation energy F = int W dt; (b) the wave-driven part of the
+change, after removing nu_0 t, against F. Both kappa runs fall on one line of
+slope -c. Prefer this figure over 5b in a talk.
+
 ### 5c. `kappa_vs_local_field.png`
 
 ![kappa vs local field](../analysis_results/v6b/kappa_dynamics_mirror_moderate_kappa/kappa_vs_local_field.png)
@@ -173,6 +202,7 @@ and what is the numerical setup.
 |---|---|
 | Ion-cyclotron mode, growth rate vs kappa agrees with theory | v6b, solid |
 | No measurable mirror growth | v6b, solid |
+| Why the mirror mode does not grow although Gamma > 0 | open; needs an oblique solver or a larger / 3D box |
 | kappa increases in time; independent of local \|B\| | v6b, 6 snapshots; firmer with v6c |
 | Wave-driven erosion with one coupling c | v6b, 2 runs x 5 points; needs v6c |
 | Flattening at saturation, not a tail | v6b tail fraction (global frame); direct test is 5d in v6c |
@@ -184,6 +214,7 @@ and what is the numerical setup.
 R=../analysis_results/v6b
 python kappa_dynamics.py $R/mirror_bimaxwellian_moderate $R/mirror_bikappa5_moderate $R/mirror_bikappa3_moderate --outdir $R/kappa_dynamics_mirror_moderate_kappa
 python paper_figures.py $R/mirror_bimaxwellian_moderate $R/mirror_bikappa5_moderate $R/mirror_bikappa3_moderate --outdir $R/paper_figures_new
+python mirror_ic_competition.py $R/mirror_bimaxwellian_moderate $R/mirror_bikappa5_moderate $R/mirror_bikappa3_moderate --outdir $R/mirror_ic_competition
 python kappa_evolution.py --case "bi-Maxwellian=$R/mirror_bimaxwellian_moderate/09_physical_diagnostics" --case "kappa5=$R/mirror_bikappa5_moderate/09_physical_diagnostics" --case "kappa3=$R/mirror_bikappa3_moderate/09_physical_diagnostics" --outdir $R/kappa_evolution_new
 ```
 
