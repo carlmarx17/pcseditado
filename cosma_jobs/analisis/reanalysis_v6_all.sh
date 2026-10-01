@@ -307,6 +307,12 @@ compare_series() {  # compare_series NAME LABEL=CASE... (all must have succeeded
             "$PY" paper_figures.py "${roots[@]}" --outdir "$NEW_ROOT/paper_figures/$name" \
             > "$LOG_DIR/paper_figures_$name.log" 2>&1
         echo $? > "$LOG_DIR/comparison_${name}.paper-figures.rc"
+        # Linear theory re-evaluated with the moments and kappa measured at
+        # each time, against the growth the mode has then (products only).
+        run "${STEP[@]}" --job-name="traj_lin:$name" \
+            "$PY" trajectory_linear_theory.py "${roots[@]}" --outdir "$NEW_ROOT/trajectory_linear_theory_$name" \
+            > "$LOG_DIR/trajectory_linear_theory_$name.log" 2>&1
+        echo $? > "$LOG_DIR/comparison_${name}.trajectory-linear-theory.rc"
     fi
 }
 compare_series mirror_moderate_kappa \

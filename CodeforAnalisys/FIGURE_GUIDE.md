@@ -182,6 +182,43 @@ diffusion. Timing is read against the dash-dot line (end of linear phase).
 Local-field index (thick) over the old global-B0 kappa fit (faint). The bump of
 the faint curve at saturation is the fit misreading the flattening, not a tail.
 
+## 5f. Instantaneous linear theory along the run
+
+`trajectory_linear_theory_<series>/trajectory_linear_theory.png` (script
+`trajectory_linear_theory.py`, from products, about a minute)
+
+![instantaneous linear theory](../analysis_results/v6b/trajectory_linear_theory/trajectory_linear_theory.png)
+
+**Why.** The usual comparison with linear theory is made once, at t = 0. Here
+the dispersion relation is solved at every time for a bi-Maxwellian / bi-kappa
+with the ion beta, anisotropy, electron beta and kappa measured then, at the
+wavenumber of the dominant mode, and compared with the growth rate the mode
+has at that time (slope of ln|dB_k| in 15 Omega_ci^-1 windows). It tests the
+closure of quasi-linear models, which evolve the moments and keep the shape.
+
+**How to read.** Top: where the solid curve falls below the dashed one, the
+moments still hold free energy that the mode no longer taps. Bottom: the
+measured anisotropy against the anisotropy at which that mode is marginal
+(gamma = 0); the dotted line marks where the mode stops growing. If the
+closure held, the solid curve would reach the dashed one there.
+
+**Result (v6b).** Linear phase: the two rates agree. Bi-Maxwellian: the mode
+stops growing at t Omega_ci = 126, where the linear rate is +0.002 and the
+anisotropy is 0.008 above marginal: saturation at marginal stability. Bi-kappa:
+the mode stops with the linear rate still +0.009 (kappa 5) and +0.019
+(kappa 3) and the anisotropy 0.04 and 0.09 above marginal (0.07 and 0.07 with
+the particle estimate in the local-field frame, `trajectory_saturation.csv`).
+The marginal anisotropy of the mode is the same for the three, 1.35. Using the
+initial kappa or kappa(t) changes the linear rate by less than 0.002.
+
+**What it is for.** The kappa runs keep anisotropy that a bi-kappa with the
+measured moments says is still unstable: after saturation the distribution is
+not a bi-kappa. Caveats to state: one unstable mode in the box (saturation by
+trapping is possible), kappa runs lag by about 10 Omega_ci^-1 and are still
+relaxing at the end, and the kappa 5 / kappa 3 ordering depends on the
+anisotropy estimator. The direct test is the anisotropy resolved in parallel
+velocity (v6c particles).
+
 ## 6. Numerical controls
 
 | Figure | Where | For |
@@ -206,6 +243,7 @@ and what is the numerical setup.
 | kappa increases in time; independent of local \|B\| | v6b, 6 snapshots; firmer with v6c |
 | Wave-driven erosion with one coupling c | v6b, 2 runs x 5 points; needs v6c |
 | Flattening at saturation, not a tail | v6b tail fraction (global frame); direct test is 5d in v6c |
+| Bi-kappa runs saturate above the marginal anisotropy of the mode | v6b, moments and particles agree in sign; single-mode box |
 | Origin of the background rate nu_0 | open; needs the isotropic kappa controls |
 
 ## 7. Regenerating the linked figures (seconds, from products)
@@ -215,6 +253,7 @@ R=../analysis_results/v6b
 python kappa_dynamics.py $R/mirror_bimaxwellian_moderate $R/mirror_bikappa5_moderate $R/mirror_bikappa3_moderate --outdir $R/kappa_dynamics_mirror_moderate_kappa
 python paper_figures.py $R/mirror_bimaxwellian_moderate $R/mirror_bikappa5_moderate $R/mirror_bikappa3_moderate --outdir $R/paper_figures_new
 python mirror_ic_competition.py $R/mirror_bimaxwellian_moderate $R/mirror_bikappa5_moderate $R/mirror_bikappa3_moderate --outdir $R/mirror_ic_competition
+python trajectory_linear_theory.py $R/mirror_bimaxwellian_moderate $R/mirror_bikappa5_moderate $R/mirror_bikappa3_moderate --outdir $R/trajectory_linear_theory
 python kappa_evolution.py --case "bi-Maxwellian=$R/mirror_bimaxwellian_moderate/09_physical_diagnostics" --case "kappa5=$R/mirror_bikappa5_moderate/09_physical_diagnostics" --case "kappa3=$R/mirror_bikappa3_moderate/09_physical_diagnostics" --outdir $R/kappa_evolution_new
 ```
 
