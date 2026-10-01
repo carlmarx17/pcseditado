@@ -5,6 +5,12 @@ question of the thesis or the paper it answers. Paths are relative to
 `analysis_results/v6c/`. Numbers quoted are from the v6b products (three
 moderate mirror runs, 6 particle snapshots); v6c repeats them with ~120.
 
+The images are the v6b figures, linked from `analysis_results/v6b/` next to this
+folder. That tree is not tracked in git (data policy), so they show in a local
+preview once the figures exist there (run the three commands of section 7, or
+rsync the folders from COSMA) and not on GitHub. Sections 4 and 5d have no image
+yet: their figures need the v6c job.
+
 Run names: `<case>` is e.g. `mirror_bikappa3_moderate`; `<series>` is
 `mirror_moderate_kappa`.
 
@@ -17,6 +23,10 @@ Run names: `<case>` is e.g. `mirror_bikappa3_moderate`; `<series>` is
 | `mode_amplitude.png`, `growth_rate_vs_kappa.png` | `paper_figures/<series>/` |
 | `growth_rate_fit_mode*.png` | `<case>/09_physical_diagnostics/` |
 | `polarization_dispersion_{plus,minus}_*.png`, `mode_growth_*.png` | `<case>/04_spectra/` |
+
+![mode amplitude](../analysis_results/v6b/paper_figures_new/mode_amplitude.png)
+
+![growth rate vs kappa](../analysis_results/v6b/paper_figures_new/growth_rate_vs_kappa.png)
 
 **Why.** The domain rms of dB is dominated by particle noise and hides the
 growth; the amplitude of the dominant Fourier mode rises two decades. Curves
@@ -36,6 +46,8 @@ rate drops with the suprathermal tail, in agreement with kinetic theory within
 
 `paper_figures/<series>/resonance.png`
 
+![resonance](../analysis_results/v6b/paper_figures_new/resonance.png)
+
 Reduced f(v_par) of the three distributions at equal T_par with the
 cyclotron-resonant velocity marked. A kappa plasma of the same temperature has
 fewer ions at the resonance (0.89 for kappa 5, 0.78 for kappa 3, relative to
@@ -45,6 +57,8 @@ explanation of section 1.
 ## 3. Where the plasma sits relative to the thresholds
 
 `paper_figures/<series>/brazil_trajectories.png`
+
+![Brazil trajectories](../analysis_results/v6b/paper_figures_new/brazil_trajectories.png)
 
 (beta_i_par, A_i) trajectories with the mirror threshold computed with the
 *measured* electrons (they heat numerically from beta_e = 1 to ~8) and the
@@ -81,6 +95,8 @@ products in seconds).
 
 ### 5a. `kappa_field_evolution.png`
 
+![kappa and field evolution](../analysis_results/v6b/kappa_dynamics_mirror_moderate_kappa/kappa_field_evolution.png)
+
 Three panels on one time axis: 1/kappa of the ions in the local-field frame
 (0 = Maxwellian, kappa on the right axis); the fraction of ions beyond 3 sigma
 in v_par relative to a Gaussian; the fluctuation energy <|dB|^2>/B0^2 (solid)
@@ -92,6 +108,8 @@ of the kappa runs only decreases. In the bi-Maxwellian run the tail content
 wave flattens the distribution, it does not create a tail.
 
 ### 5b. `kappa_relaxation.png`
+
+![kappa relaxation](../analysis_results/v6b/kappa_dynamics_mirror_moderate_kappa/kappa_relaxation.png)
 
 Fit ln[(1/kappa)/(1/kappa_0)] = -nu_0 t - c int W dt, W = <|dB|^2>/B0^2, and
 the windowed relaxation rate against W.
@@ -106,6 +124,8 @@ controls (same kappa, no waves) decide whether it is numerical. Do not state
 its origin before they are analysed.
 
 ### 5c. `kappa_vs_local_field.png`
+
+![kappa vs local field](../analysis_results/v6b/kappa_dynamics_mirror_moderate_kappa/kappa_vs_local_field.png)
 
 1/kappa against the local b = |B|/B_ref at several times, the slope
 d(1/kappa)/d ln b and the |B|-hole minus peak difference in time.
@@ -127,6 +147,8 @@ diffusion. Timing is read against the dash-dot line (end of linear phase).
 5a; it can also refute it.
 
 ### 5e. `kappa_evolution_<series>/kappa_evolution.png`
+
+![kappa evolution, local vs global frame](../analysis_results/v6b/kappa_evolution_new/kappa_evolution.png)
 
 Local-field index (thick) over the old global-B0 kappa fit (faint). The bump of
 the faint curve at saturation is the fit misreading the flattening, not a tail.
@@ -155,6 +177,15 @@ and what is the numerical setup.
 | Wave-driven erosion with one coupling c | v6b, 2 runs x 5 points; needs v6c |
 | Flattening at saturation, not a tail | v6b tail fraction (global frame); direct test is 5d in v6c |
 | Origin of the background rate nu_0 | open; needs the isotropic kappa controls |
+
+## 7. Regenerating the linked figures (seconds, from products)
+
+```bash
+R=../analysis_results/v6b
+python kappa_dynamics.py $R/mirror_bimaxwellian_moderate $R/mirror_bikappa5_moderate $R/mirror_bikappa3_moderate --outdir $R/kappa_dynamics_mirror_moderate_kappa
+python paper_figures.py $R/mirror_bimaxwellian_moderate $R/mirror_bikappa5_moderate $R/mirror_bikappa3_moderate --outdir $R/paper_figures_new
+python kappa_evolution.py --case "bi-Maxwellian=$R/mirror_bimaxwellian_moderate/09_physical_diagnostics" --case "kappa5=$R/mirror_bikappa5_moderate/09_physical_diagnostics" --case "kappa3=$R/mirror_bikappa3_moderate/09_physical_diagnostics" --outdir $R/kappa_evolution_new
+```
 
 Detailed rationale and the defects each change fixed: `IMPLEMENTATION_V6.md`,
 follow-ups 7 and 8.
