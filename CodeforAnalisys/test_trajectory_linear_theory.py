@@ -4,7 +4,7 @@ import pytest
 
 import trajectory_linear_theory as tlt
 
-STATE = {"beta_i": 5.0, "a_i": 2.0, "beta_e": 1.0, "a_e": 1.0, "mass_ratio": 200.0, "c_over_va": 12.5}
+STATE = {"beta_i": 5.0, "a_i": 2.0, "beta_e": 1.0, "a_e": 1.0, "mass_ratio": 200.0, "c_over_va": 176.8}
 K = 0.3142
 
 
@@ -43,3 +43,8 @@ def test_bi_kappa_marginal_anisotropy_is_extrapolated_from_the_growing_side():
     a_marginal, _ = tlt.marginal_anisotropy(STATE, 3.0, K)
     assert 1.2 < a_marginal < 1.5
     assert np.imag(tlt.linear_root(STATE, 3.0, K, a_i=a_marginal + 0.05)) > 0
+
+
+def test_c_over_va_uses_the_ion_alfven_speed_not_the_b0_input():
+    # The profile key vA_over_c is B0 (historical C++ name): v_A/c = B0 / sqrt(m_i/m_e).
+    assert tlt.c_over_va({"mass_ratio": 200.0, "vA_over_c": 0.08}) == pytest.approx(176.78, abs=0.01)

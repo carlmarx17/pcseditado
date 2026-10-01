@@ -204,7 +204,7 @@ closure held, the solid curve would reach the dashed one there.
 
 **Result (v6b).** Linear phase: the two rates agree. Bi-Maxwellian: the mode
 stops growing at t Omega_ci = 126, where the linear rate is +0.002 and the
-anisotropy is 0.008 above marginal: saturation at marginal stability. Bi-kappa:
+anisotropy is 0.007 above marginal: saturation at marginal stability. Bi-kappa:
 the mode stops with the linear rate still +0.009 (kappa 5) and +0.019
 (kappa 3) and the anisotropy 0.04 and 0.09 above marginal (0.07 and 0.07 with
 the particle estimate in the local-field frame, `trajectory_saturation.csv`).
@@ -218,6 +218,35 @@ trapping is possible), kappa runs lag by about 10 Omega_ci^-1 and are still
 relaxing at the end, and the kappa 5 / kappa 3 ordering depends on the
 anisotropy estimator. The direct test is the anisotropy resolved in parallel
 velocity (v6c particles).
+
+## 5g. Where the anisotropy is left: A(v_par)
+
+`resonant_anisotropy_<series>/resonant_anisotropy.png` (script
+`resonant_anisotropy.py`: `measure` on the raw particle and field snapshots of
+each run, `plot` from its products). No image yet: needs the v6c job.
+
+**Why.** A parallel wave sees the distribution only through F(v_par) = int f
+d^2v_perp and W(v_par) = int (v_perp^2/2) f d^2v_perp; the mode resonant at
+v_res grows if A(v_res) > 1/(1 - omega_r/Omega_ci), with
+A(v) = -(dW/dv)/(v F) (Kennel & Petschek 1966). A(v) is T_perp/T_par at every
+v for a bi-Maxwellian and for a bi-kappa (checked on samples of both), and the
+global anisotropy is its average weighted by the parallel energy v^2 F. It is
+estimated without differentiating a histogram, as particle averages over
+smooth windows, in the local-field frame.
+
+**How to read.** Top: A against |v_par| at five times; flat at 2 at t = 0. A
+dip to the dashed line (marginal value of the mode) inside the grey band (its
+resonant velocity) with A still near 2 at large |v_par| is free energy left
+where the wave cannot reach it. Bottom: A averaged over four bands of |v_par|
+in time; the band shares sum exactly to the global anisotropy
+(`resonant_anisotropy_bands.csv` gives the share of each band in the excess).
+
+**What it is for.** The test of the reading of 5f. The share of the parallel
+energy beyond 3 sigma_par0 is 3 % for the bi-Maxwellian, 11 % for kappa 5 and
+20 % for kappa 3; if that tail kept A = 2 while the rest relaxed to the
+marginal 1.35, the anisotropy at saturation would be 1.38, 1.42 and 1.48,
+against the measured 1.36, 1.39 and 1.44. The figure says whether that is what
+happens.
 
 ## 6. Numerical controls
 
@@ -256,6 +285,8 @@ python mirror_ic_competition.py $R/mirror_bimaxwellian_moderate $R/mirror_bikapp
 python trajectory_linear_theory.py $R/mirror_bimaxwellian_moderate $R/mirror_bikappa5_moderate $R/mirror_bikappa3_moderate --outdir $R/trajectory_linear_theory
 python kappa_evolution.py --case "bi-Maxwellian=$R/mirror_bimaxwellian_moderate/09_physical_diagnostics" --case "kappa5=$R/mirror_bikappa5_moderate/09_physical_diagnostics" --case "kappa3=$R/mirror_bikappa3_moderate/09_physical_diagnostics" --outdir $R/kappa_evolution_new
 ```
+
+What limits these runs numerically, with numbers: `NUMERICAL_LIMITS_V6B.md`.
 
 Detailed rationale and the defects each change fixed: `IMPLEMENTATION_V6.md`,
 follow-ups 7 and 8.

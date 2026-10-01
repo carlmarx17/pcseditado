@@ -70,6 +70,16 @@ A_START = 2.2
 GAMMA_FLOOR = 1e-3
 
 
+def c_over_va(profile: dict) -> float:
+    """c / v_A of a run profile.
+
+    The profile key ``vA_over_c`` is the historical name of the C++ input: it
+    is B0 in code units (Omega_ce/omega_pe), not v_A/c. With n0 = 1, m_e = 1:
+    v_A/c = B0 / sqrt(m_i/m_e), as in psc_units.VA.
+    """
+    return float(np.sqrt(profile["mass_ratio"]) / profile["vA_over_c"])
+
+
 def _is_ion_cyclotron(root: complex) -> bool:
     return bool(np.isfinite(root) and 0.0 < np.real(root) < 1.0)
 
@@ -188,7 +198,7 @@ def trajectory(run: dict, dt: float, width: float) -> dict:
         j = int(np.argmin(np.abs(a["omega_ci_t"] - t)))
         state = {"beta_i": float(a["beta_parallel_global"][j]), "a_i": float(a["anisotropy_global"][j]),
                  "beta_e": float(a["beta_e_parallel_global"][j]), "a_e": float(a["anisotropy_e_global"][j]),
-                 "mass_ratio": float(profile["mass_ratio"]), "c_over_va": 1.0 / float(profile["vA_over_c"])}
+                 "mass_ratio": float(profile["mass_ratio"]), "c_over_va": c_over_va(profile)}
         kappa = kappa_at(run, t)
         root = linear_root(state, kappa, run["k_mode"], seed)
         root0 = root if run["kappa"] is None else linear_root(state, run["kappa"], run["k_mode"], seed0)

@@ -249,6 +249,22 @@ done
 wait "${PIDS[@]}"
 say "all runners finished"
 
+# Resonant anisotropy A(v_par) of the ion-driven mirror runs and their
+# isotropic controls (particle + field snapshots; outside the runner because
+# it is not a stage of the validation matrix).
+PIDS=()
+for i in "${!CASES[@]}"; do
+    c="${CASES[$i]}"; dir="${DIRS[$i]}"
+    [[ "$c" == mirror_* ]] || continue
+    ( run "${STEP[@]}" --job-name="res_aniso:$c" env PSC_PROFILE="$c" PSC_ANALYSIS_DATA_DIR="$dir" \
+          "$PY" resonant_anisotropy.py measure --data-dir "$dir" --outdir "$NEW_ROOT/$c/03_particles" \
+          > "$LOG_DIR/${c}.resonant_anisotropy.log" 2>&1
+      echo $? > "$LOG_DIR/${c}.resonant-anisotropy.rc" ) &
+    PIDS+=($!)
+done
+[ "${#PIDS[@]}" -gt 0 ] && wait "${PIDS[@]}"
+say "resonant anisotropy finished"
+
 stage_passed() {  # stage_passed CASE STAGE
     "$PY" - "$NEW_ROOT/$1/pipeline.json" "$2" <<'EOF' 2>/dev/null
 import json, sys
@@ -313,6 +329,12 @@ compare_series() {  # compare_series NAME LABEL=CASE... (all must have succeeded
             "$PY" trajectory_linear_theory.py "${roots[@]}" --outdir "$NEW_ROOT/trajectory_linear_theory_$name" \
             > "$LOG_DIR/trajectory_linear_theory_$name.log" 2>&1
         echo $? > "$LOG_DIR/comparison_${name}.trajectory-linear-theory.rc"
+        # Where in parallel velocity the anisotropy is left (needs the
+        # resonant_anisotropy.csv of each run, written above).
+        run "${STEP[@]}" --job-name="res_aniso_fig:$name" \
+            "$PY" resonant_anisotropy.py plot "${roots[@]}" --outdir "$NEW_ROOT/resonant_anisotropy_$name" \
+            > "$LOG_DIR/resonant_anisotropy_$name.log" 2>&1
+        echo $? > "$LOG_DIR/comparison_${name}.resonant-anisotropy.rc"
     fi
 }
 compare_series mirror_moderate_kappa \

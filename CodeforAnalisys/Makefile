@@ -113,7 +113,7 @@ export PSC_FIG_THEME ?= paper
 	residuals energy-exchange estimators convergence \
 	anisotropy-dispersion \
 	polarization validate particles heatflux physics compare-physics clean help \
-	theory theory-self-test prt-region prt-bfield vdf-spatial \
+	theory theory-self-test prt-region prt-bfield vdf-spatial resonant-anisotropy \
 	theory-liouville theory-liouville-x theory-liouville-sweep \
 	liouville-self-test kappa-eff-self-test reconnection \
 	check-fields check-moments check-particles check-case check-resolution \
@@ -445,6 +445,13 @@ vdf-spatial: check-case check-fields check-particles
 	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) vdf_spatial.py \
 		--data-dir "$(DATA_DIR)" --outdir "$(PARTICLES_OUT)" \
 		$(if $(STEPS),--steps $(STEPS),) $(VDF_FLAGS)
+
+# Anisotropy as a parallel wave sees it, A(v_par), in the local-field frame:
+# where in parallel velocity the free energy is left (resonant_anisotropy.py).
+resonant-anisotropy: check-case check-fields check-particles
+	@echo "Computing the resonant anisotropy A(v_par) from the particle snapshots"
+	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) resonant_anisotropy.py measure \
+		--data-dir "$(DATA_DIR)" --outdir "$(PARTICLES_OUT)" $(RESONANT_FLAGS)
 
 compare-physics:
 	@test -n "$(COMPARE_CASES)" || { \
