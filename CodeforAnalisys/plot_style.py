@@ -185,18 +185,27 @@ def style_axes(ax, title: str = "") -> None:
         ax.set_title(title, color=TEXT_CLR, fontweight="bold")
 
 
-def measured_fluctuation(t) -> np.ndarray:
-    """Mask of the samples of a fluctuation time series that can go on a log axis.
+def measured_fluctuation(t, settle: float | None = None) -> np.ndarray:
+    """Mask of the samples of a fluctuation time series that are drawn.
 
-    At t = 0 the field is the uniform initial B0: dB there is float rounding
-    (1e-8 to 1e-12 of B0), not a fluctuation, and on a log axis that single
-    point stretches the scale by several decades and flattens the noise
-    level, the linear growth and the saturation into a thin band. PIC noise
-    is established within a few plasma periods, well before the first output
-    snapshot, so every t > 0 sample is a measurement.
+    Two things are left out of every fluctuation-against-time figure. At t = 0
+    the field is the uniform initial B0: dB there is float rounding, and on a
+    log axis that point stretches the scale by decades. And the quiet start
+    has no fluctuations at all: the particle noise builds up over the first
+    ion transit times (psc_units.noise_settling_time), a steep rise that is
+    neither growth nor the noise floor and is the only thing the eye sees at
+    the left edge. ``settle`` is that time in the units of ``t``; by default
+    the one of the box fundamental of the active profile, 0 to keep every
+    t > 0 sample.
     """
     t = np.asarray(t, dtype=float)
-    return np.isfinite(t) & (t > 0.0)
+    if settle is None:
+        try:
+            from psc_units import DOMAIN_DI_Y, DOMAIN_DI_Z, noise_settling_time
+            settle = noise_settling_time(2.0 * np.pi / max(DOMAIN_DI_Y, DOMAIN_DI_Z))
+        except Exception:                       # noqa: BLE001 - standalone use
+            settle = 0.0
+    return np.isfinite(t) & (t > 0.0) & (t >= settle)
 
 
 def drop_corner_tick(ax, which: str = "x", fraction: float = 0.06) -> None:

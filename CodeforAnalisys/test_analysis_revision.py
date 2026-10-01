@@ -148,7 +148,8 @@ def test_initial_uniform_field_does_not_stretch_log_axes(tmp_path):
     import plot_style as ps
     t = np.linspace(0.0, 40.0, 81)
     db = np.where(t > 0, 1e-3 * np.exp(0.2 * np.minimum(t, 25.0)), 1e-12)
-    assert list(ps.measured_fluctuation([0.0, 0.5, np.nan])) == [False, True, False]
+    assert list(ps.measured_fluctuation([0.0, 0.5, np.nan], settle=0.0)) == [False, True, False]
+    assert list(ps.measured_fluctuation([0.0, 0.5, 3.0], settle=2.0)) == [False, False, True]
     rows = [{"omega_ci_t": ti, "delta_B_vec_rms_over_B0": v} for ti, v in zip(t, db)]
     captured = {}
     original = cpc._save

@@ -1620,7 +1620,7 @@ def plot_field_time(rows: list[dict], outdir: Path):
     par = np.array([r["delta_B_parallel_rms_over_B0"] for r in rows], dtype=float)
     perp = np.array([r["delta_B_perp_rms_over_B0"] for r in rows], dtype=float)
     depth = np.array([r["mirror_depth"] for r in rows], dtype=float)
-    plot_mask = np.isfinite(t) & (t > 0.0)
+    plot_mask = ps.measured_fluctuation(t)     # no t = 0, no quiet-start build-up
     t, rms, par, perp, depth = (
         arr[plot_mask] for arr in (t, rms, par, perp, depth)
     )
@@ -1675,7 +1675,7 @@ def plot_prt_window_field_time(rows: list[dict], outdir: Path):
     if not rows or "prt_delta_B_rms_over_B0" not in rows[0]:
         return
     t = np.array([r["omega_ci_t"] for r in rows], dtype=float)
-    mask = np.isfinite(t) & (t > 0.0)
+    mask = ps.measured_fluctuation(t)     # no t = 0, no quiet-start build-up
 
     def _col(key):
         return np.array([r.get(key, np.nan) for r in rows], dtype=float)[mask]

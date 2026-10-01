@@ -270,6 +270,10 @@ def load_run(root) -> dict | None:
         "pop": series, "field": load_field(root), "t_lin_end": linear_phase_end(root),
         "b_profiles": load_b_profiles(root, step_time),
         "tail": load_tail(root, source_rows),
+        # quiet-start noise build-up of the box fundamental (psc_units.noise_settling_time)
+        "t_settle": (psc_units.NOISE_SETTLING_TRANSITS * profile["domain_di"] / (2.0 * np.pi)
+                     / np.sqrt(profile["beta_i_par"] * max(1.0, profile["Ti_perp_over_Ti_par"]) / 2.0)
+                     if profile.get("driven_species", "ion") == "ion" and profile.get("domain_di") else 0.0),
         "shape": load_shape(root),
         "v_res": resonant_speed(root, profile),
         "window_di": float(min(window)) if window else float("nan"),
@@ -509,7 +513,7 @@ def plot_field_evolution(runs: list[dict], colors: dict, path: Path) -> Path:
                 middle.axhline(_gauss_ratio_of_kappa(run["kappa0"]), color=col, lw=0.9, ls=":")
         field = run["field"]
         if field is not None and not run["control"]:
-            shown = ps.measured_fluctuation(field["t"]) & (field["W"] > 0)
+            shown = ps.measured_fluctuation(field["t"], run["t_settle"]) & (field["W"] > 0)
             bottom.plot(field["t"][shown], field["W"][shown], "-", color=col, lw=1.6)
             par = shown & (field["W_par"] > 0)
             bottom.plot(field["t"][par], field["W_par"][par], ":", color=col, lw=1.4)
