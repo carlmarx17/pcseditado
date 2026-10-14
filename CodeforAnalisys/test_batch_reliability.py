@@ -360,3 +360,44 @@ def test_a_control_of_another_series_does_not_silently_correct_a_run():
     assert 'baseline' in mirror and 'baseline_unavailable' not in mirror
     assert 'baseline' not in firehose
     assert firehose['baseline_unavailable']['status'] == 'UNVERIFIED'
+
+
+def _uniform_plus_hole_field(path, ngrid=32, b0=0.08, depth=0.5, hole=slice(0, 8)):
+    """|B| = b0 everywhere except a compressive hole in the first rows."""
+    bz = np.full((ngrid, ngrid), b0, dtype=float)
+    bz[hole, :] = b0 * (1.0 - depth)
+    zero = np.zeros((ngrid, ngrid), dtype=float)
+    crd = (np.arange(ngrid) + 0.5)
+    with h5py.File(path, 'w') as f:
+        for name, arr in (('ex_ec', zero), ('ey_ec', zero), ('ez_ec', zero),
+                          ('jx_ec', zero), ('jy_ec', zero), ('jz_ec', zero),
+                          ('hx_fc', zero), ('hy_fc', zero), ('hz_fc', bz)):
+            f.create_dataset(f'jeh-0/{name}/p0/3d', data=arr[:, :, None].astype('f4'))
+        for axis in (1, 2):
+            f.create_dataset(f'crd[{axis}]/p0/1d', data=crd - ngrid / 2)
+    return bz
+
+
+def test_mean_B_over_the_whole_box_is_a_series_of_its_own(tmp_path, monkeypatch):
+    """<|B|> over the domain did not exist: only prt_B_mean_over_B0, the same
+    quantity inside the particle window (about 4 % of the box)."""
+    field = tmp_path/'pfd.000000000_p000000.h5'
+    bz = _uniform_plus_hole_field(field, ngrid=32, b0=0.08, depth=0.5, hole=slice(0, 8))
+    # _prt_cell_slices compares the field shape against the profile grid.
+    monkeypatch.setattr(pd, 'N_GRID_Z', 32); monkeypatch.setattr(pd, 'N_GRID_Y', 32)
+    # prt_window is (lo, hi) in grid cells per axis (x, y, z); a window on the
+    # second half of z misses the hole in the first rows entirely.
+    window = (np.array([0, 16, 16]), np.array([1, 32, 32]))
+    metrics = pd.field_metrics(str(field), b0=0.08, prt_window=window)
+
+    expected = float(np.mean(np.abs(bz))) / 0.08          # 1/4 of the box at 0.5 b0
+    assert metrics['B_mean_over_B0'] == pytest.approx(expected, rel=1e-3)
+    assert metrics['B_mean_over_B0'] == pytest.approx(0.875, rel=1e-3)
+    assert metrics['B_mean'] == pytest.approx(0.08 * 0.875, rel=1e-3)
+    # The window sees no hole, so the two disagree: that is the whole point.
+    assert metrics['prt_B_mean_over_B0'] == pytest.approx(1.0, rel=1e-3)
+    assert metrics['B_std_over_B0'] > 0.1
+    # And it reaches the CSV: the worker keeps every scalar of field_metrics.
+    _, row, _ = pd._field_metrics_worker((0, str(field), 0.08, window, []))
+    for key in ('B_mean', 'B_mean_over_B0', 'B_std_over_B0'):
+        assert key in row and isinstance(row[key], float)

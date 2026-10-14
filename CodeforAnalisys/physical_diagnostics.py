@@ -614,6 +614,17 @@ def field_metrics(field_file: str, b0: float = B0,
         # is second order and its log-slope is 2 gamma.
         "delta_B_vec_rms": float(np.sqrt(np.nanmean(dbx**2 + dby**2 + dbz**2))),
         "delta_B_vec_rms_over_B0": float(np.sqrt(np.nanmean(dbx**2 + dby**2 + dbz**2)) / b0_abs),
+        # Mean |B| over the whole domain. The compressive signature at box
+        # scale: prt_B_mean_over_B0 is the same quantity inside the particle
+        # window, about 4 % of the domain. For transverse modes (parallel
+        # firehose, EMIC, whistler) |B| - B0 ~ dB_perp^2 / 2 B0 is second
+        # order, so this stays near 1 and the fluctuation amplitude is
+        # delta_B_vec_rms_over_B0; for mirror it is the physical quantity.
+        # B_std_over_B0 is the spread of |B| across the box at this snapshot,
+        # not an error of the mean.
+        "B_mean": float(np.nanmean(bmag)),
+        "B_mean_over_B0": float(np.nanmean(bmag) / b0_abs),
+        "B_std_over_B0": float(sigma_b / b0_abs),
         "B_min": float(np.nanmin(bmag)),
         "mirror_depth": float(1.0 - np.nanmin(bmag) / b0_abs),
         # See prt_fraction_below_B0_minus_std: a statistic, not a hole area.
