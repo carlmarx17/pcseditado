@@ -156,9 +156,13 @@ def write_report(roots, outdir, energy_tolerance=None):
     # baseline of the anisotropic run it matches (energy_audit.py).
     energy_audit.pair_controls(audits)
     for run, audit in zip(runs, audits):
-        baseline = audit.get('baseline')
+        # A rejected pairing gets its own row too: a missing energy_baseline
+        # check used to be indistinguishable from a tree with no control at all.
+        baseline = audit.get('baseline') or audit.get('baseline_unavailable')
         if baseline:
-            run['checks'].insert(next(i for i, c in enumerate(run['checks']) if c['check'] == 'global_energy') + 1,
+            after = next((i for i, c in enumerate(run['checks']) if c['check'] == 'global_energy'),
+                         len(run['checks']) - 1)
+            run['checks'].insert(after + 1,
                                  dict(check='energy_baseline', status=baseline['status'], reason=baseline['reason'],
                                       source=str(outdir / 'energy_audit'), metrics=energy_audit.strip_private(baseline)))
             run['scientific_status'] = next(s for s in SEVERITY if any(c['status'] == s for c in run['checks']))

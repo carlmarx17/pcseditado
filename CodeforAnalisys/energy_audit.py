@@ -78,6 +78,16 @@ CLOSURE_FAIL_FRACTION = 0.5
 CLOSURE_PASS_FRACTION = 0.1
 #: Window proxy FAILS when the electron gain exceeds this multiple of the release.
 WINDOW_GAIN_FACTOR = 2.0
+#: A control corrects a run only when their ion thermal energies agree to this
+#: fraction. The three isotropic controls of the moderate mirror series share
+#: every CONTROL_KEYS value with every anisotropic run of this tree (same
+#: mass ratio, B0, electrons, ppc and dx), so an automatic pairing also matched
+#: the 40 d_i firehose runs -- beta_i_par 10 with A_i = 0.1 against the controls'
+#: 25/3 with A_i = 1, a ratio of 2.08 -- and reported a baseline-corrected
+#: closure computed from a control built for another instability family, with
+#: the mismatch visible only as ion_thermal_energy_ratio in the metrics.
+#: An explicit --control states a pairing deliberately and is not capped.
+CONTROL_THERMAL_TOLERANCE = 0.25
 #: ... and the gain exceeds this fraction of the initial thermal energy.
 WINDOW_MIN_GAIN = 0.01
 #: Runs whose electron heating (T_e/T_e0 - 1) differs by less than this are common-mode.
@@ -333,9 +343,18 @@ def match_control(run: dict, audits: list[dict], explicit: str | None = None) ->
                 -abs(a["ion_thermal_energy"] / run["ion_thermal_energy"] - 1.0))
 
     best = max(usable, key=closeness)
-    return best, {"same_distribution": best.get("kappa") == run.get("kappa"),
-                  "ion_thermal_energy_ratio": best["ion_thermal_energy"] / run["ion_thermal_energy"],
-                  "shared": list(CONTROL_KEYS), "explicit": explicit is not None}
+    ratio = best["ion_thermal_energy"] / run["ion_thermal_energy"]
+    match = {"same_distribution": best.get("kappa") == run.get("kappa"),
+             "ion_thermal_energy_ratio": ratio,
+             "shared": list(CONTROL_KEYS), "explicit": explicit is not None}
+    if explicit is None and abs(ratio - 1.0) > CONTROL_THERMAL_TOLERANCE:
+        return None, {**match, "rejected": best["run"], "status": "UNVERIFIED",
+                      "reason": (f"no numerical-heating baseline: the closest isotropic "
+                                 f"control {best['run']} has {ratio:.2f}x the ion thermal "
+                                 f"energy of this run, beyond the "
+                                 f"{CONTROL_THERMAL_TOLERANCE:.0%} tolerance; the raw "
+                                 f"budget keeps its own status")}
+    return best, match
 
 
 def subtract_control(run: dict, control: dict, match: dict) -> dict:
@@ -422,6 +441,10 @@ def pair_controls(audits: list[dict], explicit: dict[str, str] | None = None) ->
         control, match = match_control(a, audits, explicit.get(a["run"]))
         if control is not None:
             a["baseline"] = subtract_control(a, control, match)
+        elif match.get("rejected"):
+            # A rejected pairing is reported, not silently left out: without it
+            # the evidence report simply had no energy_baseline row at all.
+            a["baseline_unavailable"] = match
 
 
 # ── Output ──────────────────────────────────────────────────────────────────

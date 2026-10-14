@@ -315,3 +315,48 @@ def test_isotropic_controls_only_run_the_stages_the_energy_audit_reads(tmp_path)
     assert _batch_invocations(tmp_path/'override', cases, nodes=8,
                               extra_env={'CONTROL_STAGES': 'manifest physics'}
                               )['mirror_bikappa3_isotropic']['stages'] == ['manifest', 'physics']
+
+
+def _audit_stub(name, beta_i_par, A_i, kappa=None):
+    """Minimal audit record: the fields match_control and pair_controls read."""
+    return {'run': name, 'kappa': kappa,
+            'ion_thermal_energy': beta_i_par * (0.5 + A_i),
+            'role': 'isotropic_control' if A_i == 1.0 else 'run',
+            'setup': {'mass_ratio': 200.0, 'B0': 0.08, 'beta_e_parallel': 1.0, 'A_e': 1.0,
+                      'nicell_from_profile': 1000, 'dx_de': 0.49104637582399135,
+                      'beta_i_parallel': beta_i_par, 'A_i': A_i, 'domain_di': 20.0,
+                      'grid': [576, 576]}}
+
+
+def test_a_control_of_another_series_does_not_silently_correct_a_run():
+    """Every CONTROL_KEYS value is shared across this tree, so only the ion
+    thermal energy separates the moderate mirror controls from the firehose runs."""
+    import energy_audit
+    # The profiles of the runs on COSMA: mirror moderate beta_i_par 5, A_i 2;
+    # firehose strong 40 d_i beta_i_par 10, A_i 0.1; controls 25/3 with A_i 1.
+    controls = [_audit_stub('mirror_bimaxwellian_isotropic', 25/3, 1.0),
+                _audit_stub('mirror_bikappa3_isotropic', 25/3, 1.0, kappa=3.0)]
+    mirror = _audit_stub('mirror_bikappa3_moderate', 5.0, 2.0, kappa=3.0)
+    firehose = _audit_stub('firehose_bikappa3_bigbox40', 10.0, 0.1, kappa=3.0)
+    audits = [mirror, firehose, *controls]
+
+    control, match = energy_audit.match_control(mirror, audits)
+    assert control['run'] == 'mirror_bikappa3_isotropic'      # same kappa
+    assert match['ion_thermal_energy_ratio'] == pytest.approx(1.0)
+
+    control, match = energy_audit.match_control(firehose, audits)
+    assert control is None, 'a mirror control must not correct a firehose run'
+    assert match['rejected'] == 'mirror_bikappa3_isotropic'
+    assert match['ion_thermal_energy_ratio'] == pytest.approx(2.0833, rel=1e-3)
+    assert 'no numerical-heating baseline' in match['reason']
+
+    # An explicit pairing is the user's statement and is not capped.
+    control, match = energy_audit.match_control(
+        firehose, audits, explicit='mirror_bikappa3_isotropic')
+    assert control['run'] == 'mirror_bikappa3_isotropic' and match['explicit']
+
+    # pair_controls records the rejection instead of leaving no trace.
+    energy_audit.pair_controls(audits)
+    assert 'baseline' in mirror and 'baseline_unavailable' not in mirror
+    assert 'baseline' not in firehose
+    assert firehose['baseline_unavailable']['status'] == 'UNVERIFIED'
