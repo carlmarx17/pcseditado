@@ -56,6 +56,14 @@
 #    sbatch --nodes=10 --ntasks=10 <script>     # fewer nodes, same result
 #    sbatch --export=ALL,EXTRA_RUNS="case:folder ..." <script>   # add runs,
 #        e.g. the isotropic controls psc_mirror_*_isotropic once finished
+#    sbatch --export=ALL,JOBS_PER_RUN=2 <script>   # pin the stage slots per
+#        runner; by default every runner offers all its independent stages and
+#        the allocation throttles them, so the nodes follow the work
+#    sbatch --export=ALL,CONTROL_STAGES="manifest physics" <script>   # stages
+#        of the isotropic controls (default: manifest residuals physics, all
+#        that energy_audit.py reads); they are mirror stable, so the growth,
+#        spectral and structure stages would describe an absent instability
+#    sbatch --export=ALL,FIELDS_GIF=0 <script>   # no field GIFs
 # =====================================================================
 
 # --- Job identification ---
@@ -111,6 +119,7 @@ GIF_EVERY="${GIF_EVERY:-10000}"
 FIELDS_GIF="${FIELDS_GIF-1}"
 GROWTH_T_START="${GROWTH_T_START-}"
 GROWTH_T_END="${GROWTH_T_END-}"
+CONTROL_STAGES="${CONTROL_STAGES:-manifest residuals physics}"
 STEP=(srun --nodes=1 --ntasks=1 --exclusive --cpus-per-task="${SLURM_CPUS_PER_TASK:-28}")
 export MPLCONFIGDIR="/tmp/psc-mpl-$JOB_ID" PSC_FIG_THEME=paper
 
@@ -238,9 +247,25 @@ fi
 # =====================================================================
 # 3) One runner per run, in parallel; each spreads its stages over nodes.
 # =====================================================================
-JOBS_PER_RUN=$(( NODES / ${#CASES[@]} ))
+# Stage slots per runner. A fixed NODES/#CASES share is not work-conserving:
+# the stages of one run differ by 10x (physics against the cheapest), the runs
+# differ too (a 1152^2 firehose unit is about twice a 576^2 mirror one, an
+# isotropic control a quarter), so a finished run's nodes stay allocated while
+# the longest one still works. With eight runs that share is one or two slots
+# each and it serialises the firehose runners -- the job then takes longer than
+# the single longest run.
+# Default: six slots per runner, and the allocation itself is the throttle,
+# since an srun step waits for a node of the allocation to free. The nodes then
+# follow the work instead of the run count. Six is where one run reaches its own
+# critical path (manifest -> physics -> spectral, 18 of its 66 cost units): more
+# slots for the same run buy nothing, while fewer serialise it. Keeping the
+# per-runner offer small also keeps each runner's longest-first order meaningful,
+# because the step scheduler, not this script, decides between runners.
+# JOBS_PER_RUN pins it (JOBS_PER_RUN=$(( NODES / 8 )) restores the old share)
+# for a site that refuses to queue job steps.
+JOBS_PER_RUN="${JOBS_PER_RUN:-$(( NODES < 6 ? NODES : 6 ))}"
 [ "$JOBS_PER_RUN" -lt 1 ] && JOBS_PER_RUN=1
-say "${#CASES[@]} runs, up to $JOBS_PER_RUN concurrent stages each"
+say "${#CASES[@]} runs, up to $JOBS_PER_RUN concurrent stages each, $NODES nodes shared"
 
 PIDS=()
 for i in "${!CASES[@]}"; do
@@ -257,9 +282,14 @@ for i in "${!CASES[@]}"; do
     stages=(manifest residuals physics brazil spectral structures energy-exchange estimators
             heatflux particles validate diamagnetic fields vdf-spatial)
     case "$c" in
-        # Isotropic controls: no drive, no branch to solve; a failed theory
-        # stage would also hold back their spectral stage.
-        *_isotropic) ;;
+        # Isotropic controls exist to measure the numerical heating of a setup,
+        # and energy_audit.py reads only the manifest and the physics products
+        # (global_energy_table.csv, energy_table.csv, growth_rate_summary.csv).
+        # They are mirror stable, so growth, spectra and structures would
+        # describe an instability that is not there: the full stage set costs
+        # about six times as much for evidence nothing reads. residuals is kept
+        # because div B and the Gauss error are part of the numerical baseline.
+        *_isotropic) read -r -a stages <<< "$CONTROL_STAGES" ;;
         # mirror: the theory stage solves the competing parallel ion-cyclotron
         # branch (the mode that grows in these runs), never the mirror mode.
         mirror_*|M_*_bM)   stages+=(theory-liouville theory) ;;

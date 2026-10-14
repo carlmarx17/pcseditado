@@ -227,3 +227,91 @@ if a[0] == 'resonant_anisotropy.py': sys.exit(int(os.environ['TEST_RESONANT_RC']
     result = subprocess.run(['bash', str(HERE.parent/'cosma_jobs/analisis/reanalysis_v6_all.sh')],
                             env=env, capture_output=True, text=True)
     assert result.returncode == expected, result.stdout+'\n'+result.stderr
+
+
+def _batch_invocations(tmp_path, cases, nodes, extra_env=None):
+    """Run the orchestrator with fake compute commands; return one record per runner."""
+    repo = tmp_path/'repo'; analysis = repo/'CodeforAnalisys'; analysis.mkdir(parents=True)
+    (repo/'src').mkdir(); (repo/'src/cosma_adios2_env.sh').write_text('true\n')
+    (analysis/'analysis_contract.py').write_text('CONVENTIONS_VERSION = 6\n')
+    (analysis/'run_pipeline.py').write_text('# --launcher\n')
+    extra = []
+    for case in cases:
+        run = tmp_path/f'data/psc_{case}_1'; run.mkdir(parents=True)
+        (run/'pfd.000000000_p000000.h5').touch()
+        extra.append(f'{case}:psc_{case}_1')
+    fake = tmp_path/'fake.py'
+    fake.write_text('''import json, os, pathlib, sys
+def _until_flag(argv, start):
+    out = []
+    for item in argv[start:]:
+        if item.startswith('--'): break
+        out.append(item)
+    return out
+a = sys.argv[1:]
+if a[0] == '-': os.execv(sys.executable, [sys.executable, *a])
+if a[0] == 'check_run_completion.py': print('1000 1000 1000 100')
+if a[0] == 'run_pipeline.py':
+    case = a[a.index('--case')+1]
+    root = pathlib.Path(a[a.index('--results-root')+1]) / case
+    root.mkdir(parents=True)
+    (root/'pipeline.json').write_text(json.dumps({'stages': {'physics': {'execution_status': 'FAIL'}}}))
+    # The runners are concurrent: append one line instead of read-modify-write.
+    with open(os.environ['TEST_RECORD'], 'a') as fh:
+        fh.write(json.dumps(
+            {'case': case, 'jobs': a[a.index('--jobs')+1],
+             'stages': _until_flag(a, a.index('--stages')+1)}) + '\\n')
+''')
+    wrapper = tmp_path/'python-wrapper'
+    wrapper.write_text('#!/bin/sh\nexec '+shlex.join([sys.executable, str(fake)])+' "$@"\n')
+    wrapper.chmod(0o755)
+    srun = tmp_path/'srun'
+    srun.write_text('#!/bin/sh\nwhile [ "${1#--}" != "$1" ]; do shift; done\nexec "$@"\n')
+    srun.chmod(0o755)
+    record = tmp_path/'record.jsonl'; record.write_text('')
+    env = dict(os.environ, REPO=str(repo), RUN_ROOT=str(tmp_path/'data'),
+               NEW_ROOT=str(tmp_path/'out'), LOG_DIR=str(tmp_path/'logs'),
+               PYTHON=str(wrapper), ONLY=' '.join(cases), EXTRA_RUNS=' '.join(extra),
+               SLURM_JOB_NUM_NODES=str(nodes), TEST_RECORD=str(record),
+               PATH=str(tmp_path)+os.pathsep+os.environ['PATH'],
+               TEST_RUNNER_RC='0', TEST_RESONANT_RC='0')
+    for key in ('DRY_RUN', 'RESUME', 'ALLOW_INCOMPLETE', 'JOBS_PER_RUN', 'CONTROL_STAGES'):
+        env.pop(key, None)
+    env.update(extra_env or {})
+    subprocess.run(['bash', str(HERE.parent/'cosma_jobs/analisis/reanalysis_v6_all.sh')],
+                   env=env, capture_output=True, text=True)
+    return {json.loads(l)['case']: json.loads(l) for l in record.read_text().splitlines()}
+
+
+def test_stage_slots_follow_the_work_not_the_number_of_runs(tmp_path):
+    """A fixed NODES/#CASES share serialised the long runs; the allocation throttles instead."""
+    cases = ['mirror_bimaxwellian_moderate', 'mirror_bikappa3_moderate',
+             'firehose_bikappa3_bigbox40', 'mirror_bimaxwellian_isotropic']
+    got = _batch_invocations(tmp_path, cases, nodes=12)
+    assert set(got) == set(cases)
+    # Six slots -- where one run reaches its own critical path -- not 12/4 = 3,
+    # and the allocation throttles the rest instead of the run count.
+    assert {r['jobs'] for r in got.values()} == {'6'}
+    # A small allocation cannot offer more slots than it has nodes.
+    small = _batch_invocations(tmp_path/'small', cases, nodes=4)
+    assert {r['jobs'] for r in small.values()} == {'4'}
+    # And it stays pinnable for a site that refuses queued job steps.
+    pinned = _batch_invocations(tmp_path/'pin', cases, nodes=12, extra_env={'JOBS_PER_RUN': '3'})
+    assert {r['jobs'] for r in pinned.values()} == {'3'}
+
+
+def test_isotropic_controls_only_run_the_stages_the_energy_audit_reads(tmp_path):
+    """A control measures numerical heating; growth and spectra would describe an absent mode."""
+    cases = ['mirror_bikappa3_moderate', 'mirror_bikappa3_isotropic']
+    got = _batch_invocations(tmp_path, cases, nodes=8)
+    control = got['mirror_bikappa3_isotropic']['stages']
+    assert control == ['manifest', 'residuals', 'physics']
+    # physical_diagnostics.py (the physics stage) writes every input of
+    # energy_audit.audit_run, so the baseline subtraction still has its data.
+    for stage in ('spectral', 'brazil', 'structures', 'fields', 'theory'):
+        assert stage not in control
+    anisotropic = got['mirror_bikappa3_moderate']['stages']
+    assert {'spectral', 'brazil', 'structures', 'fields', 'theory'} <= set(anisotropic)
+    assert _batch_invocations(tmp_path/'override', cases, nodes=8,
+                              extra_env={'CONTROL_STAGES': 'manifest physics'}
+                              )['mirror_bikappa3_isotropic']['stages'] == ['manifest', 'physics']
