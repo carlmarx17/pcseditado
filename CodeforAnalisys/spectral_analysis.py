@@ -15,6 +15,10 @@ Features:
   - Reduced magnetic helicity sigma_m(k) and parallel/perpendicular
     compressibility, used to discriminate mirror/EMIC/firehose branches.
 """
+# PEP 604 annotations (float | None) in signatures and module-level variables are
+# evaluated at import time; without this they need Python >= 3.10, and the whole
+# suite then fails to collect on an older interpreter (e.g. a laptop venv).
+from __future__ import annotations
 
 import argparse
 import csv

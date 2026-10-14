@@ -54,6 +54,9 @@ Uso típico:
     # y después:
     python polarization_dispersion.py --data-dir ... --theory-csv theory.csv
 """
+# PEP 604 annotations (float | None) are evaluated at import time; without this
+# they need Python >= 3.10 and the module fails to import on an older interpreter.
+from __future__ import annotations
 
 import argparse
 import csv

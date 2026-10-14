@@ -26,6 +26,9 @@ natural scale of an ion-scale current sheet. The same formula
 (plasma_physics.diamagnetic_current_x) and normalisation are used by
 physical_diagnostics.py.
 """
+# PEP 604 annotations (float | None) are evaluated at import time; without this
+# they need Python >= 3.10 and the module fails to import on an older interpreter.
+from __future__ import annotations
 
 import argparse
 from io import BytesIO

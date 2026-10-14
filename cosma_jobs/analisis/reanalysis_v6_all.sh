@@ -148,6 +148,36 @@ fi
 say "code: $(git -C "$REPO" log -1 --format='%h %s' 2>/dev/null || echo 'git unavailable')"
 
 # =====================================================================
+# 0b) Scope checks, before the preflight spends a node on the test suite.
+#     Step 2 resolves ONLY and the already-analysed runs, but it runs
+#     after the preflight: a typo in ONLY, or a tree that already holds
+#     every selected run, used to exit with the nodes allocated and the
+#     whole suite already run. These are string and stat tests only.
+# =====================================================================
+KNOWN=()
+for entry in "${RUNS[@]}"; do KNOWN+=("${entry%%:*}"); done
+for name in ${ONLY:-}; do
+    if [[ " ${KNOWN[*]} " != *" $name "* ]]; then
+        echo "ERROR: ONLY=\"$name\" is not a known case." >&2
+        printf 'Known cases: %s\n' "${KNOWN[*]}" >&2
+        echo "(add a run to RUNS, or pass it in EXTRA_RUNS as CASE:folder)" >&2
+        exit 2
+    fi
+done
+SELECTABLE=0
+for name in "${KNOWN[@]}"; do
+    if [ -n "$ONLY" ] && [[ " $ONLY " != *" $name "* ]]; then continue; fi
+    if [ "$RESUME" != 1 ] && [ -e "$NEW_ROOT/$name" ]; then continue; fi
+    SELECTABLE=$(( SELECTABLE + 1 ))
+done
+if [ "$SELECTABLE" -eq 0 ]; then
+    echo "ERROR: every selected run already exists in $NEW_ROOT and RESUME is not 1." >&2
+    echo "Pass RESUME=1 to continue them, or NEW_ROOT=<new tree> to analyse afresh." >&2
+    exit 2
+fi
+say "scope: $SELECTABLE run(s) selectable in $NEW_ROOT"
+
+# =====================================================================
 # 1) Preflight on a compute node: the whole test suite (it includes the
 #    synthetic end-to-end run of every diagnostic script).
 # =====================================================================
