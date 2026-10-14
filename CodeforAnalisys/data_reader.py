@@ -288,6 +288,32 @@ class PICDataReader:
         return results
 
     @staticmethod
+    def _read_hdf5_particle_fields(dataset, names, idx):
+        """Read selected records in bounded blocks, preserving sample order.
+
+        Project all requested fields together so each block is read once.
+        Avoid HDF5 fancy indexing, which is costly for large random samples.
+        """
+        count = len(dataset) if isinstance(idx, slice) else len(idx)
+        out = {name: np.empty(count, dtype=float) for name in names}
+        block_size = 65536
+        fields = dataset.fields(list(names))
+        for start in range(0, len(dataset), block_size):
+            stop = min(start + block_size, len(dataset))
+            if isinstance(idx, slice):
+                left, right = start, stop
+                selection = slice(None)
+            else:
+                left, right = np.searchsorted(idx, [start, stop])
+                if left == right:
+                    continue
+                selection = idx[left:right] - start
+            block = fields[start:stop]
+            for name in names:
+                out[name][left:right] = block[name][selection]
+        return out
+
+    @staticmethod
     def read_particles_snapshot(
         filepath: str, max_particles: int, rng=None
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -342,16 +368,11 @@ class PICDataReader:
             missing = [name for name in required if name not in names]
             if missing:
                 raise KeyError(f"Missing particle fields {missing} in '{filepath}'.")
-            q = np.asarray(dataset["q"][idx], dtype=float)
-            m = np.asarray(dataset["m"][idx], dtype=float)
-            px = np.asarray(dataset["px"][idx], dtype=float)
-            py = np.asarray(dataset["py"][idx], dtype=float)
-            pz = np.asarray(dataset["pz"][idx], dtype=float)
-            w = (
-                np.asarray(dataset["w"][idx], dtype=float)
-                if "w" in names
-                else np.ones_like(q)
+            values = PICDataReader._read_hdf5_particle_fields(
+                dataset, [name for name in (*required, "w") if name in names], idx
             )
+            q, m, px, py, pz = (values[name] for name in required)
+            w = values["w"] if "w" in values else np.ones_like(q)
         return q, m, px, py, pz, w
 
     @staticmethod
@@ -414,11 +435,9 @@ class PICDataReader:
                     if n_total > max_particles
                     else slice(None)
                 )
-                out = {
-                    name: np.asarray(dataset[name][idx], dtype=float)
-                    for name in names
-                    if name in available
-                }
+                out = PICDataReader._read_hdf5_particle_fields(
+                    dataset, [name for name in names if name in available], idx
+                )
 
         if "w" not in out:
             out["w"] = np.ones_like(out["q"])

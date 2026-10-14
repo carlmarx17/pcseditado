@@ -260,10 +260,15 @@ class SpectralAnalyzer:
             window_power = float(nx * ny)
         return np.abs(field_k) ** 2 / (window_power * nx * ny)
 
-    def _component_psds(self, fluctuations: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    def _component_psds(self, fluctuations: dict[str, np.ndarray],
+                        component_ffts: dict[str, np.ndarray] | None = None) -> dict[str, np.ndarray]:
         """Combine vector-component powers without FFTing field magnitudes."""
         component_psd = {
-            axis: self._compute_fft_psd(fluctuations[f"b{axis}"])
+            axis: (self._compute_fft_psd(fluctuations[f"b{axis}"])
+                   if component_ffts is None else
+                   np.abs(component_ffts[axis]) ** 2 /
+                   (float(fluctuations[f"b{axis}"].size) * fluctuations[f"b{axis}"].shape[0]
+                    * fluctuations[f"b{axis}"].shape[1]))
             for axis in ("x", "y", "z")
         }
         perpendicular_axes = [axis for axis in ("x", "y", "z") if axis != self.parallel_axis]
@@ -416,7 +421,6 @@ class SpectralAnalyzer:
 
         fluctuations = self._component_fluctuations(bx, by, bz)
         k_grids = self._compute_k_grids(bx.shape, plane_data["spacing"], plane_data["axes"])
-        component_psds = self._component_psds(fluctuations)
         # Complex spectra (phase kept) of the raw component fluctuations, used to
         # build the reduced magnetic helicity sigma_m(k) between the two axes
         # perpendicular to the guide field.
@@ -424,6 +428,8 @@ class SpectralAnalyzer:
             axis: self._compute_fft_complex(fluctuations[f"b{axis}"])
             for axis in ("x", "y", "z")
         }
+
+        component_psds = self._component_psds(fluctuations, component_ffts)
 
         spectra = {}
         for component in ("total", "parallel", "perp"):
