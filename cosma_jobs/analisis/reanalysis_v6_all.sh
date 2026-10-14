@@ -89,16 +89,16 @@
 
 set -uo pipefail
 
-REPO=/cosma7/data/dp433/dc-mart18/pcseditado
+REPO="${REPO:-/cosma7/data/dp433/dc-mart18/pcseditado}"
 # shellcheck source=../../src/cosma_adios2_env.sh
-source "$REPO/src/cosma_adios2_env.sh"
+source "$REPO/src/cosma_adios2_env.sh" || exit 2
 cd "$REPO/CodeforAnalisys" || exit 1
 
-RUN_ROOT=/cosma7/data/dp433/dc-mart18/anisotropy_adios2
+RUN_ROOT="${RUN_ROOT:-/cosma7/data/dp433/dc-mart18/anisotropy_adios2}"
 # v6c: the final analysis tree (v6 and v6b stay as they are).
 NEW_ROOT="${NEW_ROOT:-$REPO/analysis_results/v6c}"
 JOB_ID="${SLURM_JOB_ID:-manual}"
-LOG_DIR="/cosma7/data/dp433/dc-mart18/logs/reanalysis_v6_${JOB_ID}"
+LOG_DIR="${LOG_DIR:-/cosma7/data/dp433/dc-mart18/logs/reanalysis_v6_${JOB_ID}}"
 PY="${PYTHON:-$REPO/.venv/bin/python}"
 
 RESUME="${RESUME:-0}"
@@ -166,11 +166,6 @@ say "preflight OK: $(tail -1 "$LOG_DIR/preflight.log")"
 # =====================================================================
 # 2) Resolve every run: folder, format (.bp / .h5), completeness.
 # =====================================================================
-last_field_step() {
-    # "$1/": follow the run folder when it is a symbolic link.
-    find "$1/" -maxdepth 1 \( -name 'pfd.*.bp' -o -name 'pfd.*_p*.h5' \) 2>/dev/null \
-        | sed -E 's|.*/pfd\.0*([0-9]+)[._].*|\1|' | sort -n | tail -1
-}
 CASES=(); DIRS=(); FORMATS=(); SKIPPED=()
 skip() { say "SKIP $1"; SKIPPED+=("$1"); }
 for entry in "${RUNS[@]}"; do
@@ -184,16 +179,18 @@ for entry in "${RUNS[@]}"; do
         skip "$case_name: $dir does not exist"
         continue
     fi
-    read -r nmax fields_every < <(PSC_PROFILE="$case_name" PSC_ANALYSIS_DATA_DIR= \
-        "$PY" -c 'import psc_units as u; print(u.NMAX, u.FIELDS_EVERY)')
-    last=$(last_field_step "$dir")
-    if [ -z "$last" ]; then
-        skip "$case_name: no field snapshots in $dir"
+    if ! run_info=$("$PY" check_run_completion.py --data-dir "$dir" --case "$case_name"); then
+        skip "$case_name: invalid inputs or runtime configuration in $dir (see error above)"
         continue
     fi
-    if [ "$last" -lt $((nmax - fields_every)) ] && [ "$ALLOW_INCOMPLETE" != 1 ]; then
-        skip "$case_name: last field step $last < nmax $nmax (unfinished; ALLOW_INCOMPLETE=1 forces it)"
+    read -r last expected nmax fields_every <<< "$run_info"
+    if [ "$last" -lt "$expected" ] && [ "$ALLOW_INCOMPLETE" != 1 ]; then
+        skip "$case_name: last field step $last < expected output $expected (nmax=$nmax; ALLOW_INCOMPLETE=1 forces it)"
         continue
+    fi
+    if [[ " ${CASES[*]-} " == *" $case_name "* ]]; then
+        echo "ERROR: duplicate CASE=$case_name targets the same results directory; select one run per case." >&2
+        exit 4
     fi
     if [ "$RESUME" != 1 ] && [ -e "$NEW_ROOT/$case_name" ]; then
         skip "$case_name: $NEW_ROOT/$case_name exists (RESUME=1 continues it; nothing is overwritten)"
@@ -235,8 +232,8 @@ for i in "${!CASES[@]}"; do
         *_isotropic) ;;
         # mirror: the theory stage solves the competing parallel ion-cyclotron
         # branch (the mode that grows in these runs), never the mirror mode.
-        mirror_*)   stages+=(theory-liouville theory) ;;
-        firehose_*) stages+=(theory) ;;
+        mirror_*|M_*_bM)   stages+=(theory-liouville theory) ;;
+        firehose_*|F_*_bM|whistler_*|W_*_bM) stages+=(theory) ;;
     esac
     resume=(); [ "$RESUME" = 1 ] && resume=(--resume)
     say "start runner $c"
@@ -381,7 +378,7 @@ for stage, e in json.load(open(sys.argv[1]))['stages'].items():
 EOF
     done
     echo
-    for rc_file in "$LOG_DIR"/comparison_*.rc "$LOG_DIR"/quality_report.rc; do
+    for rc_file in "$LOG_DIR"/comparison_*.rc "$LOG_DIR"/*.resonant-anisotropy.rc "$LOG_DIR"/quality_report.rc; do
         [ -e "$rc_file" ] || continue
         rc="$(cat "$rc_file")"
         printf '%-60s %s\n' "$(basename "$rc_file" .rc)" "$([ "$rc" = 0 ] && echo OK || echo "FAILED (rc=$rc)")"
@@ -402,3 +399,15 @@ EOF
     fi
 } > "$SUMMARY"
 cat "$SUMMARY"
+
+# Slurm must see execution failures too; printing a summary is not success.
+# Scientific FAIL/UNVERIFIED remains a separate assessment in the report.
+failed=0
+for rc_file in "$LOG_DIR"/*.rc; do
+    [ -f "$rc_file" ] || continue
+    if [ "$(cat "$rc_file")" != 0 ]; then
+        say "FAILED: $(basename "$rc_file" .rc) (see logs)"
+        failed=1
+    fi
+done
+exit "$failed"

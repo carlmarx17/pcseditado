@@ -28,6 +28,7 @@ import matplotlib.colors as mcolors
 from pathlib import Path
 
 from data_reader import PICDataReader
+from analysis_contract import allocated_cpus
 from plasma_physics import (
     field_aligned_pressures,
     firehose_threshold,
@@ -147,7 +148,7 @@ def instability_drive(anisotropy, threshold):
 
 # ── Lectura de un snapshot ────────────────────────────────────────────────────
 def process_snapshot(mom_file: str, bz_file: str, species: str = DRIVEN_SPECIES):
-    """Devuelve dict{anisotropy, beta_par} o None si hay error."""
+    """Return anisotropy/beta; unreadable snapshots invalidate the time series."""
     suffix = "i" if species == "ion" else "e"
     mass = M_ION if species == "ion" else M_ELEC
     try:
@@ -167,8 +168,7 @@ def process_snapshot(mom_file: str, bz_file: str, species: str = DRIVEN_SPECIES)
             ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"],
         )
     except Exception as exc:
-        print(f"  [WARN] {exc}")
-        return None
+        raise RuntimeError(f'Cannot analyse moment/field pair {mom_file}, {bz_file}: {exc}') from exc
 
     Mxx = moments[f"txx_{suffix}/p0/3d"].ravel()
     Myy = moments[f"tyy_{suffix}/p0/3d"].ravel()
@@ -771,7 +771,7 @@ def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
     common    = sorted(set(mom_files) & set(bz_files))
 
     if not common:
-        print("[ERROR] No se encontraron pares momento/campo."); return
+        raise ValueError('No paired moment/field snapshots were found')
 
     print(f"Snapshots encontrados: {len(common)}  (steps {common[0]}–{common[-1]})")
 
@@ -783,8 +783,8 @@ def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
     # Seleccionar ~n_grid_snaps pasos uniformes para el grid
     idx_grid = set(np.linspace(0, len(common) - 1, n_grid_snaps, dtype=int))
 
-    num_workers = jobs if jobs > 0 else os.cpu_count() or 1
-    num_workers = min(num_workers, len(common))
+    available = allocated_cpus()
+    num_workers = min(jobs if jobs > 0 else available, available, len(common))
     print(f"Ejecutando con {num_workers} procesos en paralelo...")
 
     results = {}
@@ -804,6 +804,11 @@ def run_analysis(mom_pattern: str, bz_pattern: str, B0_ref: float,
                 print(f"\n  [ERROR] Excepción procesando step {step}: {exc}")
                 results[step] = None
     print()
+
+    failed_steps = [step for step in common if results.get(step) is None]
+    if failed_steps:
+        raise RuntimeError(f'Anisotropy: failed snapshots {failed_steps}; '
+                           'refusing to publish an incomplete time series')
 
     # Procesar secuencialmente en el orden original para mantener consistencia
     for i, step in enumerate(common):

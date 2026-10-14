@@ -169,9 +169,10 @@ def _style_axes(ax):
 def _parallel_workers(requested: int, task_count: int) -> int:
     if task_count <= 1:
         return 1
-    available = os.cpu_count() or 1
+    from analysis_contract import allocated_cpus
+    available = allocated_cpus()
     workers = requested if requested > 0 else available
-    return max(1, min(workers, task_count))
+    return max(1, min(workers, available, task_count))
 
 
 def _run_step_tasks(worker, tasks: list[tuple], jobs: int, label: str) -> list:
@@ -182,7 +183,7 @@ def _run_step_tasks(worker, tasks: list[tuple], jobs: int, label: str) -> list:
         return [worker(task) for task in tasks]
 
     print(f"{label}: {len(tasks)} steps with {workers} processes")
-    results = []
+    results, failures = [], []
     with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor:
         futures = {executor.submit(worker, task): task[0] for task in tasks}
         for index, future in enumerate(concurrent.futures.as_completed(futures), start=1):
@@ -190,9 +191,14 @@ def _run_step_tasks(worker, tasks: list[tuple], jobs: int, label: str) -> list:
             try:
                 results.append(future.result())
             except Exception as exc:
+                failures.append((step, str(exc)))
                 print(f"\n[ERROR] {label} step {step} failed: {exc}")
             print(f"  {label} step {step} ({index}/{len(tasks)})", end="\r")
     print()
+    if failures:
+        detail = '; '.join(f'step {step}: {reason}' for step, reason in failures[:8])
+        raise RuntimeError(f'{label}: {len(failures)}/{len(tasks)} snapshots failed; '
+                           f'refusing to publish an incomplete time series. {detail}')
     return sorted(results, key=lambda item: item[0])
 
 

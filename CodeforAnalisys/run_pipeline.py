@@ -38,7 +38,8 @@ AFTER = {'spectral': ('physics', 'theory')}
 COST = {'physics': 10, 'fields': 8, 'spectral': 7, 'structures': 6, 'diamagnetic': 6,
         'energy-exchange': 5, 'brazil': 4, 'heatflux': 4, 'vdf-spatial': 3,
         'residuals': 3, 'estimators': 3, 'particles': 3}
-RESERVED = ('OUTPUT_DIR', 'DATA_DIR', 'CASE', 'PYTHON', 'RESULTS_ROOT')
+RESERVED = ('OUTPUT_DIR', 'DATA_DIR', 'CASE', 'PSC_PROFILE', 'PYTHON', 'RESULTS_ROOT',
+            'PSC_ANALYSIS_DATA_DIR', 'PSC_ANALYSIS_CONFIG')
 MAKE_DIR = Path(__file__).resolve().parent
 
 
@@ -80,7 +81,8 @@ def stage_options(stage, out, options, state):
         notes['window_source'] = 'explicit make option'
     else:
         phase_file = out / '09_physical_diagnostics' / 'linear_phase.json'
-        phase = json.loads(phase_file.read_text()) if phase_file.exists() else {}
+        physics_passed = state['stages'].get('physics', {}).get('execution_status') == 'PASS'
+        phase = json.loads(phase_file.read_text()) if physics_passed and phase_file.exists() else {}
         if phase.get('status') == 'PASS':
             options += [f'GROWTH_T_START={phase["start"]}', f'GROWTH_T_END={phase["end"]}',
                         f'DISPERSION_T_START={phase["start"]}', f'DISPERSION_T_END={phase["end"]}']
@@ -98,6 +100,8 @@ def stage_options(stage, out, options, state):
 def promote(stage, scratch, out, state):
     """Move a finished stage's products into place; refuse to overwrite another stage."""
     files = sorted(f for f in scratch.rglob('*') if f.is_file())
+    if not files and stage != 'energy-if-present':
+        raise RuntimeError('stage exited successfully but produced no output files')
     owners = {p: s for s, e in state['stages'].items() if s != stage for p in e.get('products', [])}
     clash = sorted({owners[str(f.relative_to(scratch))] + ': ' + str(f.relative_to(scratch))
                     for f in files if str(f.relative_to(scratch)) in owners})
@@ -212,7 +216,8 @@ def main():
                 scratch.mkdir(parents=True)
                 options, notes = stage_options(stage, out, a.make_option, state)
                 command = [*launcher, 'make', '-C', str(MAKE_DIR), stage, f'PYTHON={sys.executable}',
-                           f'DATA_DIR={data}', f'CASE={a.case}', f'OUTPUT_DIR={scratch}', *options]
+                           f'DATA_DIR={data}', f'CASE={a.case}', f'PSC_PROFILE={a.case}',
+                           f'OUTPUT_DIR={scratch}', *options]
                 log = out / 'logs' / (stage + '-' + stamp + '.log'); log.parent.mkdir(exist_ok=True)
                 state['stages'][stage] = {'execution_status': 'RUNNING', 'command': command, 'log': str(log),
                                           'started_utc': stamp, 'scientific_status': 'UNVERIFIED', **notes,
@@ -235,9 +240,10 @@ def main():
                 if rc == 0:
                     try:
                         products = promote(stage, scratch, out, state)
-                    except RuntimeError as exc:
+                    except (RuntimeError, OSError, ValueError) as exc:
                         rc, entry['reason'] = 1, str(exc)
                 if rc:
+                    entry['returncode'] = rc
                     entry['execution_status'] = 'FAIL'
                     failed.add(stage)
                     print(f'FAILED {stage}: {entry.get("reason") or entry["log"]}', file=sys.stderr, flush=True)

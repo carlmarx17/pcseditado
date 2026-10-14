@@ -58,6 +58,8 @@ def measured_b0(field_path: str) -> float:
 
 
 def relative_error(measured: float, declared: float) -> float:
+    if not np.isfinite(measured) or not np.isfinite(declared):
+        return float('inf')
     if declared == 0:
         return float("inf") if measured != 0 else 0.0
     return abs(measured - declared) / abs(declared)
@@ -72,12 +74,15 @@ def check_initial_conditions(particles_pattern, fields_pattern, moments_pattern,
     particles = PICDataReader.find_files(particles_pattern)
     if particles:
         step = next(iter(particles))
+        if step != 0:
+            failures.append(f'Initial particle snapshot (step 0) is missing; earliest step is {step}')
         q, m, px, py, pz, w = PICDataReader.read_particles_snapshot(
             particles[step], max_particles=max_particles, rng=np.random.default_rng(0)
         )
         for species in ("ion", "electron"):
             measured = measured_temperatures(q, m, px, py, pz, w, species)
             if measured is None:
+                failures.append(f'No {species} particles in the initial snapshot')
                 continue
             for key in ("T_parallel", "T_perp"):
                 err = relative_error(measured[key], declared[species][key])
@@ -93,6 +98,8 @@ def check_initial_conditions(particles_pattern, fields_pattern, moments_pattern,
     fields = PICDataReader.find_files(fields_pattern)
     if fields:
         step = next(iter(fields))
+        if step != 0:
+            failures.append(f'Initial field snapshot (step 0) is missing; earliest step is {step}')
         b0_measured = measured_b0(fields[step])
         err = relative_error(b0_measured, declared["B0"])
         if err > field_tol:
@@ -100,14 +107,19 @@ def check_initial_conditions(particles_pattern, fields_pattern, moments_pattern,
                 f"B0: measured={b0_measured:.4g} declared={declared['B0']:.4g} "
                 f"(rel. error {err:.1%} > {field_tol:.0%})"
             )
+    else:
+        failures.append(f'No field snapshots match {fields_pattern!r}')
 
     moments = PICDataReader.find_files(moments_pattern)
     if moments:
         step = next(iter(moments))
+        if step != 0:
+            failures.append(f'Initial moment snapshot (step 0) is missing; earliest step is {step}')
         for species, suffix in (("ion", "i"), ("electron", "e")):
             try:
                 n_measured = measured_density(moments[step], suffix)
             except KeyError:
+                failures.append(f'Missing rho_{suffix} in initial moment snapshot {moments[step]}')
                 continue
             err = relative_error(n_measured, declared["N0"])
             if err > temperature_tol:
@@ -115,6 +127,8 @@ def check_initial_conditions(particles_pattern, fields_pattern, moments_pattern,
                     f"n_{species}: measured={n_measured:.4g} declared={declared['N0']:.4g} "
                     f"(rel. error {err:.1%} > {temperature_tol:.0%})"
                 )
+    else:
+        failures.append(f'No moment snapshots match {moments_pattern!r}')
 
     return failures
 

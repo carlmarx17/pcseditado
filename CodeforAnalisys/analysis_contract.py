@@ -16,6 +16,16 @@ ALGORITHMS = {"growth": "modal-transient-aware-hac-2", "vdf": "u-fit-v-density-2
               "structures": "mean-centered-colocated-2", "heat_flux": "local-third-moment-2"}
 
 
+def allocated_cpus():
+    """Respect task allocation/affinity instead of spawning one worker per node CPU."""
+    available = os.cpu_count() or 1
+    if hasattr(os, 'sched_getaffinity'):
+        available = min(available, len(os.sched_getaffinity(0)))
+    if os.environ.get('SLURM_CPUS_PER_TASK'):
+        available = min(available, max(1, int(os.environ['SLURM_CPUS_PER_TASK'])))
+    return max(1, available)
+
+
 def json_safe(value):
     if isinstance(value, dict):
         return {str(k): json_safe(v) for k, v in value.items()}

@@ -19,7 +19,8 @@ RUN_NAME ?= $(if $(CASE),$(CASE),$(notdir $(abspath $(DATA_DIR))))
 RESULTS_ROOT ?= ../analysis_results
 OUTPUT_DIR ?= $(RESULTS_ROOT)/$(RUN_NAME)
 
-B0_REF ?= 0.08
+# Empty uses the active run/profile B0 in each script (legacy runs use 0.05).
+B0_REF ?=
 PSC_PROFILE ?= $(CASE)
 export PSC_ANALYSIS_DATA_DIR = $(abspath $(DATA_DIR))
 # Optional JSON with runtime dt_code/nicell and geometry overrides.
@@ -140,7 +141,7 @@ F_S_bM F_M_bM F_W_bM M_S_bM M_M_bM M_W_bM W_S_bM W_M_bM W_W_bM:
 	$(MAKE) analysis DATA_DIR="$(DATA_DIR)" CASE="$@" RESULTS_ROOT="$(RESULTS_ROOT)"
 
 manifest: check-case check-initial-conditions
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) write_analysis_manifest.py \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" write_analysis_manifest.py \
 		--data-dir "$(DATA_DIR)" --output-dir "$(OUTPUT_DIR)" --case "$(CASE)" \
 		$(if $(RUN_TAG),--run-tag "$(RUN_TAG)",)
 
@@ -191,7 +192,7 @@ check-particles:
 # downstream reshape/plot instead of failing loudly, so this runs before
 # any target that touches field or moment files.
 check-resolution: check-case
-	@PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) check_resolution.py \
+	@PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" check_resolution.py \
 		--data-dir "$(DATA_DIR)" --case "$(CASE)"
 
 # Compares the T_par/T_perp/n/B0 measured at the earliest snapshot against
@@ -199,14 +200,14 @@ check-resolution: check-case
 # wrong run directory, or at a CASE whose profile has drifted from the .cxx
 # that produced the data; runs once, before the manifest, not per stage.
 check-initial-conditions: check-case
-	@PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) check_initial_conditions.py \
+	@PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" check_initial_conditions.py \
 		--particles "$(PARTICLE_PATTERN)" --fields "$(FIELD_PATTERN)" \
 		--moments "$(MOMENT_PATTERN)" --case "$(CASE)"
 
 brazil: check-case check-fields check-moments check-resolution
 	@echo "Generating anisotropy evolution and Brazil trajectory"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) anisotropy_analysis.py \
-		--data-dir "$(DATA_DIR)" --B0 $(B0_REF) \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" anisotropy_analysis.py \
+		--data-dir "$(DATA_DIR)" $(if $(B0_REF),--B0 "$(B0_REF)",) \
 		--run-name "$(RUN_NAME)" --outdir "$(ANISOTROPY_OUT)"
 
 # Saturated structures (holes/peaks, |B| skewness, n-|B| correlation, total-
@@ -214,7 +215,7 @@ brazil: check-case check-fields check-moments check-resolution
 # `make mirror` is kept as an alias.
 structures: check-case check-fields check-resolution
 	@echo "Measuring saturated magnetic structures and pressure balance"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) structures_analysis.py \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" structures_analysis.py \
 		--data-dir "$(DATA_DIR)" --fields "$(FIELD_PATTERN)" --moments "$(MOMENT_PATTERN)" \
 		--outdir "$(STRUCTURES_OUT)" $(STRUCTURES_FLAGS)
 
@@ -222,25 +223,25 @@ mirror: structures
 
 diamagnetic: check-case check-fields check-moments check-resolution
 	@echo "Generating diamagnetic-current plots"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) diamagnetic_current.py \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" diamagnetic_current.py \
 		--moments "$(MOMENT_PATTERN)" --fields "$(FIELD_PATTERN)" \
 		--outdir "$(DIAMAGNETIC_OUT)" \
 		--every $(SNAPSHOT_EVERY) --gif-every $(GIF_EVERY)
 
 fields: check-case check-fields check-resolution
 	@echo "Generating magnetic-field fluctuation plots"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) fluctuationofmagneticfiel.py \
-		--B0 $(B0_REF) --plane yz --smooth 1.5 \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" fluctuationofmagneticfiel.py \
+		$(if $(B0_REF),--B0 "$(B0_REF)",) --plane yz --smooth 1.5 \
 		--pattern "$(FIELD_PATTERN)" --outdir "$(FIELDS_OUT)" \
 		--every $(SNAPSHOT_EVERY) --gif_every $(GIF_EVERY) \
-		$(if $(FIELDS_GIF),--create_gifs --fixed_scale,)
+		$(if $(filter 1 yes true,$(FIELDS_GIF)),--create_gifs --fixed_scale,)
 
 # spectrum = gamma(k), E(k,t), helicity, compressibility only. `spectral` runs
 # it and then the four other spectral products; a cluster job can instead run
 # spectrum / dispersion / growth-map (x2) / polarization as parallel steps.
 spectrum: check-case check-fields check-resolution
 	@echo "Generating spectral plots"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) spectral_analysis.py \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" spectral_analysis.py \
 		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)" \
 		$(if $(GROWTH_T_START),--t-start "$(GROWTH_T_START)",) \
 		$(if $(GROWTH_T_END),--t-end "$(GROWTH_T_END)",)
@@ -257,7 +258,7 @@ spectral: spectrum
 
 dispersion: check-case check-fields check-resolution
 	@echo "Measuring spatial modes, growth and frequency; generating dispersion diagrams"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) dispersion_analysis.py \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" dispersion_analysis.py \
 		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)" \
 		--mode "$(DISPERSION_MODE)" \
 		--component "$(DISPERSION_COMPONENT)" \
@@ -273,7 +274,7 @@ dispersion: check-case check-fields check-resolution
 
 growth-map: check-case check-fields check-resolution
 	@echo "Generating gamma(k_parallel,k_perp) growth-rate map"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) growth_rate_map.py \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" growth_rate_map.py \
 		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)" \
 		--component "$(GROWTH_COMPONENT)" \
 		$(if $(GROWTH_T_START),--t-start "$(GROWTH_T_START)",) \
@@ -287,7 +288,7 @@ growth-map: check-case check-fields check-resolution
 
 anisotropy-dispersion: check-case check-fields check-moments check-resolution
 	@echo "Generating temperature-anisotropy dispersion plots"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) temperature_anisotropy_dispersion.py \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" temperature_anisotropy_dispersion.py \
 		--moments "$(MOMENT_PATTERN)" --fields "$(FIELD_PATTERN)" \
 		--outdir "$(SPECTRAL_OUT)"
 
@@ -297,7 +298,7 @@ anisotropy-dispersion: check-case check-fields check-moments check-resolution
 # mirror delta_Bz(k_perp,k_parallel) oblique spectrum for mirror cases.
 polarization: check-case check-fields check-resolution
 	@echo "Generating polarized omega-k dispersion maps and mode-growth curves"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) polarization_dispersion.py \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" polarization_dispersion.py \
 		--fields "$(FIELD_PATTERN)" --outdir "$(SPECTRAL_OUT)" \
 		$(if $(THEORY_CSV),--theory-csv "$(THEORY_CSV)",) \
 		$(if $(DISPERSION_T_START),--t-start "$(DISPERSION_T_START)",) \
@@ -305,12 +306,12 @@ polarization: check-case check-fields check-resolution
 
 validate: check-case check-particles
 	@echo "Validating moments against $(FIRST_PARTICLE)"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) validate_moments.py "$(FIRST_PARTICLE)" \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" validate_moments.py "$(FIRST_PARTICLE)" \
 		--run-name "$(RUN_NAME)" --outdir "$(VALIDATION_OUT)"
 
 particles: check-case check-particles
 	@echo "Generating particle VDF, anisotropy, and Brazil trajectory"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) plot_prt.py \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" plot_prt.py \
 		"$(PARTICLE_PATTERN)" --run-name "$(RUN_NAME)" \
 		--outdir "$(PARTICLES_OUT)"
 
@@ -318,27 +319,27 @@ particles: check-case check-particles
 # window, truncated at s_max (needed for kappa = 3) with sampling errors.
 heatflux: check-case check-particles check-fields check-resolution
 	@echo "Measuring the particle heat flux (third moment) in the prt window"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) heat_flux_analysis.py \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" heat_flux_analysis.py \
 		--data-dir "$(DATA_DIR)" --particles "$(PARTICLE_PATTERN)" \
 		--fields "$(FIELD_PATTERN)" --outdir "$(HEATFLUX_OUT)" $(HEATFLUX_FLAGS)
 
 physics: check-case check-resolution
 	@echo "Generating integrated physical diagnostics"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) physical_diagnostics.py \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" physical_diagnostics.py \
 		--data-dir "$(DATA_DIR)" --particles "$(PARTICLE_PATTERN)" \
 		--fields "$(FIELD_PATTERN)" --moments "$(MOMENT_PATTERN)" \
 		--outdir "$(PHYSICS_OUT)" \
 		$(if $(GROWTH_T_START),--growth-t-start "$(GROWTH_T_START)",) \
-		$(if $(GROWTH_T_END),--growth-t-end "$(GROWTH_T_END)",)
+		$(if $(GROWTH_T_END),--growth-t-end "$(GROWTH_T_END)",) $(PHYSICS_FLAGS)
 
 theory: check-case
 	@echo "Solving the parallel linear dispersion relation for $(CASE)"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) linear_theory.py --case "$(CASE)" \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" linear_theory.py --case "$(CASE)" \
 		--out "$(SPECTRAL_OUT)/linear_theory.csv" $(THEORY_FLAGS)
 	@echo "Now: make polarization DATA_DIR=... CASE=$(CASE) THEORY_CSV=$(SPECTRAL_OUT)/linear_theory.csv"
 
 theory-self-test:
-	$(PYTHON) linear_theory.py --self-test
+	"$(PYTHON)" linear_theory.py --self-test
 
 .PHONY: energy energy-if-present
 energy-if-present: check-case
@@ -347,14 +348,14 @@ energy-if-present: check-case
 	else echo "[MISSING] No diag*.asc: global energy conservation cannot be evaluated"; fi
 
 energy: check-case
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) energy_conservation.py \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" energy_conservation.py \
 		$(DATA_DIR)/diag*.asc --outdir "$(PHYSICS_OUT)"
 
 # div B of the Yee field snapshots plus PSC's own Gauss / continuity checks
 # parsed from the job log (LOGS='path/to/job.out' if it is elsewhere).
 residuals: check-case check-fields
 	@echo "Field-solver residuals: div B, Gauss, continuity"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) field_residuals.py \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" field_residuals.py \
 		--data-dir "$(DATA_DIR)" --fields "$(FIELD_PATTERN)" --outdir "$(PHYSICS_OUT)" \
 		$(if $(strip $(LOGS)),--logs $(LOGS),)
 
@@ -362,14 +363,14 @@ residuals: check-case check-fields
 # against the kinetic-energy change from DiagEnergies.
 energy-exchange: check-case check-fields check-moments check-resolution
 	@echo "Field-particle energy exchange J.E per species"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) energy_exchange.py \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" energy_exchange.py \
 		--data-dir "$(DATA_DIR)" --fields "$(FIELD_PATTERN)" --moments "$(MOMENT_PATTERN)" \
 		--outdir "$(PHYSICS_OUT)"
 
 # The four anisotropy estimators of the pipeline on one time axis.
 estimators: check-case check-fields check-moments check-particles check-resolution
 	@echo "Comparing particle and moment anisotropy estimators"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) estimator_consistency.py \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" estimator_consistency.py \
 		--data-dir "$(DATA_DIR)" --outdir "$(PHYSICS_OUT)"
 
 # Adiabatic Liouville mapping + trapped-domain closures (paper fig. 2).
@@ -377,7 +378,7 @@ estimators: check-case check-fields check-moments check-particles check-resoluti
 # LIOUVILLE_FLAGS='--kappa0 3 --A0 2'.
 theory-liouville: check-case
 	@echo "Computing Liouville closure profiles for $(CASE)"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) liouville_kappa.py --figure \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" liouville_kappa.py --figure \
 		--outdir "$(SPECTRAL_OUT)" $(LIOUVILLE_FLAGS)
 
 # The same closures re-labelled along the model structure
@@ -390,7 +391,7 @@ LIOUVILLE_NX ?= 41
 LIOUVILLE_A ?=
 theory-liouville-x: check-case
 	@echo "Computing Liouville closure profiles along B(x) for $(CASE)"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) liouville_kappa.py --figure-x \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" liouville_kappa.py --figure-x \
 		--outdir "$(SPECTRAL_OUT)" --n-x $(LIOUVILLE_NX) \
 		$(if $(LIOUVILLE_A),--a $(LIOUVILLE_A),) $(LIOUVILLE_FLAGS)
 
@@ -402,17 +403,17 @@ LIOUVILLE_A0_LIST ?=
 LIOUVILLE_A_LIST ?= 0.1 0.25 0.4
 theory-liouville-sweep: check-case
 	@echo "Sweeping Liouville closures over (kappa, A0, a)"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) liouville_kappa.py --sweep \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" liouville_kappa.py --sweep \
 		--outdir "$(SPECTRAL_OUT)/liouville_sweep" --n-x $(LIOUVILLE_NX) \
 		--kappa-list $(LIOUVILLE_KAPPA_LIST) \
 		$(if $(LIOUVILLE_A0_LIST),--A0-list $(LIOUVILLE_A0_LIST),) \
 		--a-list $(LIOUVILLE_A_LIST) $(LIOUVILLE_FLAGS)
 
 liouville-self-test:
-	$(PYTHON) liouville_kappa.py --self-test
+	"$(PYTHON)" liouville_kappa.py --self-test
 
 kappa-eff-self-test:
-	$(PYTHON) kappa_eff.py --self-test
+	"$(PYTHON)" kappa_eff.py --self-test
 
 # Reconnection runs (double Harris sheet) live outside the anisotropy case
 # matrix: their profiles come from reconnection_analysis.py, not psc_units,
@@ -422,13 +423,13 @@ RECONNECTION_PROFILE ?= reconnection_comparable
 RECONNECTION_FLAGS ?=
 reconnection: check-fields
 	@echo "Generating reconnection diagnostics and the B-kappa correlation"
-	$(PYTHON) reconnection_analysis.py --data-dir "$(DATA_DIR)" \
+	"$(PYTHON)" reconnection_analysis.py --data-dir "$(DATA_DIR)" \
 		--profile "$(RECONNECTION_PROFILE)" --outdir "$(RECONNECTION_OUT)" \
 		$(RECONNECTION_FLAGS)
 
 prt-region: check-case check-fields
 	@echo "Locating the prt window in the field-fluctuation maps"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) prt_region_field_cut.py \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" prt_region_field_cut.py \
 		--data-dir "$(DATA_DIR)" --outdir "$(PARTICLES_OUT)" \
 		$(if $(STEPS),--steps $(STEPS),) --average-over-window
 
@@ -437,12 +438,12 @@ prt-region: check-case check-fields
 # '--avg-window 100 158 --noise-window 0 0.3 --kmax-de 2.0 --floor static'.
 prt-bfield: check-case check-fields
 	@echo "Time-averaged B statistics inside the prt window (noise-cleaned)"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) prt_region_bfield_stats.py \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" prt_region_bfield_stats.py \
 		--data-dir "$(DATA_DIR)" --outdir "$(PHYSICS_OUT)" $(PRT_BFIELD_FLAGS)
 
 vdf-spatial: check-case check-fields check-particles
 	@echo "Computing the spatially resolved VDF inside the prt window"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) vdf_spatial.py \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" vdf_spatial.py \
 		--data-dir "$(DATA_DIR)" --outdir "$(PARTICLES_OUT)" \
 		$(if $(STEPS),--steps $(STEPS),) $(VDF_FLAGS)
 
@@ -450,7 +451,7 @@ vdf-spatial: check-case check-fields check-particles
 # where in parallel velocity the free energy is left (resonant_anisotropy.py).
 resonant-anisotropy: check-case check-fields check-particles
 	@echo "Computing the resonant anisotropy A(v_par) from the particle snapshots"
-	PSC_PROFILE=$(PSC_PROFILE) $(PYTHON) resonant_anisotropy.py measure \
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" resonant_anisotropy.py measure \
 		--data-dir "$(DATA_DIR)" --outdir "$(PARTICLES_OUT)" $(RESONANT_FLAGS)
 
 compare-physics:
@@ -458,14 +459,14 @@ compare-physics:
 		echo "ERROR: set COMPARE_CASES='maxwellian=../analysis_results/mirror_maxwellian/09_physical_diagnostics kappa=../analysis_results/mirror_kappa/09_physical_diagnostics'"; \
 		exit 1; \
 	}
-	$(PYTHON) compare_physical_cases.py $(COMPARE_CASES) --outdir "$(COMPARE_OUT)"
+	"$(PYTHON)" compare_physical_cases.py $(COMPARE_CASES) --outdir "$(COMPARE_OUT)"
 
 convergence:
 	@test -n "$(CONVERGENCE_RUNS)" || { \
 		echo "ERROR: set CONVERGENCE_RUNS='base=../analysis_results/run_a dx2=../analysis_results/run_b ...'"; \
 		exit 1; \
 	}
-	$(PYTHON) convergence_study.py $(CONVERGENCE_RUNS) --outdir "$(CONVERGENCE_OUT)"
+	"$(PYTHON)" convergence_study.py $(CONVERGENCE_RUNS) --outdir "$(CONVERGENCE_OUT)"
 
 clean:
 	@test -n "$(RUN_NAME)" && test "$(OUTPUT_DIR)" != "/" && rm -rf "$(OUTPUT_DIR)"

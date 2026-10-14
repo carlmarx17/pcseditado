@@ -105,8 +105,7 @@ class FieldImagePlotter:
                 by3d = fields["hy_fc/p0/3d"]
                 bz3d = fields["hz_fc/p0/3d"]
             except Exception as e:
-                print(f"Error leyendo step {step} para limites: {e}")
-                continue
+                raise RuntimeError(f'Cannot determine field limits at step {step}: {e}') from e
                 
             bx2d, by2d, bz2d, _, _ = self._get_slice(bx3d, by3d, bz3d, plane, slice_index)
             
@@ -139,7 +138,7 @@ class FieldImagePlotter:
     def _build_panels(self, step, plane='xy', slice_index=None):
         """Read one snapshot and return the per-component render specs.
 
-        Returns None if the step cannot be read. Each spec carries everything
+        Returns None if the step is absent; unreadable files raise. Each spec carries everything
         _make_figure needs, so both the PNG path and the in-memory GIF path
         produce byte-identical plots.
         """
@@ -153,8 +152,7 @@ class FieldImagePlotter:
             by3d = fields["hy_fc/p0/3d"]
             bz3d = fields["hz_fc/p0/3d"]
         except Exception as e:
-            print(f"Error procesando step {step}: {e}")
-            return None
+            raise RuntimeError(f'Cannot render field snapshot at step {step}: {e}') from e
 
         bx2d, by2d, bz2d, xlabel, ylabel = self._get_slice(bx3d, by3d, bz3d, plane, slice_index)
 
@@ -346,7 +344,7 @@ class FieldImagePlotter:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--pattern', type=str, default='pfd.*.h5', help='Patrón de archivos HDF5')
-    parser.add_argument('--B0', type=float, default=0.01)
+    parser.add_argument('--B0', type=float, default=B0_DEFAULT)
     parser.add_argument('--fluct', type=float, default=0.1)
     parser.add_argument('--plane', type=str, default='xy', choices=['xy','xz','yz'])
     parser.add_argument('--steps', nargs='*', type=int)
@@ -368,8 +366,8 @@ if __name__ == '__main__':
     parser.add_argument('--gif_duration', type=float, default=0.2)
     args = parser.parse_args()
 
-    if args.B0 == 0:
-        args.B0 = 0.01
+    if not np.isfinite(args.B0) or args.B0 <= 0:
+        parser.error('--B0 must be finite and positive')
 
     plotter = FieldImagePlotter(
         em_pattern=args.pattern,

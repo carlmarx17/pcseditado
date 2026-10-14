@@ -399,8 +399,7 @@ class SpectralAnalyzer:
                 filepath, "jeh-", ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"]
             )
         except Exception as exc:
-            print(f"Error reading file {filepath}: {exc}")
-            return None
+            raise RuntimeError(f'Cannot read spectral snapshot {filepath}: {exc}') from exc
 
         bx_3d = b_fields["hx_fc/p0/3d"] * self.B0_ref
         by_3d = b_fields["hy_fc/p0/3d"] * self.B0_ref

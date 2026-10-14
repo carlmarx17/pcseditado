@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shlex
 import sys
 
 import h5py
@@ -229,7 +230,7 @@ def run_runner(tmp_path, stages, *extra, spec=None):
                MPLCONFIGDIR=str(tmp_path / "mpl"))
     r = subprocess.run([sys.executable, "run_pipeline.py", "--data-dir", str(data), "--case",
                         "mirror_bimaxwellian_moderate", "--results-root", str(tmp_path / "out"),
-                        "--launcher", f"{sys.executable} {tmp_path / 'fake_make.py'}",
+                        "--launcher", shlex.join([sys.executable, str(tmp_path / 'fake_make.py')]),
                         "--stages", *stages, *extra], cwd=HERE, env=env, capture_output=True, text=True)
     state_path = tmp_path / "out" / "mirror_bimaxwellian_moderate" / "pipeline.json"
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
