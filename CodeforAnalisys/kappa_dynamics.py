@@ -151,13 +151,19 @@ def load_field(root: Path) -> dict | None:
     t = np.array([_f(r.get("omega_ci_t")) for r in rows])
     vec = np.array([_f(r.get("delta_B_vec_rms_over_B0")) for r in rows])
     par = np.array([_f(r.get("delta_B_parallel_rms_over_B0")) for r in rows])
+    # <|B|>/B0 over the whole box and its spread across the box. Older trees
+    # have no such column (it was added with this revision): NaN, not an error.
+    b_mean = np.array([_f(r.get("B_mean_over_B0")) for r in rows])
+    b_std = np.array([_f(r.get("B_std_over_B0")) for r in rows])
     ok = np.isfinite(t) & np.isfinite(vec)
     order = np.argsort(t[ok])
     t, w, w_par = t[ok][order], vec[ok][order] ** 2, par[ok][order] ** 2
+    b_mean, b_std = b_mean[ok][order], b_std[ok][order]
     if t.size < 2:
         return None
     fluence = np.concatenate([[0.0], np.cumsum(0.5 * (w[1:] + w[:-1]) * np.diff(t))])
-    return {"t": t, "W": w, "W_par": w_par, "F": fluence}
+    return {"t": t, "W": w, "W_par": w_par, "F": fluence,
+            "B_mean": b_mean, "B_std": b_std}
 
 
 def linear_phase_end(root: Path) -> float:
@@ -451,21 +457,30 @@ def local_field_slopes(run: dict) -> list[dict]:
 
 # ── Figures ──────────────────────────────────────────────────────────────────
 
-def _kappa_axis(ax) -> None:
-    """kappa labels on the right of a 1/kappa axis (limits must be final).
+def _kappa_axis(ax, which: str = "y") -> None:
+    """kappa labels opposite a 1/kappa axis (limits must be final).
 
     A secondary axis on the same scale, not a twin: it draws labels only and
-    is not a second panel of data.
+    is not a second panel of data. ``which`` is the axis that carries 1/kappa,
+    so a figure with the index on x gets its kappa labels on top.
     """
-    lo, hi = ax.get_ylim()
     same = (lambda x: x, lambda x: x)
-    right = ax.secondary_yaxis("right", functions=same)
-    ticks = [(1.0 / k, f"{k:g}") for k in KAPPA_TICKS if lo <= 1.0 / k <= hi]
-    if lo <= 0.0 <= hi:
+    if which == "x":
+        lo, hi = ax.get_xlim()
+        other = ax.secondary_xaxis("top", functions=same)
+        set_ticks, set_label = other.set_xticks, other.set_xlabel
+        off = {"top": False}
+    else:
+        lo, hi = ax.get_ylim()
+        other = ax.secondary_yaxis("right", functions=same)
+        set_ticks, set_label = other.set_yticks, other.set_ylabel
+        off = {"right": False}
+    ticks = [(1.0 / k, f"{k:g}") for k in KAPPA_TICKS if min(lo, hi) <= 1.0 / k <= max(lo, hi)]
+    if min(lo, hi) <= 0.0 <= max(lo, hi):
         ticks.append((0.0, r"$\infty$"))
-    right.set_yticks([v for v, _ in ticks], labels=[s for _, s in ticks])
-    right.set_ylabel(r"$\kappa$")
-    right.tick_params(which="minor", right=False)
+    set_ticks([v for v, _ in ticks], labels=[s for _, s in ticks])
+    set_label(r"$\kappa$")
+    other.tick_params(which="minor", **off)
 
 
 def _draw_index(ax, run: dict, color: str, population: str = "all", **style) -> None:

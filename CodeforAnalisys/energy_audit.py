@@ -245,7 +245,10 @@ def audit_window(rows: list[dict], p: dict) -> dict:
         "dx_over_lambda_De_final": float(dx_over_lde[-1]),
         "beta_e_final": float(p["beta_e_parallel"] * te_ratio[-1]),
         "_series": {"omega_ci_t": t, "T_e_over_T_e0": te_ratio, "dx_over_lambda_De": dx_over_lde,
-                    "beta_e": p["beta_e_parallel"] * te_ratio, "E_internal_e": ee, "E_internal_i": ei},
+                    "beta_e": p["beta_e_parallel"] * te_ratio, "E_internal_e": ee, "E_internal_i": ei,
+                    # A_e(t) separates T_par from T_perp, which the baseline
+                    # subtraction needs: T_bar = T_par (1 + 2 A_e) / 3.
+                    "A_e": ae},
     }
 
 
@@ -357,6 +360,53 @@ def match_control(run: dict, audits: list[dict], explicit: str | None = None) ->
     return best, match
 
 
+def _cell(column, index):
+    """One CSV cell: empty when the column or the row is absent or not finite."""
+    if column is None or index is None:
+        return ""
+    value = float(np.asarray(column, dtype=float)[index])
+    return f"{value:.8g}" if np.isfinite(value) else ""
+
+
+def _corrected_electrons(ws: dict, ctrl: np.ndarray, ok: np.ndarray, run: dict) -> dict:
+    """T_par, T_perp, A_e and beta_e_par of the electrons, raw and baseline-corrected.
+
+    The control is mirror stable and its electrons heat isotropically (measured
+    to within 3 % between the three controls), so its temperature rise is one
+    number per time, subtracted from both components of the run:
+
+        T_bar  = E_internal_e / 1.5            (n = 1, E_int = 3T/2)
+        T_par  = 3 T_bar / (1 + 2 A_e),  T_perp = A_e T_par
+        dT_ctrl(t) = [E_internal_e^ctrl(t) - E_internal_e^ctrl(0)] / 1.5
+        T_par^c = T_par - dT_ctrl,  T_perp^c = T_perp - dT_ctrl
+
+    These are intensive window quantities, so unlike the global energies they
+    carry no volume ratio. Both versions are always returned: the threshold the
+    ions actually felt is the one of the heated electrons, and the corrected
+    curve says how much of that was the setup rather than the instability.
+    Anisotropic numerical heating would break the one-number assumption; the
+    controls are what makes it testable.
+    """
+    b0 = float((run.get("setup") or {}).get("B0") or 0.0)
+    a_e = np.asarray(ws.get("A_e", np.full_like(ctrl, np.nan)), dtype=float)[ok]
+    t_bar = np.asarray(ws["E_internal_e"], dtype=float)[ok] / 1.5
+    dt_ctrl = (ctrl[ok] - ctrl[ok][0]) / 1.5
+    with np.errstate(invalid="ignore", divide="ignore"):
+        t_par = 3.0 * t_bar / (1.0 + 2.0 * a_e)
+        t_perp = a_e * t_par
+        t_par_c, t_perp_c = t_par - dt_ctrl, t_perp - dt_ctrl
+        # A corrected component at or below zero means the control absorbed the
+        # whole measured temperature: report NaN, never a negative temperature.
+        t_par_c = np.where(t_par_c > 0, t_par_c, np.nan)
+        t_perp_c = np.where(t_perp_c > 0, t_perp_c, np.nan)
+        scale = 2.0 / b0 ** 2 if b0 > 0 else np.nan
+        return {"T_e_par": t_par, "T_e_perp": t_perp, "A_e": a_e,
+                "beta_e_par": t_par * scale,
+                "T_e_par_corrected": t_par_c, "T_e_perp_corrected": t_perp_c,
+                "A_e_corrected": t_perp_c / t_par_c,
+                "beta_e_par_corrected": t_par_c * scale}
+
+
 def subtract_control(run: dict, control: dict, match: dict) -> dict:
     """Energy changes of `run` minus those of its isotropic control, on the run's times."""
     out = {"control": control["run"], "match": match}
@@ -375,7 +425,8 @@ def subtract_control(run: dict, control: dict, match: dict) -> dict:
                 "T_e_factor_control": float(ctrl[last] / ctrl[ok][0]),
                 "T_e_factor_baseline_corrected": float(1.0 + excess[last] / ee0),
                 "_series": {"omega_ci_t": t[ok], "run": ws["T_e_over_T_e0"][ok],
-                            "control": ctrl[ok] / ctrl[ok][0], "corrected": 1.0 + excess[ok] / ee0}}
+                            "control": ctrl[ok] / ctrl[ok][0], "corrected": 1.0 + excess[ok] / ee0,
+                            **_corrected_electrons(ws, ctrl, ok, run)}}
             lp = run.get("linear_phase") or {}
             if lp:
                 out["window"]["T_e_factor_baseline_corrected_at_linear_end"] = _interp(
@@ -663,18 +714,36 @@ def write_outputs(audits: list[dict], groups: list[dict], outdir: Path) -> None:
                                  f"{_interp(s['omega_ci_t'], s['dx_over_lambda_De'], common):.6g}"])
     with (outdir / "energy_audit_electron_heating.csv").open("w", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["run", "role", "omega_ci_t", "T_e_over_T_e0", "dx_over_lambda_De", "beta_e",
-                         "T_e_over_T_e0_baseline_corrected"])
+        # Raw and baseline-corrected side by side, never one replacing the other:
+        # the mirror threshold the ions felt is the one of the heated electrons,
+        # and the corrected column says how much of it was the setup.
+        RAW = ("T_e_over_T_e0", "dx_over_lambda_De", "beta_e", "A_e", "T_e_par", "T_e_perp", "beta_e_par")
+        CORR = ("corrected", "T_e_par_corrected", "T_e_perp_corrected",
+                "A_e_corrected", "beta_e_par_corrected")
+        writer.writerow(["run", "role", "omega_ci_t", *RAW,
+                         "T_e_over_T_e0_baseline_corrected", "T_e_par_baseline_corrected",
+                         "T_e_perp_baseline_corrected", "A_e_baseline_corrected",
+                         "beta_e_par_baseline_corrected", "control"])
         for a in audits:
             s = (a.get("window") or {}).get("_series")
             if s is None:
                 continue
-            corrected = ((a.get("baseline") or {}).get("window") or {}).get("_series")
-            lookup = dict(zip(corrected["omega_ci_t"], corrected["corrected"])) if corrected else {}
-            for t, te, dx, be in zip(s["omega_ci_t"], s["T_e_over_T_e0"], s["dx_over_lambda_De"], s["beta_e"]):
-                c = lookup.get(t)
-                writer.writerow([a["run"], a.get("role"), *(f"{x:.8g}" for x in (t, te, dx, be)),
-                                 f"{c:.8g}" if c is not None else ""])
+            baseline = a.get("baseline") or {}
+            corr = (baseline.get("window") or {}).get("_series") or {}
+            # The corrected series covers the times the control also reached.
+            at = {float(t): i for i, t in enumerate(corr.get("omega_ci_t", ()))}
+            for i, t in enumerate(s["omega_ci_t"]):
+                j = at.get(float(t))
+                cells = []
+                for key in RAW:
+                    # T_e_par, T_e_perp and beta_e_par are computed next to the
+                    # correction, so they exist only where the control reaches.
+                    col = s.get(key) if key in s else (corr.get(key) if j is not None else None)
+                    k = i if key in s else j
+                    cells.append(_cell(col, k))
+                cells += [_cell(corr.get(key), j) for key in CORR]
+                writer.writerow([a["run"], a.get("role"), f"{t:.8g}", *cells,
+                                 baseline.get("control") or ""])
     plot(audits, outdir / "energy_audit.png")
     plot_baseline(audits, outdir / "energy_audit_baseline.png")
 

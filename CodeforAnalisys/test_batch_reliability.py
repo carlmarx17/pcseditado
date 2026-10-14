@@ -1,4 +1,5 @@
 """Regression coverage for production batch failures and false success states."""
+import csv
 import json
 import os
 from pathlib import Path
@@ -401,3 +402,111 @@ def test_mean_B_over_the_whole_box_is_a_series_of_its_own(tmp_path, monkeypatch)
     _, row, _ = pd._field_metrics_worker((0, str(field), 0.08, window, []))
     for key in ('B_mean', 'B_mean_over_B0', 'B_std_over_B0'):
         assert key in row and isinstance(row[key], float)
+
+
+def test_the_baseline_propagates_to_beta_e_and_A_e_without_replacing_the_raw():
+    """The control's isotropic rise comes off both components; both versions stay."""
+    import energy_audit
+    b0, t_e0 = 0.08, 0.0032            # T_e0 = beta_e0 B0^2 / 2 with beta_e0 = 1
+    # Run: T_bar doubles and the electrons end anisotropic at A_e = 1.5.
+    # Control: T_bar rises by 60 % of T_e0, isotropically.
+    ws = {'omega_ci_t': np.array([0.0, 10.0]),
+          'E_internal_e': 1.5 * np.array([t_e0, 2 * t_e0]),
+          'A_e': np.array([1.0, 1.5]),
+          'T_e_over_T_e0': np.array([1.0, 2.0])}
+    ctrl = 1.5 * np.array([t_e0, 1.6 * t_e0])
+    ok = np.array([True, True])
+    got = energy_audit._corrected_electrons(ws, ctrl, ok, {'setup': {'B0': b0}})
+
+    # Raw: T_bar = 2 T_e0, A_e = 1.5 -> T_par = 3(2 T_e0)/(1 + 3) = 1.5 T_e0.
+    assert got['T_e_par'][1] == pytest.approx(1.5 * t_e0)
+    assert got['T_e_perp'][1] == pytest.approx(1.5 * 1.5 * t_e0)
+    assert got['beta_e_par'][1] == pytest.approx(1.5 * t_e0 * 2 / b0**2)
+    # Control rose by 0.6 T_e0, taken off both components.
+    assert got['T_e_par_corrected'][1] == pytest.approx((1.5 - 0.6) * t_e0)
+    assert got['T_e_perp_corrected'][1] == pytest.approx((2.25 - 0.6) * t_e0)
+    # The anisotropy the correction implies is larger than the measured one:
+    # removing the same amount from both components raises the ratio.
+    assert got['A_e_corrected'][1] == pytest.approx(1.65 / 0.9)
+    assert got['A_e_corrected'][1] > got['A_e'][1]
+    assert got['beta_e_par_corrected'][1] == pytest.approx(0.9 * t_e0 * 2 / b0**2)
+    # At t = 0 the control has not heated yet, so nothing is subtracted.
+    assert got['T_e_par_corrected'][0] == pytest.approx(got['T_e_par'][0])
+    assert got['A_e_corrected'][0] == pytest.approx(got['A_e'][0])
+
+
+def test_a_control_that_absorbs_the_whole_temperature_gives_nan_not_a_negative():
+    import energy_audit
+    t_e0 = 0.0032
+    ws = {'omega_ci_t': np.array([0.0, 10.0]),
+          'E_internal_e': 1.5 * np.array([t_e0, 1.1 * t_e0]),
+          'A_e': np.array([1.0, 1.0]),
+          'T_e_over_T_e0': np.array([1.0, 1.1])}
+    ctrl = 1.5 * np.array([t_e0, 5.0 * t_e0])      # control hotter than the run
+    got = energy_audit._corrected_electrons(ws, ctrl, np.array([True, True]),
+                                            {'setup': {'B0': 0.08}})
+    assert not np.isfinite(got['T_e_par_corrected'][1])
+    assert not np.isfinite(got['A_e_corrected'][1])
+    assert np.isfinite(got['T_e_par'][1]), 'the raw column must survive'
+
+
+def _kappa_field_run(root: Path, kappa0, inv0, t_end=40.0):
+    """One run root with the two products field_vs_kappa.py reads."""
+    (root/'09_physical_diagnostics').mkdir(parents=True, exist_ok=True)
+    (root/'03_particles').mkdir(parents=True, exist_ok=True)
+    t_field = np.linspace(0.0, t_end, 161)
+    amp = 0.02 * (1.0 - np.exp(-((t_field / 14.0) ** 3)))
+    with (root/'09_physical_diagnostics'/'field_fluctuation_table.csv').open('w', newline='') as fh:
+        w = csv.writer(fh)
+        w.writerow(['step', 'omega_ci_t', 'delta_B_vec_rms_over_B0',
+                    'delta_B_parallel_rms_over_B0', 'B_mean_over_B0', 'B_std_over_B0'])
+        for i, t in enumerate(t_field):
+            w.writerow([i * 1000, f'{t:.6g}', f'{amp[i]:.6g}', f'{0.6 * amp[i]:.6g}',
+                        f'{1.0 - 1.5 * amp[i] ** 2:.6g}', f'{amp[i] * 1.2:.6g}'])
+    t_part = np.linspace(0.0, t_end, 21)
+    inv = inv0 + 0.05 * (1.0 - np.exp(-t_part / 12.0))
+    with (root/'03_particles'/'vdf_kappa_series.csv').open('w', newline='') as fh:
+        w = csv.writer(fh)
+        w.writerow(['step', 'omega_ci_t', 'population', 'inv_kappa_signed',
+                    'inv_kappa_signed_error', 'A_local_b'])
+        for i, t in enumerate(t_part):
+            w.writerow([i * 8000, f'{t:.6g}', 'all', f'{inv[i]:.6g}', '0.004', '2.0'])
+    with (root/'09_physical_diagnostics'/'growth_rate_summary.csv').open('w', newline='') as fh:
+        w = csv.writer(fh)
+        w.writerow(['mode', 'gamma', 'gamma_err', 'linear_phase_end', 'is_reference'])
+        w.writerow(['mode_compressive', '0.21', '0.02', '16.0', 'True'])
+    return root
+
+
+def test_field_against_kappa_figures_drop_the_quiet_start_and_pass_layout_qa(tmp_path):
+    """Both figures come from products only, and the field series obeys the
+    fluctuation rule: no t = 0 and no quiet-start noise build-up."""
+    roots = [_kappa_field_run(tmp_path/'mirror_bimaxwellian_moderate', None, 0.0),
+             _kappa_field_run(tmp_path/'mirror_bikappa5_moderate', 5.0, 0.20),
+             _kappa_field_run(tmp_path/'mirror_bikappa3_moderate', 3.0, 1/3)]
+    out = tmp_path/'out'
+    env = dict(os.environ, MPLCONFIGDIR='/tmp/psc-mpl', PSC_FIG_THEME='paper')
+    r = subprocess.run([sys.executable, str(HERE/'field_vs_kappa.py'), *map(str, roots),
+                        '--outdir', str(out)], env=env, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    for name in ('field_vs_kappa_instants.png', 'field_vs_kappa_trajectory.png'):
+        assert (out/name).is_file()
+        assert (out/name).with_suffix('.pdf').is_file(), 'the paper theme writes a PDF too'
+
+    # plot_style records a layout check per figure; it has to come back empty.
+    qa = [json.loads(l) for f in out.glob('figure_qa_*.jsonl')
+          for l in f.read_text().splitlines()]
+    assert qa and all(not entry.get('issues') for entry in qa), qa
+
+    rows = list(csv.DictReader((out/'field_vs_kappa.csv').open()))
+    assert rows
+    times = sorted({float(r['omega_ci_t']) for r in rows})
+    assert times[0] > 0.0, 't = 0 is float rounding of the uniform B0'
+    # psc_units.noise_settling_time of the box fundamental for these profiles.
+    assert times[0] >= 2.5, f'quiet-start build-up still drawn (first t = {times[0]})'
+    # Both field measures reach the table, and the index is the measured one.
+    assert all(r['B_mean_over_B0'] and r['delta_B_vec_rms_over_B0'] for r in rows)
+    assert {r['run'] for r in rows} == {p.name for p in roots}
+    k3 = [r for r in rows if r['run'] == 'mirror_bikappa3_moderate']
+    assert float(k3[0]['inv_kappa']) > float(
+        [r for r in rows if r['run'] == 'mirror_bimaxwellian_moderate'][0]['inv_kappa'])
