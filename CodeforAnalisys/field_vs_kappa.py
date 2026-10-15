@@ -59,7 +59,7 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 
 import plot_style as ps
-from kappa_dynamics import _kappa_axis, load_run
+from kappa_dynamics import KAPPA_TICKS, _kappa_axis, load_run
 
 #: Okabe-Ito in the fixed order of the series: bi-Maxwellian, kappa 5, kappa 3.
 KAPPA_COLOURS = {None: "#0072B2", 5.0: "#D55E00", 3.0: "#009E73"}
@@ -101,6 +101,27 @@ def paired_series(run: dict, population: str = "all") -> dict | None:
         out[key] = (np.interp(t, field["t"], column)
                     if column is not None and np.any(np.isfinite(column))
                     else np.full(t.size, np.nan))
+    return out
+
+
+def local_contrast(run: dict, s: dict) -> dict | None:
+    """1/kappa inside the magnetic holes and the peaks, on the field's own times.
+
+    These are the sub-regions where |B| falls and rises, so the contrast between
+    them is a statement about the field magnitude; the box average of |B| is,
+    to second order, the square of the fluctuation and says nothing more.
+    """
+    hole, peak = (run.get("pop") or {}).get("hole"), (run.get("pop") or {}).get("peak")
+    if hole is None or peak is None:
+        return None
+    t = s["t"]
+    out = {"t": t}
+    for name, pop in (("hole", hole), ("peak", peak)):
+        ok = np.isfinite(pop["inv"])
+        if ok.sum() < 2:
+            return None
+        out[name] = np.interp(t, np.asarray(pop["t"])[ok], np.asarray(pop["inv"])[ok],
+                              left=np.nan, right=np.nan)
     return out
 
 
@@ -249,6 +270,77 @@ def plot_trajectory(runs, series, path: Path) -> Path | None:
     return path
 
 
+def plot_single_run(run: dict, s: dict, path: Path, local: dict | None = None) -> Path | None:
+    """One run, one panel: both series against time on a shared axis.
+
+    The field is the left axis and the index the right one, so the order of
+    events is read directly instead of from the colour of a track. When the
+    index was also measured inside the magnetic holes and the peaks, those two
+    go on the same axis with the band between them: that contrast, not the box
+    average, is where "the magnitude falls and rises" is a statement about the
+    field rather than about the square of the fluctuation.
+    """
+    y = s["dB_vec"]
+    ok = np.isfinite(y) & np.isfinite(s["inv"])
+    if ok.sum() < 2:
+        return None
+    ps.apply()
+    fig, ax = plt.subplots(figsize=(8.6, 5.0))
+    run_colour = colour(run["kappa0"])
+
+    ax.plot(s["t"], y, color=run_colour, lw=2.0, zorder=3,
+            label=r"$\langle |\delta B|^2 \rangle^{1/2} / B_0$  (left)")
+    ax.set_xlabel(r"$\Omega_{ci} t$")
+    ax.set_ylabel(r"$\langle |\delta B|^2 \rangle^{1/2} / B_0$", color=run_colour)
+    ax.tick_params(axis="y", labelcolor=run_colour)
+
+    kx = ax.twinx()
+    grey = ps.c("#444444")
+    kx.plot(s["t"], s["inv"], color=grey, lw=1.8, ls="--", zorder=3, label=r"$1/\kappa$  all (right)")
+    kx.fill_between(s["t"], s["inv"] - s["inv_err"], s["inv"] + s["inv_err"],
+                    color=grey, alpha=0.18, lw=0, zorder=1)
+    if local:
+        hole, peak = local.get("hole"), local.get("peak")
+        if hole is not None and peak is not None:
+            # Between the two is the hole - peak contrast of the index.
+            kx.fill_between(local["t"], hole, peak, color=ps.c("#D55E00"), alpha=0.16,
+                            lw=0, zorder=1, label="hole to peak")
+            kx.plot(local["t"], hole, color=ps.c("#D55E00"), lw=1.2, ls="-", zorder=2,
+                    label=r"$1/\kappa$  in holes")
+            kx.plot(local["t"], peak, color=ps.c("#0072B2"), lw=1.2, ls=":", zorder=2,
+                    label=r"$1/\kappa$  in peaks")
+    kx.set_ylabel(r"$1/\kappa$  measured, local-field frame", color=grey)
+    kx.tick_params(axis="y", labelcolor=grey)
+
+    t_lin = run.get("t_lin_end")
+    if t_lin is not None and np.isfinite(t_lin):
+        ax.axvline(t_lin, color=ps.c("#888888"), lw=1.1, ls=":", zorder=1)
+        ax.annotate("end of\nlinear phase", xy=(t_lin, 0.02), xycoords=("data", "axes fraction"),
+                    xytext=(4, 0), textcoords="offset points", fontsize="small",
+                    color=ps.c("#888888"), ha="left", va="bottom")
+    ps.style_axes(ax)
+
+    # kappa labels further right, on the same scale as the 1/kappa axis.
+    lo, hi = kx.get_ylim()
+    same = (lambda x: x, lambda x: x)
+    right = kx.secondary_yaxis(1.17, functions=same)
+    ticks = [(1.0 / k, f"{k:g}") for k in KAPPA_TICKS if min(lo, hi) <= 1.0 / k <= max(lo, hi)]
+    if min(lo, hi) <= 0.0 <= max(lo, hi):
+        ticks.append((0.0, r"$\infty$"))
+    right.set_yticks([v for v, _ in ticks], labels=[t for _, t in ticks])
+    right.set_ylabel(r"$\kappa$")
+    right.tick_params(which="minor", right=False)
+
+    handles = ax.get_legend_handles_labels()[0] + kx.get_legend_handles_labels()[0]
+    labels = ax.get_legend_handles_labels()[1] + kx.get_legend_handles_labels()[1]
+    fig.legend(handles, labels, loc="lower center", ncol=3, frameon=False,
+               bbox_to_anchor=(0.5, 0.005))
+    fig.suptitle(f"{run['label']} — field and index against time", y=0.97)
+    fig.subplots_adjust(left=0.095, right=0.80, top=0.89, bottom=0.30)
+    ps.save(fig, path)
+    return path
+
+
 def write_table(runs, series, path: Path) -> None:
     columns = ["run", "kappa_nominal", "omega_ci_t", "inv_kappa", "inv_kappa_err",
                "kappa_measured", "B_mean_over_B0", "B_std_over_B0",
@@ -277,6 +369,8 @@ def main() -> int:
     p.add_argument("--outdir", required=True, type=Path)
     p.add_argument("--times", nargs="*", type=float, default=None,
                    help="instants in Omega_ci t (default: four the runs share)")
+    p.add_argument("--per-run", action="store_true",
+                   help="also one figure per run: its track and its two series in time")
     p.add_argument("--population", default="all",
                    help="particle population of the index series (default: all)")
     a = p.parse_args()
@@ -305,6 +399,11 @@ def main() -> int:
     times = a.times if a.times else default_times(runs, series)
     written = [plot_instants(runs, series, times, a.outdir / "field_vs_kappa_instants.png"),
                plot_trajectory(runs, series, a.outdir / "field_vs_kappa_trajectory.png")]
+    if a.per_run:
+        written += [plot_single_run(run, series[run["name"]],
+                                    a.outdir / f"field_vs_kappa_{run['name']}.png",
+                                    local_contrast(run, series[run["name"]]))
+                    for run in runs]
     write_table(runs, series, a.outdir / "field_vs_kappa.csv")
     if not any(np.any(np.isfinite(s["B_mean"])) for s in series.values()):
         print("[WARN] no B_mean_over_B0 column: this tree predates the whole-box "
