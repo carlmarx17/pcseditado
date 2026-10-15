@@ -290,8 +290,15 @@ def plot_single_run(run: dict, s: dict, path: Path, local: dict | None = None) -
 
     ax.plot(s["t"], y, color=run_colour, lw=2.0, zorder=3,
             label=r"$\langle |\delta B|^2 \rangle^{1/2} / B_0$  (left)")
+    # The magnitude itself, which is what is asked for when the question is about
+    # |B| and not about its fluctuation. In these runs it is the second-order
+    # signature of the same amplitude (see plot_magnitude_vs_fluctuation), so it
+    # is drawn on the same axis to make that visible rather than hidden.
+    if np.any(np.isfinite(s["B_mean"])):
+        ax.plot(s["t"], s["B_mean"] - 1.0, color=run_colour, lw=1.4, ls="-.", zorder=2,
+                label=r"$\langle |B| \rangle / B_0 - 1$  (left)")
     ax.set_xlabel(r"$\Omega_{ci} t$")
-    ax.set_ylabel(r"$\langle |\delta B|^2 \rangle^{1/2} / B_0$", color=run_colour)
+    ax.set_ylabel(r"field, in units of $B_0$", color=run_colour)
     ax.tick_params(axis="y", labelcolor=run_colour)
 
     kx = ax.twinx()
@@ -315,9 +322,10 @@ def plot_single_run(run: dict, s: dict, path: Path, local: dict | None = None) -
     t_lin = run.get("t_lin_end")
     if t_lin is not None and np.isfinite(t_lin):
         ax.axvline(t_lin, color=ps.c("#888888"), lw=1.1, ls=":", zorder=1)
-        ax.annotate("end of\nlinear phase", xy=(t_lin, 0.02), xycoords=("data", "axes fraction"),
+        # At the top: the magnitude curve runs along the bottom of the panel.
+        ax.annotate("end of\nlinear phase", xy=(t_lin, 0.99), xycoords=("data", "axes fraction"),
                     xytext=(4, 0), textcoords="offset points", fontsize="small",
-                    color=ps.c("#888888"), ha="left", va="bottom")
+                    color=ps.c("#888888"), ha="left", va="top")
     ps.style_axes(ax)
 
     # kappa labels further right, on the same scale as the 1/kappa axis.
@@ -337,6 +345,56 @@ def plot_single_run(run: dict, s: dict, path: Path, local: dict | None = None) -
                bbox_to_anchor=(0.5, 0.005))
     fig.suptitle(f"{run['label']} — field and index against time", y=0.97)
     fig.subplots_adjust(left=0.095, right=0.80, top=0.89, bottom=0.30)
+    ps.save(fig, path)
+    return path
+
+
+def plot_magnitude_vs_fluctuation(runs, series, path: Path) -> Path | None:
+    """<|B|>/B0 - 1 against <|dB|^2>/2B0^2, the second-order identity.
+
+    This is the figure that answers "the magnitude, not the fluctuation" at box
+    level: for a transverse-dominated fluctuation |B| - B0 ~ |dB_perp|^2 / 2 B0,
+    so the box-averaged magnitude is not an independent measurement. A slope of
+    one on this plot means the magnitude carries nothing the amplitude does not;
+    departures from it are the compressive part that does.
+    """
+    usable = [r for r in runs if np.any(np.isfinite(series[r["name"]]["B_mean"]))]
+    if not usable:
+        return None
+    ps.apply()
+    fig, ax = plt.subplots(figsize=(7.4, 5.8))
+    # Both axes are a few times 1e-2 at most: scale by hand and say so in the
+    # label, rather than let an automatic offset appear. plot_style folds such
+    # an offset into the label and redoes the layout, which would discard the
+    # margins reserved for the legend below.
+    SCALE, UNIT = 1e3, r"$\times 10^{-3}$"
+    lo, hi = np.inf, -np.inf
+    for run in usable:
+        s = series[run["name"]]
+        x = SCALE * 0.5 * s["dB_vec"] ** 2
+        y = SCALE * (s["B_mean"] - 1.0)
+        ok = np.isfinite(x) & np.isfinite(y)
+        if ok.sum() < 2:
+            continue
+        slope = float(np.polyfit(x[ok], y[ok], 1)[0])
+        ax.plot(x[ok], y[ok], lw=2.0, color=colour(run["kappa0"]),
+                label=f"{run['label']}  (slope {slope:.2f})")
+        lo, hi = min(lo, x[ok].min()), max(hi, x[ok].max())
+    if not np.isfinite(lo):
+        plt.close(fig)
+        return None
+    ref = np.linspace(lo, hi, 2)
+    ax.plot(ref, ref, ls=":", lw=1.3, color=ps.c("#888888"),
+            label=r"$|B| - B_0 = |\delta B_\perp|^2 / 2 B_0$")
+    ax.set_xlabel(r"$\langle |\delta B|^2 \rangle / 2 B_0^2$  (" + UNIT + ")")
+    ax.set_ylabel(r"$\langle |B| \rangle / B_0 - 1$  (" + UNIT + ")")
+    ps.style_axes(ax)
+    # Below the panel, never over the curves: the sign of the slope decides
+    # which corner the data occupies and no corner is reliably free.
+    fig.legend(*ax.get_legend_handles_labels(), loc="lower center", ncol=2,
+               frameon=False, fontsize="small", bbox_to_anchor=(0.5, 0.005))
+    fig.suptitle("Box-averaged field magnitude against the fluctuation amplitude", y=0.97)
+    fig.subplots_adjust(left=0.16, right=0.97, top=0.90, bottom=0.37)
     ps.save(fig, path)
     return path
 
@@ -404,6 +462,8 @@ def main() -> int:
                                     a.outdir / f"field_vs_kappa_{run['name']}.png",
                                     local_contrast(run, series[run["name"]]))
                     for run in runs]
+    written.append(plot_magnitude_vs_fluctuation(
+        runs, series, a.outdir / "field_magnitude_vs_fluctuation.png"))
     write_table(runs, series, a.outdir / "field_vs_kappa.csv")
     if not any(np.any(np.isfinite(s["B_mean"])) for s in series.values()):
         print("[WARN] no B_mean_over_B0 column: this tree predates the whole-box "
