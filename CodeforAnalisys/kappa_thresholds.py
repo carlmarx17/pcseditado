@@ -26,6 +26,26 @@ bi-Kappa run, and they are routinely confused with each other:
    as if they were the same plasma inverts the sign of the kappa effect (see
    ``main``'s printed comparison).
 
+   Moya et al., A&A 707, A78 (2026), arXiv:2601.13888, is the core-normalised
+   case, confirmed from the text: its Eq. (4) sets theta^2 = 2 k_B T / m with
+   no kappa factor, and the kinetic temperature follows as T^(kappa) = F T
+   with F = kappa/(kappa - 3/2) (its Eq. 6). Its beta_par(0) = 5 is therefore
+   this code's beta_par = 10 at kappa = 3. Going the other way, these runs'
+   true beta_par = 5 sits at its beta_par(0) = 2.5 (kappa = 3) or 3.5
+   (kappa = 5), which is where a comparison with its figures has to be read.
+
+   That paper is **not** a like-for-like comparison for these runs in any
+   case, and the difference is not the convention: it is quasi-linear theory
+   (kappa evolved through a kurtosis closure, its Eqs. 15-16 and 19, with
+   G(kappa) = [kappa/(kappa-3/2)][kappa/(kappa-5/2)]) for the *electron*-
+   cyclotron EMEC instability driven by anisotropic bi-Kappa electrons over
+   cold ions. These runs are PIC, the anisotropy and the measured kappa are
+   on the *ions* (A_e = 1), and the dominant mode is the ion-cyclotron
+   branch. Its suprathermal electrons gain energy from the waves and kappa
+   falls; the ion tails here drain and kappa rises. Those are different
+   populations under different instabilities, so neither result tests the
+   other.
+
 2. **The fit itself.** Even at matched true beta, S and alpha depend on kappa,
    because the contour is set by resonant damping and the kappa tail changes
    its shape. The Maxwellian S and alpha cannot be reused.
