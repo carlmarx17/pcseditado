@@ -415,6 +415,11 @@ for family in mirror firehose; do
         > "$LOG_DIR/window_vs_box_$family.log" 2>&1
     echo $? > "$LOG_DIR/comparison_${family}.window-vs-box.rc"
 
+    run "${STEP[@]}" --job-name="kappa_frame:$family" \
+        "$PY" kappa_frame_comparison.py "$NEW_ROOT" --family "$family" \
+        > "$LOG_DIR/kappa_frame_$family.log" 2>&1
+    echo $? > "$LOG_DIR/comparison_${family}.kappa-frame.rc"
+
     run "${STEP[@]}" --job-name="story:$family" \
         "$PY" paper_story_figure.py "$NEW_ROOT"/${family}_*_moderate --no-maps \
         --out "$NEW_ROOT/paper_story_figure_$family.png" \

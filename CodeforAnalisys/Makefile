@@ -119,7 +119,7 @@ export PSC_FIG_THEME ?= paper
 	liouville-self-test kappa-eff-self-test reconnection \
 	check-fields check-moments check-particles check-case check-resolution \
 	check-initial-conditions show-inputs \
-	window-vs-box story-figure kappa-thresholds
+	window-vs-box story-figure kappa-thresholds kappa-frame
 
 all: analysis
 
@@ -473,6 +473,10 @@ story-figure:
 	"$(PYTHON)" paper_story_figure.py $(wildcard $(RESULTS_ROOT)/*_moderate) \
 		$(if $(STORY_DATA),$(STORY_DATA),--no-maps) \
 		--out "$(RESULTS_ROOT)/paper_story_figure.png"
+
+kappa-frame:
+	@echo "Local-field frame against the box frame for the kappa index"
+	"$(PYTHON)" kappa_frame_comparison.py "$(RESULTS_ROOT)" $(if $(FAMILY),--family $(FAMILY),)
 
 kappa-thresholds:
 	@echo "Instability thresholds in the second-moment bi-Kappa convention"
