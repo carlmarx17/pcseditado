@@ -51,6 +51,9 @@ class FieldImagePlotter:
         self.fixed_scale = fixed_scale
         self.global_vmin = {}
         self.global_vmax = {}
+        #: Steps the current global limits were computed from (see
+        #: ensure_global_scales); empty until the first call.
+        self._scaled_steps: list[int] = []
         self.file_map = PICDataReader.find_files(self.em_pattern)
         
         # One diverging map for the signed components and one sequential map
@@ -89,6 +92,21 @@ class FieldImagePlotter:
             return bx3d[:, :, k].squeeze(), by3d[:, :, k].squeeze(), bz3d[:, :, k].squeeze(), 'z', 'y'
         else:
             raise ValueError("Plano debe ser 'xy', 'xz' o 'yz'")
+
+    def ensure_global_scales(self, steps, plane, slice_index=None):
+        """Compute the shared colour limits once, over every step that will be drawn.
+
+        batch_plot and create_gifs render different step sets (SNAPSHOT_EVERY
+        against the much finer GIF_EVERY). Each computing its own limits gave
+        the PNG maps and the GIF two different colour bars for the same run,
+        so a frame and the snapshot of the same instant did not match. The
+        union is taken once and reused.
+        """
+        steps = sorted(set(steps) | set(self._scaled_steps))
+        if steps == self._scaled_steps:
+            return
+        self._scaled_steps = steps
+        self.compute_global_scales(steps, plane, slice_index)
 
     def compute_global_scales(self, steps, plane, slice_index=None):
         """Calcula escalas globales para mantener consistencia en colores"""
@@ -287,8 +305,8 @@ class FieldImagePlotter:
             return []
             
         if self.fixed_scale:
-            self.compute_global_scales(steps, plane, slice_index)
-            
+            self.ensure_global_scales(steps, plane, slice_index)
+
         for step in steps:
             print(f"Procesando step {step}...")
             self.plot_snapshot(step, plane, slice_index)
@@ -361,7 +379,15 @@ if __name__ == '__main__':
     parser.add_argument('--no_dyn_scale', action='store_true')
     parser.add_argument('--no_mag', action='store_true')
     parser.add_argument('--comps', nargs='+', default=['Bx','By','Bz'], choices=['Bx','By','Bz'])
-    parser.add_argument('--fixed_scale', action='store_true')
+    # A colour bar that rescales to each snapshot's own 99.5th percentile
+    # hides the growth it is there to show: every frame of an exponentially
+    # growing mode looks the same. Fixed is the default; --no_fixed_scale
+    # restores the per-snapshot autoscale.
+    parser.add_argument('--fixed_scale', action='store_true', default=True,
+                        help='one colour scale for the whole run (default)')
+    parser.add_argument('--no_fixed_scale', dest='fixed_scale',
+                        action='store_false',
+                        help='rescale every snapshot to its own range')
     parser.add_argument('--create_gifs', action='store_true')
     parser.add_argument('--gif_duration', type=float, default=0.2)
     args = parser.parse_args()

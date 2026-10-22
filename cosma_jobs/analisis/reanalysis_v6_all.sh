@@ -400,6 +400,33 @@ compare_series mirror_moderate_kappa \
 compare_series firehose_strong_40di_kappa \
     "bi-Maxwellian=firehose_bimaxwellian_strong_bigbox40" "kappa3=firehose_bikappa3_bigbox40"
 
+# Cross-run figures that read every run under NEW_ROOT at once, so they run
+# after every per-run stage rather than inside compare_series.
+#   window_vs_box: the prt window against the whole box. Everything that sets
+#     a kappa (measured in the window) against a field amplitude (whole box)
+#     depends on the two volumes agreeing, and after saturation they do not.
+#   paper_story_figure: the composite, one column per run.
+#   kappa_thresholds: marginal stability in this code's own (second-moment)
+#     bi-Kappa convention, since the literature's S and alpha are fitted to a
+#     bi-Maxwellian and to a beta that means something else at finite kappa.
+for family in mirror firehose; do
+    run "${STEP[@]}" --job-name="window_box:$family" \
+        "$PY" window_vs_box_fluctuation.py "$NEW_ROOT" --family "$family" \
+        > "$LOG_DIR/window_vs_box_$family.log" 2>&1
+    echo $? > "$LOG_DIR/comparison_${family}.window-vs-box.rc"
+
+    run "${STEP[@]}" --job-name="story:$family" \
+        "$PY" paper_story_figure.py "$NEW_ROOT"/${family}_*_moderate --no-maps \
+        --out "$NEW_ROOT/paper_story_figure_$family.png" \
+        > "$LOG_DIR/story_figure_$family.log" 2>&1
+    echo $? > "$LOG_DIR/comparison_${family}.story-figure.rc"
+done
+
+run "${STEP[@]}" --job-name="kappa_thresholds" \
+    "$PY" kappa_thresholds.py --out "$NEW_ROOT/kappa_thresholds" \
+    > "$LOG_DIR/kappa_thresholds.log" 2>&1
+echo $? > "$LOG_DIR/kappa_thresholds.rc"
+
 # =====================================================================
 # 5) Evidence report and energy audit over every run of the v6 tree (not
 #    only this job's), so that each run meets its isotropic control.

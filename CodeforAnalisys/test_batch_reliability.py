@@ -574,3 +574,77 @@ def test_story_figure_parallel_map_is_self_calibrating_and_uses_bz(tmp_path):
     # A wrong B0 shows up as a constant offset of the whole map.
     skewed = psf.parallel_fluctuation_map(run, steps[0], b0=0.05)
     assert abs(float(skewed.mean())) > 0.1
+
+
+def test_window_and_box_fluctuations_are_drawn_on_one_shared_scale(tmp_path):
+    """The window/box ratio is the point of the figure, so both volumes have
+    to be on one scale and the ratio has to be drawn where both are measured."""
+    import window_vs_box_fluctuation as wvb
+
+    roots = []
+    for name, factor in [('mirror_bimaxwellian_moderate', 1.0),
+                         ('mirror_bikappa3_moderate', 1.15),
+                         ('mirror_bikappa5_moderate', 0.8)]:
+        root = _kappa_field_run(tmp_path/name, None, 0.0)
+        # Give the prt window its own amplitude, so a figure that silently
+        # plots the same column twice fails here.
+        path = root/'09_physical_diagnostics'/'field_fluctuation_table.csv'
+        rows = list(csv.DictReader(path.open(newline='')))
+        for row in rows:
+            row['prt_delta_B_rms_over_B0'] = f"{factor * float(row['delta_B_vec_rms_over_B0']):.6g}"
+            row['delta_B_rms_over_B0'] = row['delta_B_vec_rms_over_B0']
+        with path.open('w', newline='') as fh:
+            writer = csv.DictWriter(fh, fieldnames=list(rows[0]))
+            writer.writeheader()
+            writer.writerows(rows)
+        roots.append(root)
+
+    data = wvb.series(roots[2])
+    assert np.all(np.diff(data['t']) > 0), 'the series must be in time order'
+    ratio = data['window'][-1] / data['box'][-1]
+    assert abs(ratio - 0.8) < 1e-6, ratio
+
+    out = tmp_path/'window_vs_box.png'
+    wvb.build(roots, out)
+    assert out.is_file()
+    assert not out.with_suffix('.pdf').exists(), 'PDF stays opt-in'
+    qa = [json.loads(l) for f in tmp_path.glob('figure_qa_*.jsonl')
+          for l in f.read_text().splitlines()]
+    assert qa and all(not entry.get('issues') for entry in qa), qa
+
+
+def test_field_maps_keep_one_colour_scale_for_the_whole_run(tmp_path):
+    """A bar that rescales to each snapshot hides the growth it should show.
+
+    The CLI used to default to the per-snapshot autoscale and only pass the
+    fixed scale when GIFs were switched on, so the saved maps and the GIF
+    could not even be compared with each other.
+    """
+    from fluctuationofmagneticfiel import FieldImagePlotter
+
+    run = tmp_path/'synth'
+    subprocess.run([sys.executable, str(HERE/'synthetic_run.py'), str(run),
+                    '--ngrid', '32', '--t-end', '40', '--snapshots', '6',
+                    '--ppc', '20'], check=True, capture_output=True)
+
+    plotter = FieldImagePlotter(em_pattern=str(run/'pfd.*.h5'), B0=0.08,
+                                outdir=str(tmp_path/'imgs'), smooth_sigma=0.0,
+                                fixed_scale=True)
+    steps = sorted(plotter.file_map)
+    plotter.ensure_global_scales(steps[::3], 'yz')
+    coarse = dict(plotter.global_vmax)
+    # The GIF's finer set must widen the same limits, not start its own.
+    plotter.ensure_global_scales(steps, 'yz')
+    for component, value in coarse.items():
+        assert plotter.global_vmax[component] >= value - 1e-9, component
+    before = dict(plotter.global_vmax)
+    plotter.ensure_global_scales(steps, 'yz')
+    assert dict(plotter.global_vmax) == before, 'recomputed with no new steps'
+
+    # Every snapshot is then drawn with those same limits.
+    limits = {p['slug']: (p['vmin'], p['vmax'])
+              for step in (steps[0], steps[-1])
+              for p in plotter._build_panels(step, 'yz')}
+    for step in (steps[0], steps[-1]):
+        for panel in plotter._build_panels(step, 'yz'):
+            assert (panel['vmin'], panel['vmax']) == limits[panel['slug']]

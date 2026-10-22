@@ -118,7 +118,8 @@ export PSC_FIG_THEME ?= paper
 	theory-liouville theory-liouville-x theory-liouville-sweep \
 	liouville-self-test kappa-eff-self-test reconnection \
 	check-fields check-moments check-particles check-case check-resolution \
-	check-initial-conditions show-inputs
+	check-initial-conditions show-inputs \
+	window-vs-box story-figure kappa-thresholds
 
 all: analysis
 
@@ -234,7 +235,7 @@ fields: check-case check-fields check-resolution
 		$(if $(B0_REF),--B0 "$(B0_REF)",) --plane yz --smooth 1.5 \
 		--pattern "$(FIELD_PATTERN)" --outdir "$(FIELDS_OUT)" \
 		--every $(SNAPSHOT_EVERY) --gif_every $(GIF_EVERY) \
-		$(if $(filter 1 yes true,$(FIELDS_GIF)),--create_gifs --fixed_scale,)
+		$(if $(filter 1 yes true,$(FIELDS_GIF)),--create_gifs,)
 
 # spectrum = gamma(k), E(k,t), helicity, compressibility only. `spectral` runs
 # it and then the four other spectral products; a cluster job can instead run
@@ -460,6 +461,22 @@ compare-physics:
 		exit 1; \
 	}
 	"$(PYTHON)" compare_physical_cases.py $(COMPARE_CASES) --outdir "$(COMPARE_OUT)"
+
+# Cross-run figures. These read the delivered tables of every run under
+# RESULTS_ROOT, so they run once after the per-run stages, not per run.
+window-vs-box:
+	@echo "Magnitude fluctuation over the prt window against the whole box"
+	"$(PYTHON)" window_vs_box_fluctuation.py "$(RESULTS_ROOT)" $(if $(FAMILY),--family $(FAMILY),)
+
+story-figure:
+	@echo "Composite kappa-comparison figure"
+	"$(PYTHON)" paper_story_figure.py $(wildcard $(RESULTS_ROOT)/*_moderate) \
+		$(if $(STORY_DATA),$(STORY_DATA),--no-maps) \
+		--out "$(RESULTS_ROOT)/paper_story_figure.png"
+
+kappa-thresholds:
+	@echo "Instability thresholds in the second-moment bi-Kappa convention"
+	"$(PYTHON)" kappa_thresholds.py --out "$(RESULTS_ROOT)/kappa_thresholds"
 
 convergence:
 	@test -n "$(CONVERGENCE_RUNS)" || { \
