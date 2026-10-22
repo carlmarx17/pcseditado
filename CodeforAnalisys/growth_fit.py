@@ -44,6 +44,12 @@ The fit implemented here, for an amplitude a(t) ~ exp(gamma t):
    window sensitivity. ``gamma_err`` combines both in quadrature -- this is
    the number that belongs in an error bar.
 
+6. ``fit_logistic_saturation`` fits the saturating curve itself -- no window,
+   no threshold -- and its ``gamma_logistic``, ``t_saturation`` and
+   ``amplitude_saturation`` are reported beside the windowed fit. The two
+   gammas agree to 1 % on the v6 mirror runs; a run where they do not is a
+   run whose linear phase the window search got wrong.
+
 An explicit window (``t_start``/``t_end``, in the same units as ``time``)
 bypasses steps 2-3; the sensitivity then comes from dropping one sample at
 either end. Use it once the linear phase has been identified by eye or from
@@ -198,6 +204,203 @@ def _auto_window(ys: np.ndarray, t: np.ndarray, lo: float, hi: float,
     return start + best[0], start + best[1]
 
 
+def _sigmoid(z: np.ndarray) -> np.ndarray:
+    """1/(1+e^-z), evaluated so neither tail overflows."""
+    out = np.empty_like(z)
+    pos = z >= 0
+    out[pos] = 1.0 / (1.0 + np.exp(-z[pos]))
+    ez = np.exp(z[~pos])
+    out[~pos] = ez / (1.0 + ez)
+    return out
+
+
+def _softplus(z: np.ndarray) -> np.ndarray:
+    """ln(1+e^z) without overflow: for large z it is z + ln(1+e^-z)."""
+    return np.maximum(z, 0.0) + np.log1p(np.exp(-np.abs(z)))
+
+
+#: Fraction of gamma that marks the ends of the linear phase on the fitted
+#: logistic. 0.9 reproduces the window the band/slope search returns on the v6
+#: mirror runs (t = 49.0 / 44.7 / 46.7 against 53.2 / 45.3 / 50.8), so the
+#: parametric and the heuristic window mean the same thing.
+LINEAR_PHASE_RATE_FRACTION = 0.9
+
+
+def fit_logistic_saturation(time, amplitude, max_iter: int = 300) -> dict:
+    """Fit a noise floor plus a saturating exponential to the whole series.
+
+    The model is the one the series actually has -- a constant noise floor in
+    power under a logistic rise::
+
+        a(t)^2 = floor^2 + [a_sat / (1 + exp(-gamma (t - t_sat)))]^2
+
+    so nothing has to be windowed away. The band/slope search of
+    ``_auto_window`` answers "where does the series stop being exponential?"
+    with three thresholds (``band``, ``slope_frac`` and the running-median
+    width); this fits the curve itself, and gamma, the saturation time and
+    the saturation amplitude come out as parameters with a covariance. On the
+    v6 mirror runs the two gammas agree to ~1 %, which is why
+    ``fit_exponential_growth`` reports this one *beside* the windowed fit
+    rather than replacing it: the quoted gamma does not move, and a run where
+    the two disagree is a run whose linear phase the window search got wrong.
+
+    The floor term covers the quiet noise plateau, but not the quiet-start
+    build-up of the first ~2 Omega_ci^-1 (the spectrum filling from an
+    unperturbed start), which is neither floor nor growth. Callers cut it with
+    ``psc_units.noise_settling_time(k_di)`` before fitting, as
+    ``physical_diagnostics.fit_mode_growth`` does.
+
+    ``t_saturation`` is the inflection, where the local rate has fallen to
+    gamma/2 and the amplitude is at a_sat/2. It is the one point of a logistic
+    that does not depend on a threshold, and it is *not* the point where the
+    run is saturated: on the v6 mirror runs the amplitude still reaches only
+    half its maximum there. ``logistic_linear_phase_end`` is the end of the
+    linear phase proper, where the rate is ``LINEAR_PHASE_RATE_FRACTION`` of
+    gamma.
+
+    The parameter errors are Bartlett HAC (the lag rule of
+    ``correlated_slope_error``): the residuals of a logistic fitted to a PIC
+    mode are smooth, so the plain covariance understates them several-fold.
+
+    ``rms_ln_amplitude`` is the residual of the model, in log amplitude. A run
+    whose mode grows a second time after the first roll-over is not a logistic
+    and says so here: the v6 kappa = 5 run (a rebound at t ~ 75-85) gives
+    0.16 against 0.06 for the other two.
+
+    Returns ``logistic_fit_ok = 0`` with a reason whenever the fit does not
+    reach a positive gamma with the inflection inside the sampled interval.
+    """
+    time = np.asarray(time, dtype=float)
+    amplitude = np.asarray(amplitude, dtype=float)
+    valid = np.isfinite(time) & np.isfinite(amplitude) & (amplitude > 0)
+    empty = {
+        "gamma_logistic": float("nan"), "gamma_logistic_stderr": float("nan"),
+        "t_saturation": float("nan"), "t_saturation_stderr": float("nan"),
+        "amplitude_saturation": float("nan"), "amplitude_noise_floor": float("nan"),
+        "logistic_linear_phase_end": float("nan"),
+        "rms_ln_amplitude": float("nan"), "logistic_n_points": 0,
+        "logistic_fit_ok": 0,
+        "logistic_reject_reason": "fewer than 8 positive finite samples",
+    }
+    if np.count_nonzero(valid) < 8:
+        return empty
+    order = np.argsort(time[valid])
+    t = time[valid][order]
+    y = np.log(amplitude[valid][order])
+
+    smoothed = _running_median(y)
+    i_peak = int(np.argmax(smoothed))
+    ln_sat = float(smoothed[i_peak])
+    ln_floor = float(np.min(smoothed))
+    if not ln_sat > ln_floor:
+        return {**empty, "logistic_reject_reason": "no rise above the noise floor"}
+    mid = 0.5 * (ln_sat + ln_floor)
+    t_mid = float(t[int(np.argmin(np.abs(smoothed[: i_peak + 1] - mid)))])
+    span = float(t[i_peak] - t[0])
+    p = np.array([ln_sat, 4.0 * (ln_sat - ln_floor) / span if span > 0 else 0.1,
+                  t_mid, ln_floor], dtype=float)
+
+    def model(q):
+        """ln a and the Jacobian of the four parameters, in a stable form."""
+        sig = _sigmoid(q[1] * (t - q[2]))
+        ln_s = q[0] - _softplus(-q[1] * (t - q[2]))
+        # weight = s^2/(floor^2+s^2), from a difference of logs so neither
+        # exponential can overflow when the two scales are far apart.
+        weight = _sigmoid(2.0 * (ln_s - q[3]))
+        predicted = 0.5 * (2.0 * np.maximum(ln_s, q[3])
+                           + np.log1p(np.exp(-2.0 * np.abs(ln_s - q[3]))))
+        jacobian = np.column_stack([
+            weight,
+            weight * (1.0 - sig) * (t - q[2]),
+            -weight * (1.0 - sig) * q[1],
+            1.0 - weight,
+        ])
+        return predicted, jacobian
+
+    predicted, jacobian = model(p)
+    residual = predicted - y
+    cost = float(np.dot(residual, residual))
+    lam = 1e-3
+    for _ in range(max_iter):
+        jtj = jacobian.T @ jacobian
+        try:
+            step = np.linalg.solve(jtj + lam * np.diag(np.maximum(np.diag(jtj), 1e-12)),
+                                   jacobian.T @ residual)
+        except np.linalg.LinAlgError:
+            return {**empty, "logistic_reject_reason": "singular normal equations"}
+        trial = p - step
+        try:
+            new_predicted, new_jacobian = model(trial)
+        except FloatingPointError:
+            new_cost = np.inf
+        else:
+            new_residual = new_predicted - y
+            new_cost = float(np.dot(new_residual, new_residual))
+        if np.isfinite(new_cost) and new_cost < cost:
+            relative = np.max(np.abs(step) / np.maximum(np.abs(p), 1e-12))
+            p, predicted, jacobian = trial, new_predicted, new_jacobian
+            residual, cost, lam = new_residual, new_cost, max(lam * 0.3, 1e-12)
+            if relative < 1e-10:
+                break
+        else:
+            lam *= 10.0
+            if lam > 1e12:
+                break
+
+    rms = float(np.sqrt(cost / t.size))
+    # A series with no visible plateau drives the floor to zero, and its
+    # Jacobian column with it: inverting the whole normal matrix would then
+    # return NaN for *every* parameter, gamma included. Only the parameters
+    # the data actually constrain are inverted; the others keep a NaN error.
+    scale = np.linalg.norm(jacobian, axis=0)
+    keep = np.flatnonzero(scale > 1e-8 * max(float(scale.max()), 1e-300))
+    errors = np.full(4, np.nan)
+    if keep.size:
+        # Bartlett HAC sandwich, the same lag rule as correlated_slope_error.
+        # The residuals of a logistic fitted to a PIC mode are smooth, not
+        # independent: the plain covariance makes gamma look ~8x better
+        # determined than it is (+-0.0003 against +-0.0024 on the v6 mirror
+        # runs). The quoted error has to be the correlated one.
+        block = jacobian[:, keep]
+        score = block * residual[:, None]
+        n = t.size
+        lag = min(n - 2, max(1, int(4 * (n / 100) ** (2 / 9))))
+        meat = score.T @ score
+        for k in range(1, lag + 1):
+            cross = score[k:].T @ score[:-k]
+            meat += (1 - k / (lag + 1)) * (cross + cross.T)
+        try:
+            bread = np.linalg.inv(block.T @ block)
+            covariance = bread @ meat @ bread * n / max(n - keep.size, 1)
+            errors[keep] = np.sqrt(np.clip(np.diag(covariance), 0.0, None))
+        except np.linalg.LinAlgError:
+            pass
+
+    ln_sat, gamma, t_sat, ln_floor = (float(v) for v in p)
+    reasons = []
+    if not gamma > 0:
+        reasons.append(f"gamma={gamma:.4g} is not growth")
+    if not t[0] <= t_sat <= t[-1]:
+        reasons.append(f"the inflection t={t_sat:.4g} is outside the sampled interval")
+    # d ln a/dt = gamma/(1 + exp(gamma (t - t_sat))) once above the floor, so
+    # the rate is a fraction f of gamma at t_sat + ln(1/f - 1)/gamma.
+    f = LINEAR_PHASE_RATE_FRACTION
+    offset = np.log(1.0 / f - 1.0) / gamma if gamma > 0 else float("nan")
+    return {
+        "gamma_logistic": gamma,
+        "gamma_logistic_stderr": float(errors[1]),
+        "t_saturation": t_sat,
+        "t_saturation_stderr": float(errors[2]),
+        "amplitude_saturation": float(np.exp(ln_sat)) if ln_sat < 300 else float("inf"),
+        "amplitude_noise_floor": float(np.exp(ln_floor)) if ln_floor < 300 else float("inf"),
+        "logistic_linear_phase_end": float(t_sat + offset),
+        "rms_ln_amplitude": rms,
+        "logistic_n_points": int(t.size),
+        "logistic_fit_ok": int(not reasons),
+        "logistic_reject_reason": "; ".join(reasons),
+    }
+
+
 def fit_exponential_growth(
     time,
     amplitude,
@@ -221,6 +424,7 @@ def fit_exponential_growth(
     amplitude = np.asarray(amplitude, dtype=float)
     valid = np.isfinite(time) & np.isfinite(amplitude) & (amplitude > 0)
     empty = {
+        **{k: v for k, v in fit_logistic_saturation([], []).items()},
         "gamma": float("nan"), "gamma_stderr": float("nan"), "gamma_hac_stderr": float("nan"), "gamma_hac_lags": 0,
         "gamma_window_spread": float("nan"), "gamma_err": float("nan"),
         "intercept": float("nan"), "r_squared": float("nan"),
@@ -299,7 +503,10 @@ def fit_exponential_growth(
         reasons.append(f"series starts at t={t[0]:.3g} > {max_onset}: "
                        "the linear phase may predate the data")
     fit_ln = gamma * tf + main["intercept"]
+    # Window-free cross-check of the same linear phase; never overrides gamma.
+    logistic = fit_logistic_saturation(t, np.exp(y))
     return {
+        **logistic,
         "gamma": gamma,
         "gamma_stderr": stderr,
         "gamma_hac_stderr": hac, "gamma_hac_lags": hac_lags,

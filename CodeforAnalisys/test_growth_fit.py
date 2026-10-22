@@ -34,6 +34,51 @@ class GrowthFitTests(unittest.TestCase):
                     if fit["gamma_err"] < 0.1 * fit["gamma"]:
                         self.assertLess(abs(fit["gamma"] / GAMMA - 1.0), 0.10)
 
+    def test_logistic_fit_is_unbiased_where_the_windowed_fit_is_low(self):
+        # The band/slope window ends inside the roll-over, so it reads a
+        # smooth saturation ~4 % low (documented in the module docstring).
+        # Fitting the saturating curve itself has no window to misplace.
+        windowed, logistic, covered = [], [], 0
+        for n, noise in [(41, 0.0), (41, 0.05), (200, 0.1), (2400, 0.1)]:
+            for seed in (1, 2, 3, 4):
+                t, a = logistic_series(n, noise, seed)
+                fit = fit_exponential_growth(t, a)
+                with self.subTest(n=n, noise=noise, seed=seed):
+                    self.assertTrue(fit["logistic_fit_ok"], fit["logistic_reject_reason"])
+                    # a_sat and the inflection of the generated series.
+                    self.assertAlmostEqual(fit["amplitude_saturation"], 0.08, delta=0.004)
+                    self.assertAlmostEqual(fit["t_saturation"], 22.4, delta=0.5)
+                    self.assertTrue(np.isfinite(fit["gamma_logistic_stderr"]))
+                windowed.append(fit["gamma"])
+                logistic.append(fit["gamma_logistic"])
+                covered += abs(fit["gamma_logistic"] - GAMMA) <= 2 * fit["gamma_logistic_stderr"]
+        windowed, logistic = np.array(windowed), np.array(logistic)
+        self.assertLess(abs(logistic.mean() / GAMMA - 1.0), 0.01)
+        self.assertLess(logistic.std(), windowed.std())
+        self.assertLess(abs(logistic.mean() - GAMMA), abs(windowed.mean() - GAMMA))
+        self.assertGreaterEqual(covered, int(0.8 * len(logistic)))
+
+    def test_logistic_fit_survives_the_quiet_start_and_a_flat_noise_floor(self):
+        # Raw PIC series: quiet-start build-up, noise plateau, growth,
+        # saturation. Without the floor as a parameter the fit diverged here.
+        gamma = 0.11
+        for n in (2400, 121):
+            rng = np.random.default_rng(3)
+            t = np.linspace(0.066, 158.0, n)
+            build_up = 1.0 - 0.96 * np.exp(-t / 1.5)
+            g = 8.8e-6 * np.exp(gamma * t)
+            mode = g / (1.0 + g / 0.016)
+            floor = 1.6e-5 * (1.0 + 0.004 * t)
+            a = (build_up * np.sqrt(floor ** 2 + mode ** 2)
+                 * np.exp(0.05 * rng.standard_normal(n)))
+            fit = fit_exponential_growth(t, a)
+            with self.subTest(n=n):
+                self.assertTrue(fit["logistic_fit_ok"], fit["logistic_reject_reason"])
+                self.assertLess(abs(fit["gamma_logistic"] / gamma - 1.0), 0.10)
+                # The inflection is well inside the run, after the window fit.
+                self.assertGreater(fit["t_saturation"], fit["linear_phase_end"])
+                self.assertLess(fit["t_saturation"], t[-1])
+
     def test_quiet_start_transient_is_not_the_linear_phase(self):
         # Shape of the dominant mode in the v5 mirror runs (E(k,t) of the
         # k d_i = 0.34 shell): from the quiet start the whole spectrum,

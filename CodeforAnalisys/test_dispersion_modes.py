@@ -204,7 +204,9 @@ def test_exports_empty_and_perpendicular_only_spectra(tmp_path):
             path = tmp_path / f"{label}_{name}.png"
             function(result, path)
             assert path.exists()
-            assert path.with_suffix(".pdf").exists()
+            # The vector copy is opt-in (PSC_FIG_PDF); the default pass must
+            # not pay for it.
+            assert not path.with_suffix(".pdf").exists()
         plot_omega_k_dispersion(result, tmp_path / f"{label}_wk.png", "total", 0.01)
 
 

@@ -27,9 +27,10 @@ different questions:
 * ``<|dB|^2>^(1/2)/B0`` is the amplitude whose log-slope is gamma for every
   branch, so it is the one to read for the transverse cases.
 
-The index is 1/kappa in the frame of the local field, measured by maximum
-likelihood at the variance of that snapshot (kappa on the opposite axis,
-0 = bi-Maxwellian). The nominal index the particles were loaded with is the
+The index is the signed inverse effective kappa in the local-field frame,
+measured from truncated, whitened moments in the prt window (kappa on the
+opposite axis, 0 = Maxwellian shape reference). This particle window is
+smaller than the whole box used for the field statistics. The nominal index the particles were loaded with is the
 colour of the run, so the distance between a run's colour and its position on
 the axis is how far the measured distribution moved from the loaded one. These
 runs load kappa at **fixed second-moment temperature** (same temperature as the

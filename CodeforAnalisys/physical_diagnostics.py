@@ -1607,6 +1607,10 @@ def growth_rate(time: np.ndarray, delta_b: np.ndarray,
     if fit["fit_time_range"] is None:
         return {}
     return {
+        # Window-free logistic cross-check: gamma_logistic, t_saturation,
+        # amplitude_saturation, rms_ln_amplitude and their flags.
+        **{k: v for k, v in fit.items() if k.startswith(("gamma_logistic", "t_saturation",
+                                                         "amplitude_", "rms_ln_", "logistic_"))},
         "gamma": fit["gamma"],
         "gamma_stderr": fit["gamma_stderr"],
         "gamma_window_spread": fit["gamma_window_spread"],
@@ -2407,7 +2411,14 @@ class PhysicalDiagnostics:
                 "t_max_amplitude": float(t[int(np.nanargmax(amplitude[:, j]))]),
                 **{key: fit.get(key, np.nan) for key in (
                     "gamma", "gamma_err", "linear_phase_start", "linear_phase_end",
-                    "r_squared", "amplitude_gain", "fit_ok", "fit_reject_reason")},
+                    "r_squared", "amplitude_gain", "fit_ok", "fit_reject_reason",
+                    # The windowed fit stops where the mode stops being
+                    # exponential; t_saturation is the inflection of the whole
+                    # rise, which is later and threshold-free. Quoting both
+                    # keeps "end of the linear phase" and "saturated" apart.
+                    "gamma_logistic", "gamma_logistic_stderr", "t_saturation",
+                    "t_saturation_stderr", "amplitude_saturation",
+                    "rms_ln_amplitude", "logistic_fit_ok")},
                 "compressibility": compressibility,
                 "compressibility_window": source,
                 "classification": branch,

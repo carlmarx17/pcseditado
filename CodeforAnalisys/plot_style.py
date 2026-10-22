@@ -12,10 +12,13 @@ the same chapter those read as figures made by different people.
 Two themes, selected with the ``PSC_FIG_THEME`` environment variable:
 
 ``paper`` (default)
-    White background, dark text, print-legible line weights, 300 dpi, and a
-    PDF written next to every PNG. This is what goes into the thesis and the
-    journal submission -- A&A, ApJ and JGR all want a white or transparent
-    background, and line plots belong in vector form.
+    White background, dark text, print-legible line weights, 300 dpi. This is
+    what goes into the thesis and the journal submission -- A&A, ApJ and JGR
+    all want a white or transparent background.
+
+    A vector PDF beside every PNG is written only when ``PSC_FIG_PDF=1``. It
+    is off by default because it doubles the cost of a pipeline run for files
+    nothing opens until a figure is submitted; turn it on for that pass.
 
 ``dark``
     The previous GitHub-dark look, kept for screen and slides.
@@ -30,7 +33,7 @@ Usage::
     ps.apply()                          # once, at import time of the script
     fig.patch.set_facecolor(ps.FIG_BG)
     ax.plot(t, y, color=ps.c("#58a6ff"))
-    ps.save(fig, path)                  # PNG (+ PDF in paper theme)
+    ps.save(fig, path)                  # PNG (+ PDF when PSC_FIG_PDF=1)
 """
 
 from __future__ import annotations
@@ -62,9 +65,12 @@ LEGEND_BG = "#ffffff" if IS_PAPER else "#1c2128"
 MUTED_CLR = "#4d4d4d" if IS_PAPER else "#8b949e"
 
 DPI = 300 if IS_PAPER else 180
-#: Extra vector copy for the thesis; PNG alone loses line quality when the
-#: figure is scaled to a column width.
-EXTRA_FORMATS: tuple[str, ...] = (".pdf",) if IS_PAPER else ()
+#: Extra vector copies. Off by default: a PDF beside every PNG doubles the
+#: time of a full pipeline run and nothing reads them until a figure is
+#: actually submitted. Set PSC_FIG_PDF=1 for the submission pass, which is the
+#: only moment the vector copy is worth its cost.
+WANT_PDF = os.environ.get("PSC_FIG_PDF", "").strip().lower() in ("1", "true", "yes", "on")
+EXTRA_FORMATS: tuple[str, ...] = (".pdf",) if (IS_PAPER and WANT_PDF) else ()
 
 # ── Series colours ───────────────────────────────────────────────────────────
 # Keys are the dark-theme hexes already spread through the scripts, so call
@@ -569,7 +575,7 @@ def _fold_colorbar_offsets(fig) -> None:
 
 
 def save(fig, path, pad_inches: float = 0.1, close: bool = True) -> None:
-    """Write the figure to ``path``, plus a vector copy in the paper theme."""
+    """Write the figure to ``path``, plus a vector copy when PSC_FIG_PDF=1."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     try:

@@ -489,9 +489,21 @@ def test_field_against_kappa_figures_drop_the_quiet_start_and_pass_layout_qa(tmp
     r = subprocess.run([sys.executable, str(HERE/'field_vs_kappa.py'), *map(str, roots),
                         '--outdir', str(out)], env=env, capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
-    for name in ('field_vs_kappa_instants.png', 'field_vs_kappa_trajectory.png'):
+    names = ('field_vs_kappa_instants.png', 'field_vs_kappa_trajectory.png')
+    for name in names:
         assert (out/name).is_file()
-        assert (out/name).with_suffix('.pdf').is_file(), 'the paper theme writes a PDF too'
+        # The vector copy is opt-in (PSC_FIG_PDF), so the default pass must
+        # NOT pay for it: a PDF here means the switch leaked back on.
+        assert not (out/name).with_suffix('.pdf').exists(), 'PDF is opt-in now'
+
+    # ... and PSC_FIG_PDF=1 still produces it for the submission pass.
+    out_pdf = tmp_path/'out_pdf'
+    r = subprocess.run([sys.executable, str(HERE/'field_vs_kappa.py'), *map(str, roots),
+                        '--outdir', str(out_pdf)],
+                       env=dict(env, PSC_FIG_PDF='1'), capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    for name in names:
+        assert (out_pdf/name).with_suffix('.pdf').is_file(), 'PSC_FIG_PDF=1 writes the PDF'
 
     # plot_style records a layout check per figure; it has to come back empty.
     qa = [json.loads(l) for f in out.glob('figure_qa_*.jsonl')
@@ -510,3 +522,55 @@ def test_field_against_kappa_figures_drop_the_quiet_start_and_pass_layout_qa(tmp
     k3 = [r for r in rows if r['run'] == 'mirror_bikappa3_moderate']
     assert float(k3[0]['inv_kappa']) > float(
         [r for r in rows if r['run'] == 'mirror_bimaxwellian_moderate'][0]['inv_kappa'])
+
+
+def test_story_figure_shares_one_scale_per_quantity_across_the_columns(tmp_path):
+    """The composite figure is only comparable if the columns share scales.
+
+    Per-column autoscaling is what makes the bi-Maxwellian's 1/kappa_eff --
+    zero to within its +-0.004 noise floor -- draw as a large oscillation
+    beside the real decline of the kappa runs.
+    """
+    import paper_story_figure as psf
+
+    roots = [_kappa_field_run(tmp_path/'mirror_bimaxwellian_moderate', None, 0.0),
+             _kappa_field_run(tmp_path/'mirror_bikappa5_moderate', 5.0, 0.20),
+             _kappa_field_run(tmp_path/'mirror_bikappa3_moderate', 3.0, 1/3)]
+    out = tmp_path/'story.png'
+    psf.build(roots, {}, (10.0, 30.0), out, with_maps=False)
+    assert out.is_file()
+    assert not out.with_suffix('.pdf').exists(), 'PDF stays opt-in'
+
+    # Columns are ordered Maxwellian, kappa 3, kappa 5 whatever the input order.
+    assert [psf.short_name(r) for r in psf.order_runs(roots)] == \
+        ['bimaxwellian', 'bikappa3', 'bikappa5']
+
+    qa = [json.loads(l) for f in tmp_path.glob('figure_qa_*.jsonl')
+          for l in f.read_text().splitlines()]
+    assert qa and all(not entry.get('issues') for entry in qa), qa
+
+
+def test_story_figure_parallel_map_is_self_calibrating_and_uses_bz(tmp_path):
+    """dB_par comes from Bz (B0 is along z) and B0 defaults to the run's <Bz>.
+
+    Reading hx, or passing a B0 from a different profile, does not fail -- it
+    silently rescales every panel -- so both are pinned here.
+    """
+    import paper_story_figure as psf
+    from data_reader import PICDataReader
+
+    run = tmp_path/'synth'
+    subprocess.run([sys.executable, str(HERE/'synthetic_run.py'), str(run),
+                    '--ngrid', '32', '--t-end', '40', '--snapshots', '4',
+                    '--ppc', '20'], check=True, capture_output=True)
+    steps = sorted(PICDataReader.find_files(str(run/'pfd.*.h5')))
+
+    first = psf.parallel_fluctuation_map(run, steps[0])
+    last = psf.parallel_fluctuation_map(run, steps[-1])
+    # At t = 0 the field is the uniform B0, so dB_par is rounding ...
+    assert float(np.sqrt((first ** 2).mean())) < 1e-3
+    # ... and it has grown by the end of the run.
+    assert float(np.sqrt((last ** 2).mean())) > 10 * float(np.sqrt((first ** 2).mean()))
+    # A wrong B0 shows up as a constant offset of the whole map.
+    skewed = psf.parallel_fluctuation_map(run, steps[0], b0=0.05)
+    assert abs(float(skewed.mean())) > 0.1
