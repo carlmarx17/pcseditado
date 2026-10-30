@@ -81,6 +81,10 @@ add_psc_executable(psc_reconnection_comparable)
 add_psc_executable(psc_turbulence_3D_kappa_3)
 add_psc_executable(psc_turbulence_3D_maxwellian_3)
 
+# Caso de diagnostico, fuera de la matriz experimental: verifica si la salida
+# txx..tzx de all_1st es presion o temperatura (ver psc_test_pressure_moment.cxx)
+add_psc_executable(psc_test_pressure_moment)
+
 if(NOT USE_CUDA)
   install(
     TARGETS psc_bgk

@@ -9,9 +9,11 @@ Every comparison follows the species that drives the instability (read from
 the analysis manifests): ions for mirror/firehose, electrons for whistler.
 The magnetic amplitude is the vector fluctuation <|dB|^2>^1/2/B0, gamma is
 the reference row of growth_rate_summary.csv (the dominant Fourier mode of dB)
-quoted with its error, the energy panel uses the global DiagEnergies budget
-when it exists, and the heat flux the third-moment table of
-heat_flux_analysis.py. The run parameters must match (``validate_comparison``)
+quoted with its error, the energy panels use the global DiagEnergies budget
+when it exists plus the per-reservoir window budget of
+physical_diagnostics.py (both species' exact kinetic energy, the total
+magnetic energy and the electric energy, as changes over K(t_0)), and the
+heat flux the third-moment table of heat_flux_analysis.py. The run parameters must match (``validate_comparison``)
 unless --allow-parameter-mismatch is given; realizations of one case are
 compared with convergence_study.py.
 """
@@ -172,15 +174,68 @@ def load_case(name: str, path: Path) -> dict:
             "kappa_fit": _to_float(row.get("fit_kappa_fit")),
             "F_supra": _to_float(row.get("fit_suprathermal_fraction")),
             "E_B": _to_float(row.get("energy_E_B")),
+            # Every reservoir of the window budget (physical_diagnostics
+            # .run_energy_summary): both species' exact kinetic energy, the
+            # TOTAL magnetic energy -- the fluctuation alone drops the
+            # first-order cross term B0 <dB_par> -- and the electric energy.
+            "K_i": _to_float(row.get("energy_K_i")),
+            "K_e": _to_float(row.get("energy_K_e")),
+            "E_B_total": _to_float(row.get("energy_E_B_total")),
+            "E_E": _to_float(row.get("energy_E_E")),
+            "E_field": _to_float(row.get("energy_E_field")),
+            "E_sum": _to_float(row.get("energy_E_proxy")),
             "energy_relative_change": (
                 float(np.interp(_to_float(time), energy_t, energy_rel, left=np.nan, right=np.nan))
                 if energy_rows else np.nan),
             "abs_q_par_over_q0": _to_float(heat_by_step.get(step, {}).get("abs_q_par_over_q0_smax6",
                                            heat_by_step.get(step, {}).get("abs_q_par_over_q0"))),
         })
+    budget = add_energy_changes(merged)
     return {"name": name, "rows": merged, "gamma": gamma, "gamma_err": gamma_err,
             "gamma_series": gamma_series, "manifest": manifest, "driven_species": driven,
-            "branch_gamma": branch_gamma}
+            "branch_gamma": branch_gamma, "energy_budget": budget}
+
+
+#: Reservoirs of the window budget, as <column>: <change column> pairs.
+ENERGY_CHANGE_KEYS = {"K_i": "dK_i_over_K0", "K_e": "dK_e_over_K0",
+                      "E_B_total": "dE_B_over_K0", "E_B": "dE_dB_over_K0",
+                      "E_E": "dE_E_over_K0", "E_field": "dE_field_over_K0",
+                      "E_sum": "dE_sum_over_K0"}
+
+
+def add_energy_changes(rows: list[dict]) -> dict:
+    """Changes of each reservoir, per case, over that case's initial K.
+
+    Cases with different distributions start with different absolute
+    energies, so only the changes compare, and only against the free-energy
+    reservoir that drives the instability: K(t_0) = K_i(t_0) + K_e(t_0), the
+    normalisation the single-run figure uses. Rows written before the budget
+    carried every field energy leave these NaN rather than a wrong zero.
+    """
+    for row in rows:
+        for change_key in ENERGY_CHANGE_KEYS.values():
+            row[change_key] = np.nan
+    kinetic = [(r["K_i"] + r["K_e"]) for r in rows]
+    k0 = next((k for k in kinetic if np.isfinite(k) and k > 0), np.nan)
+    if not np.isfinite(k0):
+        return {"normalisation": "none", "K0": np.nan, "reservoirs": []}
+    present = []
+    for key, change_key in ENERGY_CHANGE_KEYS.items():
+        values = [r[key] for r in rows]
+        base = next((v for v in values if np.isfinite(v)), np.nan)
+        if not np.isfinite(base):
+            continue
+        present.append(key)
+        for row, value in zip(rows, values):
+            row[change_key] = (value - base) / k0
+    drift = [abs(r["dE_sum_over_K0"]) for r in rows if np.isfinite(r["dE_sum_over_K0"])]
+    exchanged = [abs(r[c]) for k, c in ENERGY_CHANGE_KEYS.items()
+                 if k in ("K_i", "K_e", "E_B_total") for r in rows if np.isfinite(r[c])]
+    return {"normalisation": "K_i(t0) + K_e(t0)", "K0": float(k0), "reservoirs": present,
+            "max_drift_over_K0": max(drift, default=np.nan),
+            "max_exchange_over_K0": max(exchanged, default=np.nan),
+            "has_electric_field": "E_E" in present,
+            "has_total_magnetic_energy": "E_B_total" in present}
 
 
 def validate_comparison(cases: list[dict], mode: str = "distribution") -> list[str]:
@@ -354,9 +409,21 @@ def main():
         "reason": "Parameter parity alone does not establish energy conservation, mode classification or convergence",
         "common_time_coverage": [max((c["rows"][0]["omega_ci_t"] for c in cases if c["rows"]), default=None),
                                  min((c["rows"][-1]["omega_ci_t"] for c in cases if c["rows"]), default=None)],
+        # Which reservoirs each case's energy table actually carries. A table
+        # written before the budget included every field energy has no
+        # electric energy and no total magnetic energy, so its transfer panel
+        # is incomplete and says so instead of looking like a measurement.
+        "energy_budget": {c["name"]: c["energy_budget"] for c in cases},
     }, indent=2), encoding="utf-8")
     if issues:
         print("[WARN] Uncontrolled comparison:\n" + "\n".join(issues))
+    stale = [c["name"] for c in cases
+             if not (c["energy_budget"].get("has_electric_field")
+                     and c["energy_budget"].get("has_total_magnetic_energy"))]
+    if stale:
+        print("[WARN] Energy table without the electric and total magnetic energy in: "
+              + ", ".join(stale) + "; rerun physical_diagnostics.py on those runs "
+              "for the complete transfer comparison.")
     rows = [row for case in cases for row in case["rows"]]
     _write_csv(outdir / "comparison_kappa_vs_maxwellian.csv", rows)
 
@@ -382,6 +449,17 @@ def main():
         for c in cases for b, (g, e) in sorted(c.get("branch_gamma", {}).items())])
     plot_timeseries(cases, ["energy_relative_change"], [r"$\Delta E_{\rm tot}/E_{\rm tot}$"],
                     outdir / "comparison_energy.png", "Global energy conservation (DiagEnergies)")
+    # What each distribution does with its free energy: the driven species
+    # releases kinetic energy and the TOTAL magnetic energy takes it up. Both
+    # as changes over K(t_0), the only form in which cases with different
+    # absolute energies compare.
+    plot_timeseries(cases, [f"dK_{s}_over_K0", "dE_B_over_K0", "dE_E_over_K0"],
+                    [rf"$\Delta K_{s}$", r"$\Delta E_B$ (total)", r"$\Delta E_E$"],
+                    outdir / "comparison_energy_transfer.png",
+                    r"Energy released and taken up, over $K(t_0)$")
+    plot_timeseries(cases, ["dE_sum_over_K0"], [r"$\Delta E_{\rm sum}/K(t_0)$"],
+                    outdir / "comparison_energy_budget_drift.png",
+                    "Drift of the summed budget (all particle and field reservoirs)")
     plot_timeseries(cases, ["abs_q_par_over_q0"], [rf"$\langle|q_{{\parallel {s}}}|\rangle/q_0$"],
                     outdir / "comparison_heat_flux.png",
                     r"Heat flux of the driven species (third moment, $s_{\max}=6$)")

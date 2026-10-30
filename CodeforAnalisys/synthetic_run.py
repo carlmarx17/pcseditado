@@ -19,7 +19,13 @@ numbers checked against the input before any COSMA time is spent:
   branch separation (physical_diagnostics.classify_mode) and for the
   handedness of psi_pm (polarization_dispersion.handedness_check).
 * ``pfd_moments.<step>_p000000.h5``: ``all_1st-0/{rho,px..pz,txx..tzx}_{i,e}``
-  with n_i anticorrelated with |B| and P_perp in total-pressure balance.
+  with n_i anticorrelated with |B| and P_perp in total-pressure balance, plus
+  a sheared bulk flow u_y(z) of zero box mean carried in p_y and t_yy. What
+  PSC writes is the raw second moment, so that flow is the term an analysis
+  has to remove cell by cell; the thermal pressure is the same as with no
+  flow, which is what makes it a test. The prt particles are deliberately
+  left flow-free: pooling bias inside the particle window is a separate
+  question (``plot_prt._compute_particle_energies``).
 * ``prt_<case>.<step>.h5``: bi-Maxwellian (or, for kappa profiles, bi-kappa
   with PSC's Gamma-Normal mixture) ions and electrons (A from the profile)
   inside the central 20 % window, with ``lo``/``hi`` attributes.
@@ -52,6 +58,10 @@ NOISE = 2e-5
 GAMMA_IC, OMEGA_IC = 0.15, 0.47
 AMP0_IC, AMP_SAT_IC = 1e-4, 0.03
 K_IC = 2
+#: Bulk flow of the synthetic moments, as a fraction of the ion parallel
+#: thermal speed: at 1 the flow term n m u_y^2 of the raw t_yy peaks at the
+#: parallel pressure itself. Set to 0 to recover flow-free moments.
+FLOW_AMPL = 1.0
 
 
 def build(outdir: Path, case: str, ngrid: int, t_end_omegaci: float, n_snap: int,
@@ -128,11 +138,22 @@ def build(outdir: Path, case: str, ngrid: int, t_end_omegaci: float, n_snap: int
         # Isothermal total-pressure balance: B^2/2 + n (T_perp,i + T_perp,e) = const.
         dpm = 0.5 * (bmag ** 2 - b0 ** 2)
         n_i = 1.0 - dpm / (ti_perp + te_perp)
+        # Sheared bulk flow along y, zero box mean, the same velocity for both
+        # species so the net current stays zero like the j fields above. The
+        # raw moment carries it, t_yy = n T_perp + n m u_y^2 with p_y = n m u_y,
+        # while the thermal part P_yy = t_yy - p_y^2 / (n m) is still n T_perp.
+        # So an analysis that subtracts per cell reads the same temperature as
+        # with no flow, and one that skips the subtraction -- or averages
+        # first, where this profile cancels -- reads the flow as temperature.
+        u_y = FLOW_AMPL * np.sqrt(ti_par / units.M_ION) * np.sin(2 * np.pi * z / ngrid)
         with h5py.File(outdir / f"pfd_moments.{step:09d}_p000000.h5", "w") as f:
-            for s, sign, tpar, tperp in (("i", 1, ti_par, ti_perp), ("e", -1, te_par, te_perp)):
+            for s, sign, mass, tpar, tperp in (("i", 1, units.M_ION, ti_par, ti_perp),
+                                               ("e", -1, units.M_ELEC, te_par, te_perp)):
                 pperp = n_i * tperp
-                comps = {"rho": sign * n_i, "px": 0 * n_i, "py": 0 * n_i, "pz": 0 * n_i,
-                         "txx": pperp, "tyy": pperp, "tzz": n_i * tpar,
+                comps = {"rho": sign * n_i, "px": 0 * n_i, "py": n_i * mass * u_y,
+                         "pz": 0 * n_i,
+                         "txx": pperp, "tyy": pperp + n_i * mass * u_y ** 2,
+                         "tzz": n_i * tpar,
                          "txy": 0 * n_i, "tyz": 0 * n_i, "tzx": 0 * n_i}
                 for name, arr in comps.items():
                     f.create_dataset(f"all_1st-0/{name}_{s}/p0/3d", data=arr[:, :, None].astype("f4"))

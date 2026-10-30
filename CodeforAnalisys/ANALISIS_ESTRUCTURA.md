@@ -796,9 +796,21 @@ density. Produces `spatial_correlations.csv` and the corresponding scatter plots
 
 ### 15. Energy partition and conservation
 
-Combines bulk, thermal and magnetic energy proxies; computes the relative
-variation with respect to the first available state. Outputs: `energy_table.csv`,
-`energy_partition.png` and `energy_conservation_error.png`.
+Sums every reservoir the snapshots carry: the exact kinetic energy
+\(K_s=m\langle\gamma-1\rangle\) of **both** species, split into bulk and
+thermal, the **total** magnetic energy \(\langle B^2\rangle/2\) (not only
+the fluctuation \(\langle|\delta B|^2\rangle/2\), which drops the
+first-order cross term \(B_0\langle\delta B_\parallel\rangle\)) and the
+electric energy \(\langle E^2\rangle/2\), in the discrete form of
+`DiagEnergiesField` so the two diagnostics are comparable per unit volume.
+The figure plots changes \(\Delta E(t)\) normalised by the initial kinetic
+energy, because the absolute sum is dominated by the constant \(B_0^2/2\).
+The temperature-based internal energies \(3\bar{T}/2\) are kept as columns
+and compared with the exact thermal energy (`thermal_estimator_gap_*`); they
+are no longer summed alongside it. Still a window-vs-domain mix, so not a
+closed budget: that is `energy_conservation.py` on DiagEnergies. Outputs:
+`energy_table.csv`, `energy_partition.png` and
+`energy_proxy_relative_change.png`.
 
 ### 16. Heat fluxes
 

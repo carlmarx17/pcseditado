@@ -19,7 +19,11 @@ import numpy as np
 
 import plot_style as ps
 
-from anisotropy_analysis import field_aligned_pressures
+from plasma_physics import (
+    central_pressure_tensor,
+    field_aligned_pressures,
+    moment_fields_by_name,
+)
 from data_reader import PICDataReader
 from streaming_fields import SnapshotSeries
 from dispersion_analysis import compute_phase_velocity_density, extract_ridges
@@ -130,25 +134,19 @@ def compute_temperature_quantity(
         ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"],
     )
 
-    rho = np.asarray(moments[f"rho_{suffix}/p0/3d"], dtype=float)
-    n = rho if species == "ion" else -rho
-    safe_n = np.where(n > 0.05, n, np.nan)
-
-    px = np.asarray(moments[f"px_{suffix}/p0/3d"], dtype=float)
-    py = np.asarray(moments[f"py_{suffix}/p0/3d"], dtype=float)
-    pz = np.asarray(moments[f"pz_{suffix}/p0/3d"], dtype=float)
-
-    pxx = np.asarray(moments[f"txx_{suffix}/p0/3d"], dtype=float) - px * px / (safe_n * mass)
-    pyy = np.asarray(moments[f"tyy_{suffix}/p0/3d"], dtype=float) - py * py / (safe_n * mass)
-    pzz = np.asarray(moments[f"tzz_{suffix}/p0/3d"], dtype=float) - pz * pz / (safe_n * mass)
-    pxy = np.asarray(moments[f"txy_{suffix}/p0/3d"], dtype=float) - px * py / (safe_n * mass)
-    pyz = np.asarray(moments[f"tyz_{suffix}/p0/3d"], dtype=float) - py * pz / (safe_n * mass)
-    pzx = np.asarray(moments[f"tzx_{suffix}/p0/3d"], dtype=float) - pz * px / (safe_n * mass)
+    # Central second moments per cell, the same shared conversion the
+    # anisotropy trajectory uses.
+    tensor = central_pressure_tensor(
+        moment_fields_by_name(moments), suffix, mass, n_min=0.05
+    )
+    n, safe_n = tensor["n"], tensor["n_safe"]
 
     bx = np.asarray(fields["hx_fc/p0/3d"], dtype=float)
     by = np.asarray(fields["hy_fc/p0/3d"], dtype=float)
     bz = np.asarray(fields["hz_fc/p0/3d"], dtype=float)
-    p_par, p_perp, b2 = field_aligned_pressures(pxx, pyy, pzz, pxy, pyz, pzx, bx, by, bz)
+    p_par, p_perp, b2 = field_aligned_pressures(
+        tensor["Pxx"], tensor["Pyy"], tensor["Pzz"],
+        tensor["Pxy"], tensor["Pyz"], tensor["Pzx"], bx, by, bz)
 
     t_par = p_par / safe_n
     t_perp = p_perp / safe_n

@@ -683,6 +683,12 @@ def _compute_particle_energies(filepath: str) -> dict:
     PSC stores u = gamma*v. For this non-relativistic run:
       E_bulk = 0.5*m*|<u>|^2
       E_th   = 0.5*m*<|u-<u>|^2>
+
+    One mean for the whole window, so flow that varies inside it is booked as
+    thermal. prt_pooling_bias.py measures how much: exactly the variance of
+    the cell-mean velocity, which is shot noise at the 1/ppc level for the
+    ions but reaches tens of per cent for the electrons once the mode grows,
+    because they carry its current.
     Values are per macroparticle, so species with the same macro-weight can be
     compared and summed without introducing sample-size-dependent factors.
     """

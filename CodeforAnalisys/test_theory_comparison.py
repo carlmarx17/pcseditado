@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 import numpy as np
 
-from compare_physical_cases import load_case, validate_comparison
+from compare_physical_cases import add_energy_changes, load_case, validate_comparison
 from polarization_dispersion import interp_theory, load_theory
 
 
@@ -52,6 +52,55 @@ class TheoryComparisonTests(unittest.TestCase):
         self.assertTrue(validate_comparison(cases, "convergence"))
         cases[1]["manifest"]["physics"]["beta_i_parallel"] = 10
         self.assertTrue(validate_comparison(cases))
+
+
+class EnergyBudgetComparisonTests(unittest.TestCase):
+    """Cases compare by their energy changes, over their own initial K."""
+
+    @staticmethod
+    def _rows(with_fields: bool = True):
+        rows = []
+        for step in range(3):
+            row = {"omega_ci_t": float(step), "K_i": 2.0 - 0.1 * step, "K_e": 1.0,
+                   "E_B": 0.01 * step, "E_B_total": np.nan, "E_E": np.nan,
+                   "E_field": np.nan, "E_sum": np.nan}
+            if with_fields:
+                row.update({"E_B_total": 5.0 + 0.1 * step, "E_E": 0.002 * step,
+                            "E_field": 5.0 + 0.102 * step, "E_sum": 8.0 + 0.002 * step})
+            rows.append(row)
+        return rows
+
+    def test_changes_are_normalised_by_the_initial_kinetic_energy(self):
+        rows = self._rows()
+        budget = add_energy_changes(rows)
+        self.assertEqual(budget["normalisation"], "K_i(t0) + K_e(t0)")
+        self.assertAlmostEqual(budget["K0"], 3.0)
+        self.assertAlmostEqual(rows[0]["dK_i_over_K0"], 0.0)
+        self.assertAlmostEqual(rows[-1]["dK_i_over_K0"], -0.2 / 3.0)
+        # The total magnetic energy, not the fluctuation: they are different
+        # columns and the budget uses the one carrying B0 <dB_par>.
+        self.assertAlmostEqual(rows[-1]["dE_B_over_K0"], 0.2 / 3.0)
+        self.assertAlmostEqual(rows[-1]["dE_dB_over_K0"], 0.02 / 3.0)
+        self.assertAlmostEqual(rows[-1]["dE_E_over_K0"], 0.004 / 3.0)
+        self.assertTrue(budget["has_electric_field"])
+        self.assertTrue(budget["has_total_magnetic_energy"])
+
+    def test_a_table_without_the_field_energies_is_flagged_not_zeroed(self):
+        rows = self._rows(with_fields=False)
+        budget = add_energy_changes(rows)
+        self.assertFalse(budget["has_electric_field"])
+        self.assertFalse(budget["has_total_magnetic_energy"])
+        # Absent is NaN: a zero would draw a flat line that looks measured.
+        self.assertTrue(np.isnan(rows[-1]["dE_B_over_K0"]))
+        self.assertTrue(np.isnan(rows[-1]["dE_E_over_K0"]))
+        self.assertTrue(np.isfinite(rows[-1]["dK_i_over_K0"]))
+
+    def test_a_case_without_kinetic_energy_gets_no_normalisation(self):
+        rows = [{"omega_ci_t": 0.0, "K_i": np.nan, "K_e": np.nan, "E_B": 0.01,
+                 "E_B_total": np.nan, "E_E": np.nan, "E_field": np.nan, "E_sum": np.nan}]
+        budget = add_energy_changes(rows)
+        self.assertEqual(budget["normalisation"], "none")
+        self.assertTrue(np.isnan(rows[0]["dE_sum_over_K0"]))
 
 
 if __name__ == "__main__":

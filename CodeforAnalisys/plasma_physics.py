@@ -125,6 +125,19 @@ def field_aligned_pressures(Pxx, Pyy, Pzz, Pxy, Pyz, Pzx, Bx, By, Bz):
     return p_par, 0.5 * (Pxx + Pyy + Pzz - p_par), B2
 
 
+def moment_fields_by_name(fields: dict, ravel: bool = False) -> dict:
+    """Drop the HDF5 dataset path from ``read_multiple_fields_3d`` keys.
+
+    That reader returns ``txx_i/p0/3d``; ``central_pressure_tensor`` wants the
+    bare moment name. ``ravel`` flattens the maps for cell-list consumers.
+    """
+    out = {}
+    for key, value in fields.items():
+        array = np.asarray(value, dtype=float)
+        out[key.split("/")[0]] = array.ravel() if ravel else array
+    return out
+
+
 def central_pressure_tensor(mom: dict, suffix: str, mass: float,
                             n_min: float = 1e-12) -> dict:
     """Thermal pressure from PSC's raw ``all_1st`` moments of one species.
@@ -134,6 +147,10 @@ def central_pressure_tensor(mom: dict, suffix: str, mass: float,
     flow, P_ab = t_ab - p_a p_b / (n m); using t_ab directly contaminates the
     temperature wherever a bulk drift develops. ``rho`` is a charge density,
     so electrons carry a negative sign.
+
+    Cells below ``n_min`` come back as NaN. ``n_safe`` is that masked density,
+    so a caller dividing P by it to get a temperature uses the same mask the
+    tensor was built with instead of rolling its own threshold.
     """
     n = np.abs(np.asarray(mom[f"rho_{suffix}"], dtype=float))
     safe_n = np.where(n > n_min, n, np.nan)
@@ -141,6 +158,7 @@ def central_pressure_tensor(mom: dict, suffix: str, mass: float,
     nm = safe_n * mass
     return {
         "n": n,
+        "n_safe": safe_n,
         "Pxx": mom[f"txx_{suffix}"] - px * px / nm,
         "Pyy": mom[f"tyy_{suffix}"] - py * py / nm,
         "Pzz": mom[f"tzz_{suffix}"] - pz * pz / nm,

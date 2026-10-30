@@ -377,14 +377,34 @@ def particle_kinematics_validity(snapshot: ParticleSnapshot, species: str) -> di
 
 
 def load_fields(path: str) -> dict[str, np.ndarray]:
+    """B, and E when the snapshot carries it.
+
+    The energy budget needs both halves of the electromagnetic energy, so the
+    electric components are read whenever ``jeh`` wrote them (PSC's jeh item
+    writes jx..jz, ex..ez, hx..hz). They are optional: snapshots that only
+    hold the magnetic field still load, and the consumers fall back to the
+    magnetic part alone and say so.
+    """
     data = PICDataReader.read_multiple_fields_3d(
         path, "jeh-", ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"]
     )
-    return {
+    fields = {
         "Bx": np.asarray(data["hx_fc/p0/3d"], dtype=float),
         "By": np.asarray(data["hy_fc/p0/3d"], dtype=float),
         "Bz": np.asarray(data["hz_fc/p0/3d"], dtype=float),
     }
+    try:
+        electric = PICDataReader.read_multiple_fields_3d(
+            path, "jeh-", ["ex_ec/p0/3d", "ey_ec/p0/3d", "ez_ec/p0/3d"]
+        )
+    except (KeyError, OSError):
+        return fields
+    fields.update({
+        "Ex": np.asarray(electric["ex_ec/p0/3d"], dtype=float),
+        "Ey": np.asarray(electric["ey_ec/p0/3d"], dtype=float),
+        "Ez": np.asarray(electric["ez_ec/p0/3d"], dtype=float),
+    })
+    return fields
 
 
 def load_moments(path: str, suffix: str = "i") -> dict[str, np.ndarray]:
@@ -417,17 +437,10 @@ def moment_thermal_maps(moment_file: str, field_file: str | None = None,
                         species: str = "ion") -> dict[str, np.ndarray]:
     suffix = "i" if species == "ion" else "e"
     mass = M_ION if species == "ion" else M_ELEC
-    mom = load_moments(moment_file, suffix)
-    rho = mom[f"rho_{suffix}"]
-    n = rho if species == "ion" else np.abs(rho)
-    safe_n = np.where(n > 1e-12, n, np.nan)
-
-    pxx = mom[f"txx_{suffix}"] - mom[f"px_{suffix}"] ** 2 / (safe_n * mass)
-    pyy = mom[f"tyy_{suffix}"] - mom[f"py_{suffix}"] ** 2 / (safe_n * mass)
-    pzz = mom[f"tzz_{suffix}"] - mom[f"pz_{suffix}"] ** 2 / (safe_n * mass)
-    pxy = mom[f"txy_{suffix}"] - mom[f"px_{suffix}"] * mom[f"py_{suffix}"] / (safe_n * mass)
-    pyz = mom[f"tyz_{suffix}"] - mom[f"py_{suffix}"] * mom[f"pz_{suffix}"] / (safe_n * mass)
-    pzx = mom[f"tzx_{suffix}"] - mom[f"pz_{suffix}"] * mom[f"px_{suffix}"] / (safe_n * mass)
+    tensor = central_pressure_tensor(load_moments(moment_file, suffix), suffix, mass)
+    n, safe_n = tensor["n"], tensor["n_safe"]
+    pxx, pyy, pzz = tensor["Pxx"], tensor["Pyy"], tensor["Pzz"]
+    pxy, pyz, pzx = tensor["Pxy"], tensor["Pyz"], tensor["Pzx"]
 
     if field_file:
         fld = load_fields(field_file)
@@ -633,7 +646,48 @@ def field_metrics(field_file: str, b0: float = B0,
         # magnitude fluctuation (|B|-B0) drops the perpendicular components,
         # which dominate by ~an order of magnitude in these runs.
         "magnetic_energy_fluct": float(0.5 * np.nanmean(dbx**2 + dby**2 + dbz**2)),
+        **_field_energy_densities(fld, b0),
     }
+
+
+def _field_energy_densities(fld: dict[str, np.ndarray], b0: float) -> dict:
+    """Electromagnetic energy densities, the quantities a budget may sum.
+
+    DiagEnergiesField sums the squares of the raw Yee components times the
+    cell volume (EX2..BZ2), and ``energy_conservation.py`` applies the 1/2.
+    The same discrete form is used here on the raw staggered arrays -- no
+    interpolation to cell centres, which would not be that energy -- so these
+    densities are DiagEnergies divided by the volume, and the two diagnostics
+    can be compared directly.
+
+    For the budget the quantity that matters is the *total* magnetic energy
+    0.5<|B|^2>, not the fluctuation energy 0.5<|dB|^2>. The difference is the
+    cross term B0 <dB_par>, which is first order in the amplitude: for mirror
+    modes, which trade <dB_par> against the perpendicular pressure, it is the
+    leading magnetic energy change and dropping it loses most of the signal.
+    """
+    magnetic_components = [np.asarray(fld[key], dtype=float) for key in ("Bx", "By", "Bz")]
+    magnetic = float(0.5 * sum(np.nanmean(c**2) for c in magnetic_components))
+    fluctuation = float(0.5 * sum(np.nanmean((c - np.nanmean(c))**2) for c in magnetic_components))
+    out = {
+        "magnetic_energy_total": magnetic,
+        # 0.5<|B|^2> - 0.5<|B - <B>|^2>: the uniform field plus the cross term.
+        "magnetic_energy_mean_part": magnetic - fluctuation,
+        "magnetic_energy_cross": float(b0 * np.nanmean(np.asarray(fld["Bz"], dtype=float) - b0)),
+    }
+    if not all(key in fld for key in ("Ex", "Ey", "Ez")):
+        # No electric field in this snapshot: say so rather than passing a
+        # zero, which a budget would silently take for a measurement.
+        out.update({"electric_energy": float("nan"),
+                    "field_energy_total": float("nan"),
+                    "has_electric_field": False})
+        return out
+    electric = float(0.5 * sum(np.nanmean(np.asarray(fld[key], dtype=float)**2)
+                               for key in ("Ex", "Ey", "Ez")))
+    out.update({"electric_energy": electric,
+                "field_energy_total": magnetic + electric,
+                "has_electric_field": True})
+    return out
 
 
 def _spectral_plane(shape: tuple[int, ...]) -> str:
@@ -1140,6 +1194,26 @@ def particle_heat_flux(snapshot: ParticleSnapshot, species: str = "ion") -> dict
         "q_x_particle": qx,
         "q_y_particle": qy,
     }
+
+
+def _species_kinetic(row: dict, suffix: str, bulk_fallback: float,
+                     thermal_fallback: float, internal: float) -> tuple[float, str]:
+    """Kinetic energy density of one species, best estimator available.
+
+    Preferred: the exact m<gamma-1> split into bulk and thermal that
+    ``particle_energy`` measures for that species. Older tables, and runs whose
+    particle output only carried the ions, fall back to the unsuffixed ion
+    columns and finally to the temperature-based internal energy, which misses
+    the bulk flow and the relativistic correction. The source is reported so a
+    figure never presents a fallback as the measurement.
+    """
+    bulk = row.get(f"E_kin_bulk_{suffix}", np.nan)
+    thermal = row.get(f"E_kin_thermal_{suffix}", np.nan)
+    if np.isfinite(bulk) and np.isfinite(thermal):
+        return float(bulk + thermal), f"K_{suffix} = m<gamma-1>"
+    if np.isfinite(bulk_fallback) and np.isfinite(thermal_fallback):
+        return float(bulk_fallback + thermal_fallback), f"K_{suffix} = m<gamma-1> (unsuffixed column)"
+    return float(internal), f"K_{suffix} = 3T_bar/2, no bulk flow"
 
 
 def particle_energy(snapshot: ParticleSnapshot, species: str = "ion") -> dict:
@@ -1973,7 +2047,14 @@ def _process_particle_step_worker(args):
                 "beta_parallel_e": 2.0 * elec.get("T_parallel", np.nan) / (B0**2 + 1e-30),
             }
             row.update(particle_heat_flux(snap, "ion"))
+            # Both species: a budget needs the electron kinetic energy too,
+            # and the electrons are the species that carries the numerical
+            # heating. The unsuffixed ion keys stay for the existing readers
+            # (energy_audit.audit_window).
             row.update(particle_energy(snap, "ion"))
+            for species, suffix in (("ion", "i"), ("electron", "e")):
+                row.update({f"{key}_{suffix}": value
+                            for key, value in particle_energy(snap, species).items()})
             for species, suffix in [("ion", "i"), ("electron", "e")]:
                 row.update({f"{key}_{suffix}": value for key, value in
                             particle_kinematics_validity(snap, species).items()})
@@ -2728,22 +2809,61 @@ class PhysicalDiagnostics:
             e_b = r.get("magnetic_energy_fluct", np.nan)
             if not np.all(np.isfinite([e_bulk, e_th, e_b])):
                 continue
-            # This mixes window particle averages (assuming n=1) with global
-            # magnetic fluctuations. It is a proxy, not a conserved total:
-            # electric energy and electron bulk energy are also absent.
-            e_int_i = 1.5 * (r.get("T_parallel_i", np.nan) + 2.0 * r.get("T_perp_i", np.nan)) / 3.0
-            e_int_e = 1.5 * (r.get("T_parallel_e", np.nan) + 2.0 * r.get("T_perp_e", np.nan)) / 3.0
-            total = e_bulk + e_int_i + e_int_e + e_b
+            # Internal energy density of a bi-Maxwellian at n = 1:
+            #   E_int = (P_par + 2 P_perp)/2 = 3 T_bar / 2,  T_bar = (T_par + 2 T_perp)/3,
+            # with T = m <du dv> the kinetic temperature particle_temperatures
+            # returns (the mass is already in T). This is the non-relativistic
+            # form of the same reservoir the exact m<gamma-1> thermal energy
+            # measures; energy_audit inverts T_bar = E_internal_e / 1.5, so
+            # the convention has to stay exactly this one.
+            e_int_i = 0.5 * (r.get("T_parallel_i", np.nan) + 2.0 * r.get("T_perp_i", np.nan))
+            e_int_e = 0.5 * (r.get("T_parallel_e", np.nan) + 2.0 * r.get("T_perp_e", np.nan))
+            # Kinetic energy per species, exact m<gamma-1> split into bulk and
+            # thermal. The old sum took the ion bulk plus BOTH temperature-based
+            # internal energies, so it mixed two estimators of the ion thermal
+            # energy and left the electron bulk energy out altogether.
+            k_i, k_i_source = _species_kinetic(r, "i", e_bulk, e_th, e_int_i)
+            k_e, k_e_source = _species_kinetic(r, "e", np.nan, np.nan, e_int_e)
+            # Every field reservoir, which is what a conservation statement
+            # needs: total magnetic energy (the fluctuation energy alone drops
+            # the first-order cross term B0 <dB_par>) plus electric energy.
+            e_b_total = r.get("magnetic_energy_total", np.nan)
+            e_e = r.get("electric_energy", np.nan)
+            e_field, field_source = ((r.get("field_energy_total", np.nan), "magnetic total + electric")
+                                     if np.isfinite(r.get("field_energy_total", np.nan))
+                                     else (e_b_total, "magnetic total only (no E in snapshot)")
+                                     if np.isfinite(e_b_total)
+                                     else (e_b, "magnetic fluctuation only"))
+            total = k_i + k_e + e_field
             rows.append({
                 "step": step,
                 "omega_ci_t": step_to_omegaci(step),
                 "E_kin_bulk": e_bulk,
                 "E_kin_thermal": e_th,
+                "E_kin_bulk_i": r.get("E_kin_bulk_i", e_bulk),
+                "E_kin_thermal_i": r.get("E_kin_thermal_i", e_th),
+                "E_kin_bulk_e": r.get("E_kin_bulk_e", np.nan),
+                "E_kin_thermal_e": r.get("E_kin_thermal_e", np.nan),
                 "E_internal_i": e_int_i,
                 "E_internal_e": e_int_e,
+                "K_i": k_i,
+                "K_e": k_e,
+                # Exact minus non-relativistic estimator of the same thermal
+                # energy: O(theta) = O(T/mc^2), so a drift here is a broken
+                # temperature, not physics.
+                "thermal_estimator_gap_i": r.get("E_kin_thermal_i", e_th) - e_int_i,
+                "thermal_estimator_gap_e": r.get("E_kin_thermal_e", np.nan) - e_int_e,
                 "E_B": e_b,
+                "E_B_total": e_b_total,
+                "E_E": e_e,
+                "E_field": e_field,
                 "E_proxy": total,
+                # The sum now holds every reservoir, but the particles are the
+                # prt window (~4 % of the box, n = 1) and the fields the whole
+                # domain, so it still is not a closed budget: that is
+                # energy_conservation.py on DiagEnergies.
                 "is_conservation_diagnostic": False,
+                "budget_scope": f"prt-window particles ({k_i_source}, {k_e_source}) + domain {field_source}",
                 "A_e": r.get("A_e", np.nan),
             })
         heating = secular_heating(rows)
@@ -2767,38 +2887,83 @@ class PhysicalDiagnostics:
         if not rows:
             return
         t = np.array([r["omega_ci_t"] for r in rows])
-        fig, ax = plt.subplots(figsize=(8.8, 5.4))
+        col = lambda key: np.array([r.get(key, np.nan) for r in rows], dtype=float)
+        # Changes, not absolute values. Now that the budget carries the total
+        # field energy, the absolute sum is dominated by the constant B0^2/2
+        # and by the initial thermal energy, which hides every exchange: the
+        # same reason energy_conservation.py plots dE. The normalisation is
+        # the initial particle kinetic energy, the free-energy reservoir the
+        # anisotropy can actually move -- not E_proxy(0), which B0^2/2 sets.
+        kinetic = col("K_i") + col("K_e")
+        k0 = next((v for v in kinetic if np.isfinite(v) and v > 0), np.nan)
+        if not np.isfinite(k0):
+            k0 = next((r["E_proxy"] for r in rows if np.isfinite(r.get("E_proxy", np.nan))
+                       and r.get("E_proxy")), 1.0)
+        scope = next((r.get("budget_scope", "") for r in rows if r.get("budget_scope")), "")
+
+        fig, axes = plt.subplots(2, 1, figsize=(8.8, 7.6), sharex=True)
         fig.patch.set_facecolor(DARK_BG)
-        _style_axes(ax)
-        # Relative to the initial proxy: the proxy is a partial sum whose
-        # absolute code value carries no meaning, its changes do.
-        e0 = next((r["E_proxy"] for r in rows if np.isfinite(r.get("E_proxy", np.nan))
-                   and r.get("E_proxy")), 1.0)
-        for key, color, label in [
-            ("E_kin_bulk", ps.c("#58a6ff"), "bulk"),
-            ("E_internal_i", ps.c("#ff7b72"), "ion internal"),
-            ("E_internal_e", ps.c("#d2a8ff"), "electron internal"),
-            ("E_B", ps.c("#56d364"), "magnetic fluct."),
-            ("E_proxy", ps.c("#f2cc60"), "partial energy proxy"),
-        ]:
-            y = np.array([r.get(key, np.nan) for r in rows], dtype=float) / e0
-            if np.any(np.isfinite(y)):
-                style = _series_style(len(t))
-                ax.plot(t, y, color=color, label=label, **style)
+        for ax in axes:
+            _style_axes(ax)
+        series = [
+            ("K_i", ps.c("#ff7b72"), r"$\Delta K_i$ (ion kinetic)"),
+            ("K_e", ps.c("#58a6ff"), r"$\Delta K_e$ (electron kinetic)"),
+            ("E_B_total", ps.c("#56d364"), r"$\Delta E_B$ (total $\langle B^2\rangle/2$)"),
+            ("E_B", ps.c("#7ee787"), r"$\Delta E_{\delta B}$ (fluctuation only)"),
+            ("E_E", ps.c("#f2cc60"), r"$\Delta E_E$ (electric)"),
+            ("E_proxy", ps.c("#e6edf3"), r"$\Delta E_{\rm sum}$ (all reservoirs)"),
+        ]
+        for key, color, label in series:
+            y = col(key)
+            if not np.any(np.isfinite(y)):
+                continue
+            base = next((v for v in y if np.isfinite(v)), np.nan)
+            style = _series_style(len(t))
+            if key == "E_proxy":
+                style["lw"] = max(style.get("lw", 1.6), 2.2)
+            axes[0].plot(t, (y - base) / k0, color=color, label=label, **style)
         if heating:
-            ax.plot(t, (heating["slope_per_omegaci"] * t + heating["intercept"]) / e0,
-                    ":", color=ps.c("#8b949e"), lw=2.0,
-                    label=(rf"secular $e^-$ trend "
-                           rf"($R^2$={heating['r_squared']:.3f})"))
-        ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
-        ax.set_ylabel(r"energy / $E_{\rm proxy}(0)$", color=TEXT_CLR)
-        ax.set_title("Partial energy proxy (not a conserved total)", color=TEXT_CLR, fontweight="bold")
-        ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR,
-                  fontsize=11, loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=3,
-                  frameon=False)
+            # A change, like every other curve here: the fit's intercept is
+            # the absolute E_internal_e, which this panel does not show.
+            axes[0].plot(t, heating["slope_per_omegaci"] * (t - t[0]) / k0,
+                         ":", color=ps.c("#8b949e"), lw=2.0,
+                         label=rf"secular $e^-$ trend ($R^2$={heating['r_squared']:.3f})")
+        axes[0].axhline(0, color=TEXT_CLR, alpha=0.35, linestyle=":")
+        axes[0].set_ylabel(r"$\Delta E(t)/K(t_0)$", color=TEXT_CLR)
+        axes[0].set_title("Energy budget: all particle and field reservoirs",
+                          color=TEXT_CLR, fontweight="bold", fontsize=13)
+        axes[0].legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR,
+                       fontsize=9, loc="upper center", bbox_to_anchor=(0.5, -0.02), ncol=3,
+                       frameon=False)
+
+        # Second panel: the sum's own drift, against the energy the
+        # instability moves. A drift as large as the exchange means the
+        # budget cannot support a transfer statement.
+        total = col("E_proxy")
+        base_total = next((v for v in total if np.isfinite(v)), np.nan)
+        drift = total - base_total
+        exchanged = max((np.nanmax(np.abs(col(k) - next((v for v in col(k) if np.isfinite(v)), np.nan)))
+                         for k in ("K_i", "K_e", "E_B_total")
+                         if np.any(np.isfinite(col(k)))), default=np.nan)
+        axes[1].plot(t, drift / k0, color=ps.c("#d2a8ff"), **_series_style(len(t)))
+        axes[1].axhline(0, color=TEXT_CLR, alpha=0.35, linestyle=":")
+        axes[1].set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
+        axes[1].set_ylabel(r"$[E_{\rm sum}(t)-E_{\rm sum}(t_0)]/K(t_0)$", color=TEXT_CLR)
+        ratio = (np.nanmax(np.abs(drift)) / exchanged
+                 if np.isfinite(exchanged) and exchanged > 0 else np.nan)
+        axes[1].set_title("Drift of the sum"
+                          + (rf";  max $|\Delta E_{{\rm sum}}|$ / max exchanged = {ratio:.2g}"
+                             if np.isfinite(ratio) else ""),
+                          color=TEXT_CLR, fontsize=11)
+        # In the title and the caption, never in a box over the curves.
+        fig.text(0.01, 0.005,
+                 f"{scope}.\nNot a closed budget: the global one is energy_conservation.py "
+                 "on DiagEnergies; the transfer channel is energy_exchange.py.",
+                 fontsize=8, color=ps.MUTED_CLR, va="bottom")
+        fig.tight_layout(rect=(0, 0.055, 1, 1))
         _savefig(fig, self.outdir / "energy_partition.png")
 
-        err = np.array([r.get("energy_proxy_relative_change", np.nan) for r in rows], dtype=float)
+        err = col("energy_proxy_relative_change")
         if np.any(np.isfinite(err)):
             fig, ax = plt.subplots(figsize=(8.8, 5.4))
             fig.patch.set_facecolor(DARK_BG)
@@ -2806,11 +2971,11 @@ class PhysicalDiagnostics:
             ax.plot(t, err, color=ps.c("#d2a8ff"), **_series_style(len(t)))
             ax.axhline(0, color=TEXT_CLR, alpha=0.35, linestyle=":")
             ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
-            ax.set_ylabel(r"$[E_{\rm proxy}(t)-E_{\rm proxy}(0)]/E_{\rm proxy}(0)$", color=TEXT_CLR)
-            ax.set_title("Relative change of the partial energy proxy", color=TEXT_CLR, fontweight="bold")
-            ax.text(0.01, 0.98, "prt-window thermal + bulk energy and domain " r"$\delta B^2/2$" "; no electric "
-                    "or electron bulk energy.\nNot a conservation diagnostic: the global budget is "
-                    "energy_exchange / energy_audit.",
+            ax.set_ylabel(r"$[E_{\rm sum}(t)-E_{\rm sum}(t_0)]/E_{\rm sum}(t_0)$", color=TEXT_CLR)
+            ax.set_title("Relative change of the summed energy", color=TEXT_CLR, fontweight="bold")
+            ax.text(0.01, 0.98,
+                    f"{scope}.\nDiluted by the constant $B_0^2/2$: the panel above, normalised by "
+                    r"$K(t_0)$, is the one to read.",
                     transform=ax.transAxes, va="top", fontsize=9, color=ps.MUTED_CLR)
             _savefig(fig, self.outdir / "energy_proxy_relative_change.png")
 

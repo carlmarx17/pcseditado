@@ -13,6 +13,33 @@ not a conserved total. `electron_energy_trend.csv` describes a fit without
 subtracting it or attributing it to numerical heating. Old corrected-energy
 files in existing output directories are obsolete and are not removed automatically.
 
+**Revision 2026-10-30 (energy budget).** `energy_table.csv` and
+`energy_partition.png` must be regenerated.
+
+- The window energy sum took the ion bulk energy plus the temperature-based
+  internal energy of *both* species, so it mixed two estimators of the ion
+  thermal energy and left the electron bulk energy out. It now sums the exact
+  \(K_s=m\langle\gamma-1\rangle\) of each species (`K_i`, `K_e`), with the
+  bulk/thermal split per species in `E_kin_{bulk,thermal}_{i,e}`.
+- `E_internal_i` / `E_internal_e` keep their meaning, \(3\bar T/2\) at
+  \(n=1\) with \(\bar T=(T_\parallel+2T_\perp)/3\) (the convention
+  `energy_audit.py` inverts), but they are now a cross-check, not a summand:
+  `thermal_estimator_gap_*` is the exact minus the non-relativistic thermal
+  energy and must stay at \(O(T/mc^2)\).
+- **Every field energy enters the sum.** `load_fields` also reads `ex_ec`,
+  `ey_ec`, `ez_ec`, so `electric_energy`, `magnetic_energy_total` and
+  `field_energy_total` are measured per snapshot. The budget uses the total
+  \(\langle B^2\rangle/2\): the fluctuation energy alone drops the cross
+  term \(B_0\langle\delta B_\parallel\rangle\), which is first order in
+  the amplitude and is the leading magnetic change for mirror modes.
+  Squares are taken on the raw Yee components, as `DiagEnergiesField` does.
+  A snapshot without `ex_ec` gives `NaN`, never a zero, and the figure says
+  which reservoirs it had (`budget_scope`).
+- `energy_partition.png` now plots changes \(\Delta E(t)/K(t_0)\), not
+  absolute values: with the full field energy in the sum, \(B_0^2/2\)
+  dominates and flattens every exchange. A second panel shows the drift of
+  the sum against the largest exchange, as `energy_conservation.py` does.
+
 **Revision 2026-09-28 (analysis conventions version 5).** Every product made
 before this date must be regenerated; the manifest records the version.
 
@@ -407,9 +434,20 @@ make compare-physics COMPARE_CASES="maxwellian=../analysis_results/mirror_maxwel
 This produces `comparison_kappa_vs_maxwellian.csv`, `comparison_anisotropy.png`
 (driven species), `comparison_deltaB.png`, `comparison_deltaB_components.png`,
 `comparison_growth_rate.png` (with `gamma_err`), `comparison_energy.png`
-(DiagEnergies) and `comparison_heat_flux.png` (third moment). The runs must
-share every declared parameter except the distribution; cases driven by
-different species are refused.
+(DiagEnergies), `comparison_energy_transfer.png`,
+`comparison_energy_budget_drift.png` and `comparison_heat_flux.png` (third
+moment). The runs must share every declared parameter except the
+distribution; cases driven by different species are refused.
+
+The two transfer figures read the per-reservoir budget of
+`energy_table.csv`: how much kinetic energy the driven species releases and
+how much the **total** magnetic energy and the electric energy take up, both
+as changes over that case's own \(K(t_0)=K_i(t_0)+K_e(t_0)\), the only form
+in which cases with different absolute energies compare. A case whose energy
+table predates the complete budget has no `E_E` or `E_B_total`: those curves
+stay NaN rather than a flat zero, `comparison_validation.json` records which
+reservoirs each case carried (`energy_budget`), and the run prints which
+cases to reanalyse.
 
 Numerical convergence and realizations (same case, different dx/dt/ppc/seed,
 each analysed with its own `RUN_TAG`):

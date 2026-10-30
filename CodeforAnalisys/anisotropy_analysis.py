@@ -33,10 +33,12 @@ from pathlib import Path
 from data_reader import PICDataReader
 from analysis_contract import allocated_cpus
 from plasma_physics import (
+    central_pressure_tensor,
     field_aligned_pressures,
     firehose_threshold,
     mirror_threshold,
     mirror_threshold_electrons,
+    moment_fields_by_name,
     whistler_threshold,
 )
 from psc_units import (
@@ -173,33 +175,20 @@ def process_snapshot(mom_file: str, bz_file: str, species: str = DRIVEN_SPECIES)
     except Exception as exc:
         raise RuntimeError(f'Cannot analyse moment/field pair {mom_file}, {bz_file}: {exc}') from exc
 
-    Mxx = moments[f"txx_{suffix}/p0/3d"].ravel()
-    Myy = moments[f"tyy_{suffix}/p0/3d"].ravel()
-    Mzz = moments[f"tzz_{suffix}/p0/3d"].ravel()
-    Mxy = moments[f"txy_{suffix}/p0/3d"].ravel()
-    Myz = moments[f"tyz_{suffix}/p0/3d"].ravel()
-    Mzx = moments[f"tzx_{suffix}/p0/3d"].ravel()
-    px  = moments[f"px_{suffix}/p0/3d"].ravel()
-    py  = moments[f"py_{suffix}/p0/3d"].ravel()
-    pz  = moments[f"pz_{suffix}/p0/3d"].ravel()
-    rho = moments[f"rho_{suffix}/p0/3d"].ravel()
-    n = rho if species == "ion" else -rho
+    # Thermal pressure is the central second moment, P = t - p p / (n m):
+    # using t_ii directly contaminates temperature and beta wherever a bulk
+    # drift develops. One shared implementation, per cell, before any average.
+    tensor = central_pressure_tensor(
+        moment_fields_by_name(moments, ravel=True), suffix, mass, n_min=0.05
+    )
+    n, safe_n = tensor["n"], tensor["n_safe"]
     Bx  = b_fields["hx_fc/p0/3d"].ravel()
     By  = b_fields["hy_fc/p0/3d"].ravel()
     Bz  = b_fields["hz_fc/p0/3d"].ravel()
-    B2  = Bx**2 + By**2 + Bz**2
 
-    safe_n = np.where(n > 0.05, n, np.nan)
-    # Thermal pressure is the central second moment. Using Mii directly
-    # contaminates temperature and beta when a bulk drift develops.
-    Pxx = Mxx - px**2 / (safe_n * mass)
-    Pyy = Myy - py**2 / (safe_n * mass)
-    Pzz = Mzz - pz**2 / (safe_n * mass)
-    Pxy = Mxy - px * py / (safe_n * mass)
-    Pyz = Myz - py * pz / (safe_n * mass)
-    Pzx = Mzx - pz * px / (safe_n * mass)
     P_par, P_perp, B2 = field_aligned_pressures(
-        Pxx, Pyy, Pzz, Pxy, Pyz, Pzx, Bx, By, Bz
+        tensor["Pxx"], tensor["Pyy"], tensor["Pzz"],
+        tensor["Pxy"], tensor["Pyz"], tensor["Pzx"], Bx, By, Bz
     )
     T_par  = P_par / safe_n
     T_perp = P_perp / safe_n
