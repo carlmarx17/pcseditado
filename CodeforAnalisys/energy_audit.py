@@ -231,7 +231,7 @@ def audit_window(rows: list[dict], p: dict) -> dict:
     return {
         "status": "FAIL" if fails else "UNVERIFIED",
         "reason": (f"prt window: electrons gained {ratio:.2g}x what ions and magnetic fluctuations released "
-                   f"(T_e x{te_ratio[-1]:.2f}); not explained by transport in a homogeneous box"
+                   f"(T_e x{te_ratio[-1]:.2f}); local transport and incomplete reservoirs limit attribution"
                    if fails else "Window budget within transport fluctuations; not a conservation test"),
         "electron_heating_factor": float(te_ratio[-1]),
         "electron_gain_over_release": ratio,
@@ -318,8 +318,7 @@ def group_runs(audits: list[dict]) -> list[dict]:
         out.append({**base, "relative_spread": spread, "common_mode": bool(common),
                     "interpretation": (
                         f"Electron heating x{f.min():.2f}-x{f.max():.2f} differs by {100 * spread:.1f}% between "
-                        "distributions: it belongs to the shared numerical setup, not to the distribution "
-                        "being compared" if common else
+                        "distributions. Shared heating alone does not determine its cause" if common else
                         f"Electron heating differs by {100 * spread:.1f}% between distributions")})
     return out
 

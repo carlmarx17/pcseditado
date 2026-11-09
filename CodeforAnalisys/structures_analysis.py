@@ -47,6 +47,8 @@ import numpy as np
 from scipy import ndimage
 
 import plot_style as ps
+from heating_channels import pressure_strain
+from mirror_attribution import attribution, mode_coefficients
 from structure_tracking import StructureTracker
 from data_reader import PICDataReader
 from plasma_physics import central_pressure_tensor, field_aligned_pressures
@@ -59,10 +61,17 @@ ps.apply()
 MOMENT_NAMES = ["rho", "txx", "tyy", "tzz", "txy", "tyz", "tzx", "px", "py", "pz"]
 
 
-def load_snapshot(field_file: str, moment_file: str | None) -> dict:
+def load_snapshot(field_file: str, moment_file: str | None, *, budget=False) -> dict:
     data = PICDataReader.read_multiple_fields_3d(
         field_file, "jeh", ["hx_fc/p0/3d", "hy_fc/p0/3d", "hz_fc/p0/3d"])
     snap = {c: PICDataReader.flatten_2d_slice(data[f"h{c}_fc/p0/3d"]).astype(float) for c in "xyz"}
+    if budget:
+        # Sum raw Yee squares before interpolation to avoid damping short waves.
+        snap["energy"] = {"E_B": sum(np.mean(snap[a]**2) for a in "xyz") / 2}
+        electric = PICDataReader.read_multiple_fields_3d(
+            field_file, "jeh", [f"e{a}_ec/p0/3d" for a in "xyz"])
+        snap["energy"]["E_E"] = sum(np.mean(np.asarray(v, dtype=float)**2)
+                                     for v in electric.values()) / 2
     snap["x"], snap["y"], snap["z"] = magnetic_cell_centres_yz(snap["x"], snap["y"], snap["z"])
     if moment_file is not None:
         for suffix, mass in (("i", M_ION), ("e", M_ELEC)):
@@ -71,9 +80,19 @@ def load_snapshot(field_file: str, moment_file: str | None) -> dict:
             mom = {k.split("/")[0]: PICDataReader.flatten_2d_slice(v).astype(float)
                    for k, v in raw.items()}
             tensor = central_pressure_tensor(mom, suffix, mass)
-            _, pperp, _ = field_aligned_pressures(
+            ppar, pperp, _ = field_aligned_pressures(
                 tensor["Pxx"], tensor["Pyy"], tensor["Pzz"], tensor["Pxy"],
                 tensor["Pyz"], tensor["Pzx"], snap["x"], snap["y"], snap["z"])
+            if budget:
+                energy = snap["energy"]
+                energy[f"bulk_{suffix}"] = sum(np.mean(mom[f"p{a}_{suffix}"]**2 /
+                                               (mass * tensor["n_safe"])) for a in "xyz") / 2
+                energy[f"thermal_parallel_{suffix}"] = np.mean(ppar) / 2
+                energy[f"thermal_perp_{suffix}"] = np.mean(pperp)
+                energy[f"pressure_strain_{suffix}"] = pressure_strain(tensor, DX_DE, DX_DE)
+                if suffix == "i":
+                    for a in "yz":
+                        energy[f"ion_mean_u{a}"] = np.sum(mom[f"p{a}_i"]) / (mass*np.sum(tensor["n"]))
             snap[f"n_{suffix}"] = tensor["n"]
             snap[f"pperp_{suffix}"] = pperp
     return snap
@@ -302,6 +321,8 @@ def main() -> int:
     p.add_argument("--every", type=int, default=1, help="use every N-th snapshot")
     p.add_argument("--map-steps", type=int, nargs="*", default=None,
                    help="steps with a map (default: largest std of delta|B| and the last)")
+    p.add_argument("--attribution", action="store_true",
+                   help="Write tracked centre/exterior contrasts and low-k complex mode histories")
     args = p.parse_args()
 
     data_dir = Path(args.data_dir)
@@ -320,12 +341,29 @@ def main() -> int:
     # map sets are kept in memory.
     best = last = None
     tracker = StructureTracker()
+    attribution_modes = []
+    snapshot_budgets = []
     for step in steps:
-        snap = load_snapshot(fields[step], moments.get(step))
+        snap = load_snapshot(fields[step], moments.get(step), budget=args.attribution)
         row, catalog, maps = analyse(snap, sigma_cells, args.threshold_sigma,
                                      args.min_amplitude, args.min_cells)
         rows.append({"step": step, "omega_ci_t": step_to_omegaci(step), **row})
+        track_offset = len(tracker.rows)
         tracker.update(step_to_omegaci(step), maps)
+        if args.attribution:
+            energy = snap["energy"]
+            parts = [f"{kind}_{s}" for s in ("i", "e") for kind in
+                     ("bulk", "thermal_parallel", "thermal_perp")]
+            approx = sum(energy.get(k, np.nan) for k in ("E_E", "E_B", *parts))
+            snapshot_budgets.append({"step": step, "omega_ci_t": step_to_omegaci(step),
+                                     "total_moment_approx": approx, **energy})
+            channels = attribution(snap, maps, catalog, sigma_cells, abs(B0))
+            objects = {(item["kind"], item["label"]): item for item in catalog}
+            for track in tracker.rows[track_offset:]:
+                track.update(objects[track["kind"], track["label"]])
+            channels.update({f"B{a}_over_B0": snap[a]/abs(B0) for a in "xy"})
+            attribution_modes.extend({"step": step, "omega_ci_t": step_to_omegaci(step), **m}
+                                     for m in mode_coefficients(channels, 3))
         if args.map_steps is not None:
             if step in args.map_steps:
                 plot_map(maps, step, outdir)
@@ -334,6 +372,9 @@ def main() -> int:
         if best is None or row["delta_B_mag_std"] > best[1]:
             best = (step, row["delta_B_mag_std"], maps, catalog)
         last = (step, row["delta_B_mag_std"], maps, catalog)
+    if args.attribution:
+        write_csv(outdir / "snapshot_energy_density.csv", snapshot_budgets)
+        write_csv(outdir / "attribution_modes.csv", attribution_modes)
     write_csv(outdir / "structures_table.csv", rows)
     write_csv(outdir / "structure_tracks.csv", tracker.rows)
     write_csv(outdir / "structure_lifetimes.csv", tracker.summary())
