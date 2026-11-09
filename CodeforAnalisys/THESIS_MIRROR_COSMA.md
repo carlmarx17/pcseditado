@@ -1,6 +1,22 @@
 # COSMA · revisión de tesis de las tres corridas moderadas
 
-## Envío
+## Inventario antes de reservar nodos
+
+Desde el repositorio actualizado en COSMA, listar qué existe por corrida y por versión:
+
+```bash
+.venv/bin/python CodeforAnalisys/reuse_energy.py inventory analysis_results
+```
+
+Para mirror, firehose y whistler periódicos en el plano yz, seleccionar el directorio de resultados de una corrida. La figura se reconstruye a partir de energía global, trabajo por especie y partición por momentos según lo disponible. Se indican los reservorios ausentes. Ejemplo con una corrida archivada:
+
+```bash
+.venv/bin/python CodeforAnalisys/reuse_energy.py figure   analysis_results/v6-reviewed-20261015/mirror_bikappa5_moderate --out revision_energia/k5
+```
+
+Si la pregunta física requiere el término de presión y falta en el archivo, usar el mismo comando con `--measure-pressure` en un nodo de cómputo. Lee campos y momentos en los pasos del trabajo guardado. El cálculo es serial y no abre partículas. No ejecuta detección de agujeros, espectros ni VDF. Revisar la cadencia de los campos, especialmente para whistler. La figura usa tΩci para todas las especies. Reconexión requiere su propia geometría y balance de frontera. El envío completo de abajo se reserva para regenerar toda la serie mirror.
+
+## Envío completo
 
 Desde el checkout en COSMA:
 

@@ -21,7 +21,7 @@ def pressure_strain(tensor, dy, dz):
     return float(total)
 
 
-def heating_figure(run, out):
+def heating_figure(run, out, *, moment_file=None):
     """Use one time base, volume and energy-density unit for the whole figure."""
     phys = run / "09_physical_diagnostics"
     exchange = phys / "energy_exchange_table.csv"
@@ -30,7 +30,8 @@ def heating_figure(run, out):
     load = lambda p: np.genfromtxt(p, names=True, delimiter=",", ndmin=1)
     work = load(exchange)
     summary = json.loads((phys / "energy_exchange_summary.json").read_text())
-    moment_file = run / "07_structures/snapshot_energy_density.csv"
+    if moment_file is None:
+        moment_file = run / "07_structures/snapshot_energy_density.csv"
     moments = load(moment_file) if moment_file.is_file() else None
     if moments is not None:
         _, iw, im = np.intersect1d(work["step"], moments["step"], return_indices=True)
