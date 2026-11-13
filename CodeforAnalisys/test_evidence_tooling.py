@@ -93,10 +93,10 @@ def test_heating_beyond_the_driver_release_fails(tmp_path):
     assert a["window_vs_global"]["domain_wide"]
 
 
-def test_window_proxy_alone_detects_the_heating(tmp_path):
+def test_open_window_tracks_heating_without_a_conservation_verdict(tmp_path):
     a = energy_audit.audit_run(fake_run(tmp_path / "run", electron_gain=2000.0, ion_loss=400.0,
                                         global_diag=False))
-    assert a["global"] is None and a["status"] == "FAIL" and "prt window" in a["reason"]
+    assert a["global"] is None and a["status"] == "UNVERIFIED" and "prt window" in a["reason"]
 
 
 def test_swapped_species_columns_fail_the_mapping(tmp_path):
@@ -121,9 +121,9 @@ def test_quality_report_uses_audit_and_rejects_legacy_estimator(tmp_path):
     run = inspect_run(fake_run(tmp_path / "run", electron_gain=2000.0, ion_loss=400.0,
                                global_diag=False, growth_series="total"))
     checks = {c["check"]: c for c in run["checks"]}
-    assert checks["global_energy"]["status"] == "FAIL"
+    assert checks["global_energy"]["status"] == "UNVERIFIED"
     assert checks["growth_fit"]["status"] == "UNVERIFIED" and "Legacy" in checks["growth_fit"]["reason"]
-    assert run["scientific_status"] == "FAIL"
+    assert run["scientific_status"] == "UNVERIFIED"
 
 
 # ── Figure content check ─────────────────────────────────────────────────────

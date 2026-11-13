@@ -62,7 +62,9 @@ def heating_figure(run, out, *, moment_file=None):
             data["moment_delta_"+k] = delta(moments[k])
         for s in ("e","i"):
             data["delta_bulk_"+s] = delta(moments["bulk_"+s])
-            data["delta_internal_"+s] = delta(moments["thermal_parallel_"+s]+moments["thermal_perp_"+s])
+            for component in ("thermal_parallel", "thermal_perp"):
+                data[f"delta_{component}_{s}"] = delta(moments[f"{component}_{s}"])
+            data["delta_internal_"+s] = data["delta_thermal_parallel_"+s] + data["delta_thermal_perp_"+s]
             key = "pressure_strain_"+s
             if key in moments.dtype.names:
                 data["Q_"+s] = cumulative(time,moments[key])

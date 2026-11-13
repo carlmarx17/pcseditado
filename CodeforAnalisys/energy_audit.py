@@ -25,12 +25,9 @@ Per run it answers four questions, each with its own status:
    FAILS when the error reaches half of that signal: a diagnostic whose error
    is as large as what it has to resolve cannot support an energy-transfer
    statement. Smaller errors stay UNVERIFIED; a PASS needs convergence runs.
-3. **Window proxy.** Without DiagEnergies the prt-window moments are the only
-   evidence. The window is ~4 % of a statistically homogeneous domain, so its
-   energy may fluctuate by transport but cannot grow systematically: the
-   proxy FAILS when the electrons gain more than twice what the ions and the
-   magnetic fluctuations release there, and that gain exceeds 1 % of the
-   initial thermal energy.
+3. **Window proxy.** The particle window samples an open subvolume. Its central
+   second moments track changes in the distribution. A conservation verdict
+   requires the global reservoirs or a measured flux through the window.
 4. **Resolution and early-time error.** dx/lambda_De(t) from the measured
    T_e(t), beta_e(t), and T_e/T_e0 at the end of the fitted linear phase, so an
    early-time result carries its own error statement.
@@ -41,8 +38,8 @@ setup) or depends on the distribution being compared.
 
 **Isotropic controls.** A run with A_i = A_e = 1 and the resolution, particles
 per cell and electrons of an anisotropic run (``psc_mirror_*_isotropic``, in a
-smaller box) is stable, so everything its electrons gain is the numerical
-heating of that setup; it is compared per unit volume. Each anisotropic run is
+smaller box) is stable, so its secular electron energy change estimates a possible
+background for that setup; it is compared per unit volume. Each anisotropic run is
 paired with such a control, preferably of the same distribution and ion thermal
 energy, and the control's energy changes are subtracted on a common time axis
 (no extrapolation). This assumes the numerical heating is additive, i.e. not
@@ -76,8 +73,6 @@ from growth_fit import reference_growth_row
 CLOSURE_FAIL_FRACTION = 0.5
 #: Baseline-corrected closure PASSES when the residual is at most this fraction.
 CLOSURE_PASS_FRACTION = 0.1
-#: Window proxy FAILS when the electron gain exceeds this multiple of the release.
-WINDOW_GAIN_FACTOR = 2.0
 #: A control corrects a run only when their ion thermal energies agree to this
 #: fraction. The three isotropic controls of the moderate mirror series share
 #: every CONTROL_KEYS value with every anisotropic run of this tree (same
@@ -88,8 +83,6 @@ WINDOW_GAIN_FACTOR = 2.0
 #: the mismatch visible only as ion_thermal_energy_ratio in the metrics.
 #: An explicit --control states a pairing deliberately and is not capped.
 CONTROL_THERMAL_TOLERANCE = 0.25
-#: ... and the gain exceeds this fraction of the initial thermal energy.
-WINDOW_MIN_GAIN = 0.01
 #: Runs whose electron heating (T_e/T_e0 - 1) differs by less than this are common-mode.
 COMMON_MODE_SPREAD = 0.1
 #: Below this T_e/T_e0 - 1 there is no heating to apportion between runs.
@@ -163,8 +156,11 @@ def _closure_status(error_over_release: float) -> str:
 def audit_global(rows: list[dict], p: dict, driven: str) -> dict:
     t = _col(rows, "omega_ci_t")
     e = {k: _col(rows, k) for k in ENERGY_COLUMNS}
-    if t.size < 2 or not np.all(np.isfinite([e[k][0] for k in e])) or e["E_B"][0] <= 0:
+    if (t.size < 2 or not np.all(np.isfinite([t, *e.values()])) or np.any(np.diff(t) <= 0)
+            or e["E_total"][0] <= 0 or e["E_e"][0] <= 0 or e["E_B"][0] <= 0):
         return {"status": "UNVERIFIED", "reason": "DiagEnergies table unreadable"}
+    if not np.allclose(sum(e[k] for k in ENERGY_COLUMNS[:-1]), e["E_total"], rtol=1e-8, atol=0):
+        return {"status": "FAIL", "reason": "Reported total differs from the sum of the four reservoirs"}
     theta_e = p["beta_e_parallel"] * p["B0"] ** 2 / 2.0
     tol = max(0.01, 2.5 * theta_e)
     want = expected_partition(p)
@@ -184,6 +180,7 @@ def audit_global(rows: list[dict], p: dict, driven: str) -> dict:
                     "checks": "species order, 1/2 field-energy factor, volume (ratios are volume-free)"},
         "t_end_omegaci": float(t[-1]),
         "total_relative_change_end": error / float(e["E_total"][0]),
+        "max_abs_total_relative_change": float(np.max(np.abs(d["E_total"])) / e["E_total"][0]),
         "driver_release": release,
         "fields_release": fields_release,
         "non_driver_gain": float(d[other][-1]),
@@ -191,8 +188,13 @@ def audit_global(rows: list[dict], p: dict, driven: str) -> dict:
         "electron_heating_factor": float(e["E_e"][-1] / e["E_e"][0]),
         "_series": {"omega_ci_t": t, **e},
     }
-    if not mapping_ok:
+    if t[0] != 0:
+        result["mapping"] = {"status": "UNVERIFIED", "reason": "Initial diagnostic sample missing"}
+        result.update(status="UNVERIFIED", reason="Initial energy partition unavailable; drift measured from first sample")
+    elif not mapping_ok:
         result.update(status="FAIL", reason="DiagEnergies columns do not reproduce the initial energy partition")
+    elif release <= 0:
+        result.update(status="UNVERIFIED", reason="No net driver release for normalizing the global drift")
     elif error_over_release >= CLOSURE_FAIL_FRACTION:
         result.update(status="FAIL", reason=(
             f"Total energy changed by {100 * result['total_relative_change_end']:+.1f}% "
@@ -208,19 +210,16 @@ def audit_global(rows: list[dict], p: dict, driven: str) -> dict:
 def audit_window(rows: list[dict], p: dict) -> dict:
     t = _col(rows, "omega_ci_t")
     ee, ei = _col(rows, "E_internal_e"), _col(rows, "E_internal_i")
-    bulk, eb, ae = _col(rows, "E_kin_bulk"), _col(rows, "E_B"), _col(rows, "A_e")
+    ae = _col(rows, "A_e")
     ok = np.isfinite(t) & np.isfinite(ee) & np.isfinite(ei)
     if ok.sum() < 2 or ee[ok][0] <= 0:
         return {"status": "UNVERIFIED", "reason": "prt-window energy table missing or unreadable"}
-    t, ee, ei, bulk, eb, ae = (x[ok] for x in (t, ee, ei, bulk, eb, ae))
+    t, ee, ei, ae = (x[ok] for x in (t, ee, ei, ae))
+    if np.any(np.diff(t) <= 0) or np.any(ee <= 0):
+        return {"status": "UNVERIFIED", "reason": "Invalid central moment or time axis"}
     te_ratio = ee / ee[0]
     t_e = ee / 1.5                                   # n = 1: E_int = 3T/2
     dx_over_lde = p["dx_de"] / np.sqrt(t_e)          # lambda_De = sqrt(T_e / n e^2)
-    gain = float(ee[-1] - ee[0])
-    release = float(-(ei[-1] - ei[0]) - np.nan_to_num(bulk[-1] - bulk[0]) - np.nan_to_num(eb[-1] - eb[0]))
-    thermal0 = float(ee[0] + ei[0])
-    fails = gain > WINDOW_MIN_GAIN * thermal0 and gain > WINDOW_GAIN_FACTOR * max(release, 0.0)
-    ratio = gain / release if release > 0 else float("inf")
     # Shape of the heating: e-folding rate of T_e and whether dT_e/dt grows.
     # A finite-grid instability slows down as lambda_De approaches dx; heating
     # that accelerates while dx/lambda_De falls is not that textbook signature.
@@ -229,12 +228,10 @@ def audit_window(rows: list[dict], p: dict) -> dict:
     acceleration = ((te_ratio[-1] - mid) / (mid - te_ratio[0])
                     if mid is not None and mid != te_ratio[0] else float("nan"))
     return {
-        "status": "FAIL" if fails else "UNVERIFIED",
-        "reason": (f"prt window: electrons gained {ratio:.2g}x what ions and magnetic fluctuations released "
-                   f"(T_e x{te_ratio[-1]:.2f}); local transport and incomplete reservoirs limit attribution"
-                   if fails else "Window budget within transport fluctuations; not a conservation test"),
+        "status": "UNVERIFIED",
+        "reason": "Open prt window: central second moments track particle energization; transport is unmeasured",
         "electron_heating_factor": float(te_ratio[-1]),
-        "electron_gain_over_release": ratio,
+        "electron_gain_over_release": None,
         "T_e0_measured": float(t_e[0]),
         "T_e0_profile": p["beta_e_parallel"] * p["B0"] ** 2 / 2.0,
         "log_heating_rate_per_omegaci": log_rate,
@@ -258,7 +255,8 @@ def audit_run(root, name: str | None = None) -> dict:
     manifest = _manifest(root)
     p = manifest.get("physics", {})
     base = {"run": name or root.name, "root": str(root.resolve()), "case": manifest.get("case"),
-            "kappa": p.get("kappa")}
+            "kappa": p.get("kappa"), "family": manifest.get("instability"),
+            "dt_code": p.get("dt_code_from_profile")}
     need = ("beta_i_parallel", "A_i", "beta_e_parallel", "A_e", "B0", "dx_de")
     if not all(isinstance(p.get(k), (int, float)) for k in need):
         return {**base, "status": "UNVERIFIED", "reason": "Manifest without the physical parameters of the run"}
@@ -286,11 +284,10 @@ def audit_run(root, name: str | None = None) -> dict:
         result["window_vs_global"] = {"relative_difference": agree,
                                       "domain_wide": bool(agree <= WINDOW_GLOBAL_AGREEMENT)}
     evidence = g if g else w
-    result["status"] = "FAIL" if (g and g["status"] == "FAIL") or w["status"] == "FAIL" else evidence["status"]
-    result["reason"] = (g["reason"] if g and g["status"] == "FAIL" else w["reason"]) if result["status"] == "FAIL" \
-        else ("No global DiagEnergies; " if not g else "") + evidence["reason"]
+    result["status"] = evidence["status"]
+    result["reason"] = ("No global DiagEnergies; " if not g else "") + evidence["reason"]
     if result["role"] == "isotropic_control":
-        result["reason"] = "Isotropic control, its heating is the numerical baseline: " + result["reason"]
+        result["reason"] = "Isotropic control, candidate background for matched runs: " + result["reason"]
     return result
 
 
@@ -305,10 +302,15 @@ def group_runs(audits: list[dict]) -> list[dict]:
     for key, members in groups.items():
         if len(members) < 2:
             continue
-        f = np.array([m["window"]["electron_heating_factor"] for m in members])
+        series = [m["window"]["_series"] for m in members]
+        common = min(s["omega_ci_t"][-1] for s in series)
+        values = [_interp(s["omega_ci_t"], s["T_e_over_T_e0"], common) for s in series]
+        if None in values:
+            continue
+        f = np.asarray(values)
         heating = f - 1.0
         base = {"runs": [m["run"] for m in members], "kappa": [m["kappa"] for m in members],
-                "setup": json.loads(key), "electron_heating_factors": f.tolist()}
+                "setup": json.loads(key), "common_omega_ci_t": common, "electron_heating_factors": f.tolist()}
         if np.max(np.abs(heating)) < NEGLIGIBLE_HEATING:
             out.append({**base, "relative_spread": None, "common_mode": None,
                         "interpretation": f"No significant electron heating (T_e/T_e0 at most x{f.max():.2f})"})
@@ -336,7 +338,9 @@ def match_control(run: dict, audits: list[dict], explicit: str | None = None) ->
         candidates = [a for a in audits if a is not run and a.get("role") == "isotropic_control"]
     setup = run.get("setup") or {}
     usable = [a for a in candidates
-              if all((a.get("setup") or {}).get(k) == setup.get(k) for k in CONTROL_KEYS)]
+              if all(setup.get(k) is not None and (a.get("setup") or {}).get(k) == setup[k] for k in CONTROL_KEYS)
+              and (explicit is not None or (a.get("kappa") == run.get("kappa")
+                   and a.get("family") == run.get("family") and a.get("dt_code") == run.get("dt_code")))]
     if not usable:
         return None, {}
 
@@ -414,7 +418,7 @@ def subtract_control(run: dict, control: dict, match: dict) -> dict:
         t = ws["omega_ci_t"]
         ctrl, cover = align_time(wc["omega_ci_t"], wc["E_internal_e"], t)
         ok = np.isfinite(ctrl)
-        if ok.sum() >= 2:
+        if ok.sum() >= 2 and ok[0]:
             ee0 = ws["E_internal_e"][0]
             excess = (ws["E_internal_e"] - ee0) - (ctrl - ctrl[ok][0])
             last = np.flatnonzero(ok)[-1]
@@ -547,7 +551,7 @@ def plot(audits: list[dict], path: Path) -> None:
         value = (a.get("early_time") or {}).get("T_e_over_T_e0_at_end")
         if end is not None and value is not None and a.get("role") == "run":
             axes[0].plot([end], [value], "o", ms=6, mfc="none", color=color)
-    axes[0].set_ylabel(r"$T_e/T_{e0}$ (prt window)")
+    axes[0].set_ylabel(r"Electron central moment $M_2/M_{2,0}$ (prt window)")
     axes[1].axhline(1.0, color=ps.MUTED_CLR, ls="--", lw=1.0)
     axes[1].text(0.97, 1.0, r"$\lambda_{De}=\Delta x$", color=ps.MUTED_CLR, fontsize=11,
                  ha="right", va="bottom", transform=axes[1].get_yaxis_transform())
@@ -568,7 +572,7 @@ def plot(audits: list[dict], path: Path) -> None:
         s = a["global"]["_series"]
         e0 = s["E_total"][0]
         for key, color, name in (("E_e", "#d2a8ff", "electrons"), ("E_i", "#58a6ff", "ions"),
-                                 ("E_B", "#56d364", "magnetic"), ("E_total", "#111111", "total")):
+                                 ("E_B", "#56d364", "magnetic"), ("E_E", "#f2cc60", "electric"), ("E_total", "#111111", "total")):
             ax.plot(s["omega_ci_t"], (s[key] - s[key][0]) / e0, color=ps.c(color), label=name,
                     lw=2.4 if key == "E_total" else 1.8)
         ax.axhline(0.0, color=ps.MUTED_CLR, lw=0.8)
@@ -606,7 +610,7 @@ def plot_baseline(audits: list[dict], path: Path) -> bool:
                 Line2D([], [], color=ps.MUTED_CLR, lw=1.4, ls="--", alpha=0.55, label="isotropic control"),
                 Line2D([], [], color=ps.MUTED_CLR, lw=2.4, label="run minus control")]
     ps.legend(axes[0], handles=handles, loc="best", fontsize=9)
-    axes[0].set_ylabel(r"$T_e/T_{e0}$ (prt window)")
+    axes[0].set_ylabel(r"Electron central moment $M_2/M_{2,0}$ (prt window)")
     axes[0].set_xlabel(r"$t\Omega_{ci}$")
     ps.style_axes(axes[0], "(a) electron heating, baseline removed")
     if with_global:
@@ -643,7 +647,6 @@ def write_outputs(audits: list[dict], groups: list[dict], outdir: Path) -> None:
         "runs": strip_private(audits), "groups": groups,
         "criteria": {"closure_fail_fraction_of_driver_release": CLOSURE_FAIL_FRACTION,
                      "baseline_closure_pass_fraction": CLOSURE_PASS_FRACTION,
-                     "window_gain_factor": WINDOW_GAIN_FACTOR, "window_min_gain": WINDOW_MIN_GAIN,
                      "common_mode_spread": COMMON_MODE_SPREAD,
                      "window_global_agreement": WINDOW_GLOBAL_AGREEMENT,
                      "control_shares": list(CONTROL_KEYS)},
@@ -709,8 +712,8 @@ def write_outputs(audits: list[dict], groups: list[dict], outdir: Path) -> None:
                 setup = a.get("setup") or {}
                 writer.writerow([a["run"], a.get("role"), a.get("kappa"), setup.get("nicell_from_profile"),
                                  setup.get("dx_de"), f"{common:.6g}",
-                                 f"{_interp(s['omega_ci_t'], s['T_e_over_T_e0'], common):.6g}",
-                                 f"{_interp(s['omega_ci_t'], s['dx_over_lambda_De'], common):.6g}"])
+                                 _interp(s["omega_ci_t"], s["T_e_over_T_e0"], common),
+                                 _interp(s["omega_ci_t"], s["dx_over_lambda_De"], common)])
     with (outdir / "energy_audit_electron_heating.csv").open("w", newline="") as handle:
         writer = csv.writer(handle)
         # Raw and baseline-corrected side by side, never one replacing the other:

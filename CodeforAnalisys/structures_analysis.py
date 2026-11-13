@@ -321,6 +321,7 @@ def main() -> int:
     p.add_argument("--every", type=int, default=1, help="use every N-th snapshot")
     p.add_argument("--map-steps", type=int, nargs="*", default=None,
                    help="steps with a map (default: largest std of delta|B| and the last)")
+    p.add_argument("--budget", action="store_true", help="Include both species and field energy densities in the structure pass")
     p.add_argument("--attribution", action="store_true",
                    help="Write tracked centre/exterior contrasts and low-k complex mode histories")
     args = p.parse_args()
@@ -344,19 +345,20 @@ def main() -> int:
     attribution_modes = []
     snapshot_budgets = []
     for step in steps:
-        snap = load_snapshot(fields[step], moments.get(step), budget=args.attribution)
+        snap = load_snapshot(fields[step], moments.get(step), budget=args.attribution or args.budget)
         row, catalog, maps = analyse(snap, sigma_cells, args.threshold_sigma,
                                      args.min_amplitude, args.min_cells)
         rows.append({"step": step, "omega_ci_t": step_to_omegaci(step), **row})
         track_offset = len(tracker.rows)
         tracker.update(step_to_omegaci(step), maps)
-        if args.attribution:
+        if args.attribution or args.budget:
             energy = snap["energy"]
             parts = [f"{kind}_{s}" for s in ("i", "e") for kind in
                      ("bulk", "thermal_parallel", "thermal_perp")]
             approx = sum(energy.get(k, np.nan) for k in ("E_E", "E_B", *parts))
             snapshot_budgets.append({"step": step, "omega_ci_t": step_to_omegaci(step),
                                      "total_moment_approx": approx, **energy})
+        if args.attribution:
             channels = attribution(snap, maps, catalog, sigma_cells, abs(B0))
             objects = {(item["kind"], item["label"]): item for item in catalog}
             for track in tracker.rows[track_offset:]:
@@ -372,8 +374,9 @@ def main() -> int:
         if best is None or row["delta_B_mag_std"] > best[1]:
             best = (step, row["delta_B_mag_std"], maps, catalog)
         last = (step, row["delta_B_mag_std"], maps, catalog)
-    if args.attribution:
+    if args.attribution or args.budget:
         write_csv(outdir / "snapshot_energy_density.csv", snapshot_budgets)
+    if args.attribution:
         write_csv(outdir / "attribution_modes.csv", attribution_modes)
     write_csv(outdir / "structures_table.csv", rows)
     write_csv(outdir / "structure_tracks.csv", tracker.rows)

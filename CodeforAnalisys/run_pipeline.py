@@ -29,11 +29,12 @@ from quality_report import write_report
 STAGES = ('manifest', 'residuals', 'physics', 'brazil', 'spectral', 'structures',
           'energy-exchange', 'estimators', 'heatflux', 'particles', 'validate',
           'diamagnetic', 'fields', 'vdf-spatial')
-OPTIONAL = ('energy-if-present', 'theory', 'theory-liouville')
+OPTIONAL = ('energy-if-present', 'theory', 'theory-liouville', 'resonant-anisotropy', 'anisotropy-dispersion', 'heating-budget')
 # Ordering constraints, whatever the outcome of the earlier stage: the spectral
 # windows come from the accepted linear phase of `physics`, the polarization
 # overlay from `theory`. Every stage additionally requires a passed manifest.
-AFTER = {'spectral': ('physics', 'theory')}
+AFTER = {'spectral': ('physics', 'theory'),
+         'heating-budget': ('physics', 'energy-exchange', 'structures')}
 # Relative cost at 576^2; only the longest-first launch order depends on it.
 COST = {'physics': 10, 'fields': 8, 'spectral': 7, 'structures': 6, 'diamagnetic': 6,
         'energy-exchange': 5, 'brazil': 4, 'heatflux': 4, 'vdf-spatial': 3,
@@ -75,6 +76,8 @@ def is_complete(entry, out):
 def stage_options(stage, out, options, state):
     """Make options of one stage plus a record of where its analysis window came from."""
     options, notes = list(options), {}
+    if stage == 'heating-budget':
+        return options + [f'ARCHIVED_RUN={out}'], notes
     if stage != 'spectral':
         return options, notes
     if any(x.startswith(('GROWTH_T_', 'DISPERSION_T_')) for x in options):
@@ -128,6 +131,7 @@ def main():
     p.add_argument('--data-dir', required=True, type=Path); p.add_argument('--case', required=True)
     p.add_argument('--results-root', type=Path, default=MAKE_DIR.parent / 'analysis_results' / 'v6')
     p.add_argument('--resume', action='store_true')
+    p.add_argument('--reuse-from', action='append', type=Path, default=[], help='Verified stage archive for this run')
     p.add_argument('--stages', nargs='+', choices=STAGES + OPTIONAL, default=list(STAGES))
     p.add_argument('--make-option', action='append', default=[], help='Explicit KEY=VALUE Make override, recorded in provenance')
     p.add_argument('--jobs', type=int, default=1, help='Stages run concurrently (default 1: strictly sequential)')
@@ -183,6 +187,10 @@ def main():
 
     # Manifest is always a real dependency; science is never launched before preflight.
     stages = ['manifest'] + [s for s in STAGES[1:] + OPTIONAL if s in selected]
+    if a.reuse_from:
+        from stage_reuse import import_stages
+        import_stages([p.resolve() for p in a.reuse_from], data, out, state,
+                      sorted(stages, key=lambda s: s == 'spectral'), MAKE_DIR, is_complete)
     pending = [s for s in stages if not (a.resume and is_complete(state['stages'].get(s, {}), out))]
     changed = True
     while changed:  # a re-run earlier stage invalidates the stages ordered after it
@@ -190,6 +198,8 @@ def main():
         for s in stages:
             if s not in pending and any(d in pending for d in AFTER.get(s, ())):
                 pending.append(s); changed = True
+    if not pending and (out/'report/index.html').is_file():
+        return 0
     for s in stages:
         if s not in pending:
             print(f'{s}: up to date', flush=True)
@@ -202,7 +212,7 @@ def main():
         if 'manifest' in failed:
             return []
         busy = set(pending) | {s for s, *_ in running.values()}
-        return sorted((s for s in pending if not any(d in busy for d in AFTER.get(s, ()))),
+        return sorted((s for s in pending if not any(d in busy or (s == 'heating-budget' and d in failed) for d in AFTER.get(s, ()))),
                       key=lambda s: -COST.get(s, 1))
 
     with ThreadPoolExecutor(max_workers=a.jobs) as pool:

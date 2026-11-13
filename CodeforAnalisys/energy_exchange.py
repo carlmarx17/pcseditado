@@ -220,17 +220,17 @@ def main() -> int:
         # integral can be used for.
         verdicts = {}
         for suffix, name, _, _ in SPECIES:
-            mismatch = summary.get(f"relative_mismatch_{suffix}")
+            mismatch = summary.get(f"max_relative_closure_residual_{suffix}")
             if mismatch is None or not np.isfinite(mismatch):
                 continue
             verdicts[name] = ("FAIL" if mismatch >= CLOSURE_FAIL else
-                              "PASS" if mismatch <= CLOSURE_PASS else "UNVERIFIED")
+                              "PASS" if mismatch <= CLOSURE_PASS and not summary[f"aliased_{suffix}"] else "UNVERIFIED")
             summary[f"closure_status_{suffix}"] = verdicts[name]
         if verdicts:
             order = ("FAIL", "UNVERIFIED", "PASS")
             summary["scientific_status"] = next(v for v in order if v in verdicts.values())
             summary["reason"] = "; ".join(
-                f"{name}: int<J.E>dt vs Delta K mismatch {summary[f'relative_mismatch_{name[0]}']:.0%} ({v})"
+                f"{name}: int<J.E>dt vs Delta K maximum mismatch {summary[f'max_relative_closure_residual_{name[0]}']:.0%} ({v})"
                 + (" -- snapshot cadence aliases the plasma oscillation"
                    if summary.get(f"aliased_{name[0]}") and v != "PASS" else "")
                 for name, v in verdicts.items())

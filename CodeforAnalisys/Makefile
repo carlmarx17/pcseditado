@@ -524,3 +524,8 @@ help:
 	@echo "                                                # double-Harris diagnostics + <|B|> vs kappa_eff correlation"
 	@echo "Utility target: show-inputs"
 	@echo "Results default to ../analysis_results/<RUN_NAME>/"
+
+.PHONY: heating-budget
+heating-budget:
+	PSC_PROFILE=$(PSC_PROFILE) "$(PYTHON)" reuse_energy.py figure "$(ARCHIVED_RUN)" \
+		--out "$(OUTPUT_DIR)/11_heating" --measure-pressure

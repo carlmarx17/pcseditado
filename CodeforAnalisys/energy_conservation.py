@@ -29,7 +29,7 @@ FIELD_COLUMNS = ("EX2", "EY2", "EZ2", "BX2", "BY2", "BZ2")
 REQUIRED_COLUMNS = ("time", *FIELD_COLUMNS, "E_electron", "E_ion")
 
 
-def read_energy_segments(paths: list[Path]) -> tuple[list[dict], dict]:
+def read_energy_segments(paths: list[Path], *, omega_ci=OMEGA_CI) -> tuple[list[dict], dict]:
     """Merge consistent overlaps; reject conflicting restarts and invalid data."""
     records = {}
     used = []
@@ -63,7 +63,7 @@ def read_energy_segments(paths: list[Path]) -> tuple[list[dict], dict]:
         e_electric, e_magnetic = 0.5 * np.sum(raw[1:4]), 0.5 * np.sum(raw[4:7])
         electron, ion = raw[7], raw[8]
         rows.append({
-            "time_code": time, "omega_ci_t": time * OMEGA_CI,
+            "time_code": time, "omega_ci_t": time * omega_ci,
             "E_E": float(e_electric), "E_B": float(e_magnetic),
             "E_e": float(electron), "E_i": float(ion),
             "E_total": float(e_electric + e_magnetic + electron + ion),
@@ -104,8 +104,8 @@ def read_energy_segments(paths: list[Path]) -> tuple[list[dict], dict]:
     return rows, summary
 
 
-def write_energy_analysis(paths: list[Path], outdir: Path) -> dict:
-    rows, summary = read_energy_segments(paths)
+def write_energy_analysis(paths: list[Path], outdir: Path, *, omega_ci=OMEGA_CI) -> dict:
+    rows, summary = read_energy_segments(paths, omega_ci=omega_ci)
     outdir.mkdir(parents=True, exist_ok=True)
     with (outdir / "global_energy_table.csv").open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))

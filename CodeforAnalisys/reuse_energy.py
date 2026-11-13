@@ -100,18 +100,47 @@ def main():
     if not status["work_table"] or not status["work_summary"]:
         p.error("Missing archived work table/summary. Run the existing energy-exchange stage first.")
     out = args.out.resolve()
-    if out == run or run in out.parents:
+    if out == run or (run in out.parents and not out.is_relative_to(run/".staging")):
         p.error("Use a separate output directory to preserve the archive")
     out.mkdir(parents=True, exist_ok=True)
     start = monotonic()
     measured = None
+    read_raw = False
     if args.measure_pressure and not status["pressure_work_both"]:
-        measured = pressure_table(run, out, manifest)
+        from analysis_contract import inventory_identity, atomic_json, provenance
+        files = [m[0], run/PHYS/"energy_exchange_table.csv"]
+        from data_reader import PICDataReader
+        raw = PICDataReader.discover_outputs(manifest["input_directory"])
+        sources = [*raw["fields"].values(), *raw["moments"].values()]
+        config = Path(manifest["input_directory"])/"analysis_config.json"
+        if config.is_file():
+            files.append(config)
+        signature = {"manifest": str(m[0]), "tables": inventory_identity(files),
+                     "inputs": inventory_identity(sources), "source": provenance()["analysis_source_sha256"]}
+        marker = out/"pressure_source.json"
+        cached = json.loads(marker.read_text()) if marker.exists() else {}
+        measured = out/"snapshot_energy_density.csv"
+        if (cached.get("signature") != signature or not measured.is_file()
+                or cached.get("output") != inventory_identity([measured])):
+            measured = pressure_table(run, out, manifest)
+            read_raw = True
+            atomic_json(marker, {"signature": signature, "output": inventory_identity([measured])})
     from heating_channels import heating_figure
     if not heating_figure(run, out, moment_file=measured):
         p.error("Fewer than two common snapshots for this balance")
+    from analysis_contract import atomic_json
+    from energy_audit import audit_run, strip_private
+    from review_mirror_energy import phase_budget
+    audit = audit_run(run)
+    global_table = run / PHYS / "global_energy_table.csv"
+    phases = phase_budget(global_table, audit.get("linear_phase") or {}) if global_table.exists() else []
+    atomic_json(out/"budget_summary.json", {"source": str(run), "audit": strip_private(audit),
+                "global_phases": phases, "work_sampling": json.loads((run/PHYS/"energy_exchange_summary.json").read_text())})
+    if manifest["instability"] == "mirror":
+        from thesis_modal_evidence import reduce_run
+        reduce_run(run, out)
     print(json.dumps({"case": manifest["case"], "source": str(run), "out": str(out),
-                      "read_raw": measured is not None, "elapsed_seconds": round(monotonic()-start,2)}))
+                      "read_raw": read_raw, "elapsed_seconds": round(monotonic()-start,2)}))
 
 
 if __name__ == "__main__":

@@ -94,10 +94,10 @@ def _fill_invalid(values: np.ndarray) -> np.ndarray:
 
 def _quantity_label(quantity: str, species_symbol: str) -> str:
     labels = {
-        "anisotropy": rf"$A_{species_symbol}=T_\perp/T_\parallel$",
+        "anisotropy": rf"$A_{species_symbol}=P_\perp/P_\parallel$",
         "log-anisotropy": rf"$\log(A_{species_symbol})$",
-        "parallel-temperature": rf"$T_{{{species_symbol}\parallel}}$",
-        "perp-temperature": rf"$T_{{{species_symbol}\perp}}$",
+        "parallel-temperature": rf"$P_{{{species_symbol}\parallel}}/n_{species_symbol}$",
+        "perp-temperature": rf"$P_{{{species_symbol}\perp}}/n_{species_symbol}$",
     }
     return labels[quantity]
 
@@ -320,7 +320,7 @@ def plot_phase_velocity_density(
     velocity_label = r"$|v_{\rm ph}|/v_A$" if result["absolute_velocity"] else r"$v_{\rm ph}/v_A$"
     axis.set_xlabel(r"Angular frequency $\omega/\Omega_{ci}$")
     axis.set_ylabel(velocity_label)
-    axis.set_title("Temperature-anisotropy fluctuation density", fontsize=18, pad=10)
+    axis.set_title("Central pressure moment anisotropy fluctuations", fontsize=18, pad=10)
     axis.text(
         0.01,
         0.99,
@@ -417,7 +417,7 @@ def plot_kspace_density(
     )
     axis.set_xlabel(rf"$|k_{{{result['parallel_axis']}}}|d_i$")
     axis.set_ylabel(rf"$|k_{{{result['perpendicular_axis']}}}|d_i$")
-    axis.set_title("Temperature-anisotropy k-space spectrum", fontsize=18, pad=10)
+    axis.set_title("Central pressure moment anisotropy spectrum", fontsize=18, pad=10)
     axis.text(
         0.01,
         0.99,

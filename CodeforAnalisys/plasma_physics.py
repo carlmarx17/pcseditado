@@ -143,8 +143,8 @@ def central_pressure_tensor(mom: dict, suffix: str, mass: float,
     """Thermal pressure from PSC's raw ``all_1st`` moments of one species.
 
     PSC deposits the momentum density p_a = n m <u_a> and the raw second
-    moment t_ab = n m <u_a v_b>. The thermal (central) part removes the bulk
-    flow, P_ab = t_ab - p_a p_b / (n m); using t_ab directly contaminates the
+    moment t_ab = n m <u_a v_b>. The grid estimator approximates <v> by <u> in the bulk
+    subtraction (nonrelativistic flow), P_ab = t_ab - p_a p_b / (n m); using t_ab directly contaminates the
     temperature wherever a bulk drift develops. ``rho`` is a charge density,
     so electrons carry a negative sign.
 

@@ -148,7 +148,7 @@ def main():
     write(out / "energias_por_fase.csv", budgets, ["run", "phase", "t_start", "t_end", "baseline_time",
           "delta_E_E", "delta_E_B", "delta_E_i", "delta_E_e", "residual", "residual_over_E0",
           "rate_over_E0_per_omegaci", "residual_over_electron_gain"])
-    for ax, ylabel in zip(axes.flat, ("Temperatura electrónica de ventana / inicial", "Fracción de área en agujeros", "Cambio de energía / energía total inicial", "Fracción acumulada de trayectorias")):
+    for ax, ylabel in zip(axes.flat, ("Segundo momento central electrónico / inicial", "Fracción de área en agujeros", "Cambio de energía / energía total inicial", "Fracción acumulada de trayectorias")):
         ax.set_ylabel(ylabel)
         ax.set_xlabel("Tiempo × Ωci")
         ax.legend(fontsize=8)

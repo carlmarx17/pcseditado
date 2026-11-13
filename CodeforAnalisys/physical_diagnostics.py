@@ -1288,8 +1288,8 @@ def plot_time_series(rows: list[dict], outdir: Path):
     ax.plot(t, np.asarray(tperp) / B0 ** 2, color=ps.c("#ff7b72"), label=r"$T_{\perp i}$",
             **_series_style(len(t)))
     ax.set_xlabel(r"$t\Omega_{ci}$", color=TEXT_CLR)
-    ax.set_ylabel(r"$k_B T_i/(m_i v_A^2)$", color=TEXT_CLR)
-    ax.set_title("Parallel and perpendicular ion temperature", color=TEXT_CLR, fontweight="bold")
+    ax.set_ylabel(r"$(P_i/n_i)/(m_i v_A^2)$", color=TEXT_CLR)
+    ax.set_title("Parallel and perpendicular ion central moments", color=TEXT_CLR, fontweight="bold")
     ax.legend(facecolor=PANEL_BG, edgecolor=GRID_CLR, labelcolor=TEXT_CLR)
     _savefig(fig, outdir / "temperature_parallel_perp_vs_time.png")
 

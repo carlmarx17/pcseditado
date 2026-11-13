@@ -109,6 +109,7 @@ def main() -> None:
             "beta_e_parallel": BETA_E_PAR,
             "A_e": BETA_E_PERP_OVER_PAR,
             "kappa": KAPPA,
+            "moment_convention": "Initial bi-kappa normalization fixes the second moment of sampled u. Particle T columns measure mass times central covariance(u,v). Grid P/n uses the nonrelativistic bulk subtraction.",
             "kappa_scope": "both species for maintained anisotropy cases",
             "nicell_from_profile": NICELL,
             "B0": B0,
