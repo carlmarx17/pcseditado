@@ -2,6 +2,7 @@
 import argparse
 import fcntl
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -18,6 +19,7 @@ def main():
     parser.add_argument('data', type=Path)
     parser.add_argument('profile', choices=RECONNECTION_PROFILES)
     parser.add_argument('out', type=Path)
+    parser.add_argument('--archives', type=Path, default=os.environ.get('ARCHIVES', Path(__file__).resolve().parents[1]/'analysis_results'))
     args = parser.parse_args()
     data, out = args.data.resolve(), args.out.resolve()
     files = PICDataReader.discover_outputs(str(data))
@@ -58,7 +60,34 @@ def main():
             with tempfile.TemporaryDirectory(dir=out) as scratch:
                 tmp = Path(scratch)/name
                 tmp.mkdir()
+                historical = None
                 if name == '10_reconnection':
+                    for summary in sorted(args.archives.rglob('reconnection_summary.json')):
+                        if out in summary.parents or '.staging' in summary.parts:
+                            continue
+                        info = json.loads(summary.read_text())
+                        meta = info.get('inputs', {})
+                        particles = next(iter(files['particles'].values()), {})
+                        if (info.get('data_dir') == str(data)
+                                and info.get('geometry', {}).get('profile') == args.profile
+                                and meta.get('field_steps') == [min(fields), max(fields)]
+                                and meta.get('n_field_snapshots') == len(fields)
+                                and meta.get('n_particle_snapshots') == len(particles)
+                                and meta.get('particle_series') == (sorted(files['particles']) or None)
+                                and info.get('geometry') == geometry.summary_dict()
+                                and info.get('kappa_estimator', {}).get('species') == 'ion'
+                                and (summary.parent/'reconnection_field_timeseries.csv').is_file()
+                                and (not particles or (summary.parent/'reconnection_kappa_timeseries.csv').is_file())
+                                and (summary.parent/'reconnection_overview.png').is_file()
+                                and (summary.parent/'reconnected_flux.png').is_file()
+                                and all(p.stat().st_mtime <= summary.stat().st_mtime for p in map(Path, inputs))):
+                            historical = summary.parent
+                            break
+                if historical:
+                    for product in historical.iterdir():
+                        if product.is_file() and product.suffix in ('.csv', '.json', '.png') and not product.name.startswith('.'):
+                            (tmp/product.name).symlink_to(product.resolve())
+                elif name == '10_reconnection':
                     subprocess.run([sys.executable, str(here/'reconnection_analysis.py'), '--data-dir', str(data),
                                     '--profile', args.profile, '--outdir', str(tmp)], check=True)
                 elif inputs:
@@ -67,7 +96,7 @@ def main():
                     atomic_json(tmp/'global_energy_summary.json', {'scientific_status':'UNVERIFIED',
                                 'reason':'No DiagEnergies segments for this history'})
                 products = sorted(p for p in tmp.iterdir() if p.is_file())
-                stamp = {'identity':identity, 'files':[p.name for p in products],
+                stamp = {'archive': str(historical) if historical else None, 'identity':identity, 'files':[p.name for p in products],
                          'products':inventory_identity(products)}
                 atomic_json(tmp/'.completed.json', stamp)
                 tmp.rename(target)
