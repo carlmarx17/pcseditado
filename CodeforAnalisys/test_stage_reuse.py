@@ -28,3 +28,25 @@ def test_reuse_requires_matching_history_intact_products_and_options(tmp_path):
     assert is_complete(state['stages']['structures'], out)
     f.write_text('x\n100\n')
     assert not is_complete(state['stages']['structures'], out)
+
+
+
+def test_partial_production_histories_and_family_selection(tmp_path, monkeypatch):
+    import submit_missing as planner
+    raw, archives, out = [tmp_path/p for p in ('raw', 'archives', 'out')]
+    raw.mkdir()
+    archives.mkdir()
+    cases = ('firehose_bikappa3_bigbox40', 'mirror_bikappa3_moderate', 'whistler_bimaxwellian_strong_mr800')
+    for case in cases:
+        data = raw/('psc_'+case+'_123')
+        data.mkdir()
+        (data/'pfd.000001.bp').mkdir()
+    monkeypatch.setattr(planner.subprocess, 'check_output', lambda *a, **kw: '919000 1200000 1200000 500')
+    monkeypatch.setattr(planner, 'provenance', lambda: {'analysis_source_sha256':'test'})
+    rows = planner.inventory(raw, archives, out)
+    assert len(rows) == 3
+    assert all(r['coverage']['partial'] for r in rows)
+    assert all('heating-budget' in r['stages'] for r in rows)
+    rows = planner.inventory(raw, archives, out, 'firehose')
+    assert [r['case'] for r in rows] == [cases[0]]
+    assert rows[0]['coverage']['last_step'] == 919000

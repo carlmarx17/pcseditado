@@ -1,4 +1,4 @@
-"""Plan one resumable COSMA analysis per completed periodic PSC history."""
+"""Plan one resumable COSMA analysis per available periodic PSC history."""
 import argparse
 import json
 import os
@@ -16,7 +16,7 @@ HERE = Path(__file__).resolve().parent
 WORKER = HERE.parent/'cosma_jobs/analisis/tesis_pendientes.sh'
 
 
-def inventory(raw, archives, out):
+def inventory(raw, archives, out, selected_family=None):
     by_input = {}
     for manifest in sorted(archives.rglob('*_analysis_manifest.json')):
         if '.staging' in manifest.parts or out in manifest.parents:
@@ -31,6 +31,8 @@ def inventory(raw, archives, out):
         if not data.is_dir() or not family_of(data.name[4:]):
             continue
         case = next((p for p in profiles if data.name == 'psc_'+p or data.name.startswith('psc_'+p+'_')), None)
+        if selected_family and family_of(case or data.name[4:]) != selected_family:
+            continue
         if not case:
             raise ValueError(f'Unknown profile: {data}')
         bp = next(data.glob('pfd.*.bp'), None)
@@ -44,9 +46,10 @@ def inventory(raw, archives, out):
                                          '--case', case, '--data-dir', str(data)], text=True)
         last, expected, *_ = map(int, check.split())
         control = case.endswith('_isotropic')
-        if last == 0 or (not control and last < expected):
-            print(f'{data.name}: incompleta ({last}/{expected})')
+        if last == 0:
+            print(f'{data.name}: sólo condición inicial ({last}/{expected})')
             continue
+        coverage = 'parcial' if last < expected else 'alcanza último campo esperado'
         family = family_of(case)
         stages = ['manifest', 'physics', 'residuals', 'energy-exchange'] if control else [
             *STAGES, 'theory', 'anisotropy-dispersion', 'resonant-anisotropy']
@@ -75,9 +78,10 @@ def inventory(raw, archives, out):
                 raise ValueError(f'{dest}: changed inputs or code; choose another OUT inside ARCHIVES to reuse compatible stages')
             done = all(is_complete(previous['stages'].get(s, {}), dest) for s in stages) and (dest/'report/index.html').is_file()
         item = dict(data=str(data), case=case, dest=str(dest), stages=stages, options=options,
-                    archives=by_input.get(str(data), []), done=done)
+                    archives=by_input.get(str(data), []), done=done,
+                    coverage={'last_step': last, 'expected_step': expected, 'partial': last < expected})
         runs.append(item)
-        print(f'{data.name}: {"terminada" if done else "pendiente"}; {len(item["archives"])} archivos candidatos')
+        print(f'{data.name}: {"terminada" if done else "pendiente"}; {len(item["archives"])} archivos candidatos; {coverage} ({last}/{expected})')
     return runs
 
 
@@ -87,6 +91,7 @@ def main():
     p.add_argument('--run-root', type=Path, default=os.getenv('RUN_ROOT','/cosma7/data/dp433/dc-mart18/anisotropy_adios2'))
     p.add_argument('--archives', type=Path, default=os.getenv('ARCHIVES', HERE.parent/'analysis_results'))
     p.add_argument('--out', type=Path, default=os.getenv('OUT', HERE.parent/'analysis_results/tesis_pendientes'))
+    p.add_argument('--family', choices=FAMILIES, help='Select one instability family')
     p.add_argument('--worker', type=Path)
     args = p.parse_args()
     if args.worker:
@@ -96,6 +101,8 @@ def main():
             audits = [audit_run(r['dest'], Path(r['data']).name) for r in plan['runs']]
             pair_controls(audits)
             write_outputs(audits, group_runs(audits), Path(plan['out'])/'revision')
+            atomic_json(Path(plan['out'])/'revision/history_coverage.json',
+                        [{'data': r['data'], 'case': r['case'], 'coverage': r.get('coverage')} for r in plan['runs']])
             return
         row = [r for r in plan['runs'] if not r['done']][int(os.environ['SLURM_ARRAY_TASK_ID'])]
         cmd = [sys.executable, str(HERE/'run_pipeline.py'), '--case', row['case'], '--data-dir', row['data'],
@@ -109,11 +116,11 @@ def main():
     raw, archives, out = (v.resolve() for v in (args.run_root, args.archives, args.out))
     if not raw.is_dir() or not archives.is_dir():
         p.error('RUN_ROOT and ARCHIVES must exist')
-    rows = inventory(raw, archives, out)
+    rows = inventory(raw, archives, out, args.family)
     if not rows:
         p.exit(1, 'Sin historias analizables.\n')
     count = sum(not r['done'] for r in rows)
-    for family in FAMILIES:
+    for family in ([args.family] if args.family else FAMILIES):
         if not any(family_of(r['case']) == family for r in rows):
             print(f'{family}: sin historias analizables')
     print(f'{count} historias con etapas pendientes de {len(rows)}.')

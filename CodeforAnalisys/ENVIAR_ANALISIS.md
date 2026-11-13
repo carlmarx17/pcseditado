@@ -9,7 +9,7 @@ bash cosma_jobs/analisis/tesis_pendientes.sh
 bash cosma_jobs/analisis/tesis_pendientes.sh --submit
 ```
 
-El plan descubre mirror, firehose y whistler en `RUN_ROOT` (por defecto `anisotropy_adios2`). Mantiene por separado las repeticiones, los controles y las variantes de resolución aunque compartan perfil. Incluye historias que alcanzan el último campo esperado y controles con cobertura parcial. El manifiesto comprueba la condición inicial y la geometría. El tiempo final por sí solo no garantiza cobertura continua. Las carpetas sin campos, historias cortas y familias ausentes aparecen en la consola.
+El plan descubre mirror, firehose y whistler en `RUN_ROOT` (por defecto `anisotropy_adios2`). Mantiene por separado las repeticiones, los controles y las variantes de resolución aunque compartan perfil. Incluye historias con evolución disponible, también las parciales de cualquier familia. El plan y `revision/history_coverage.json` guardan el último paso disponible, el esperado y el indicador de cobertura parcial. El manifiesto comprueba la condición inicial y la geometría. El tiempo final por sí solo no garantiza cobertura continua. Las carpetas sin campos, las que sólo contienen la condición inicial y las familias ausentes aparecen en la consola.
 
 Se usa una tarea de una CPU, con una historia activa a la vez y un límite de 48 horas por historia. El tiempo real depende de las instantáneas, el tamaño de malla, los productos reutilizados y el sistema de archivos. Las etapas que se interrumpen se reinician por separado. Los archivos `pipeline.json` guardan segundos y pico de memoria por etapa, en KiB en Linux. Las etapas con `archive` conservan los recursos históricos. Para consultar lo que contabilizó Slurm, usar el identificador impreso al enviar.
 
@@ -36,3 +36,16 @@ sbatch cosma_jobs/analisis/tesis_reconexion.sh /ruta/a/la/historia reconnection_
 ```
 
 El trabajo escribe la evolución de flujo y κ para las salidas disponibles, y un balance global con la frecuencia ciclotrón del perfil de reconexión. Ambos ejecutables mantenidos tienen contornos periódicos. DiagEnergies agrega por signo de carga las partículas de la hoja y del fondo. El perfil histórico puede carecer de ese diagnóstico. Se registra esa ausencia. El trabajo detecta resultados completos de este envío en el destino estable. También busca resúmenes históricos en `ARCHIVES` y enlaza los productos compatibles con la ruta, geometría, serie, cobertura y fechas de las entradas. El registro guarda el origen. Los resúmenes históricos de reconexión carecen de huella de código, y esa reutilización ofrece trazabilidad más limitada.
+
+
+## Añadir firehose tras el envío 12350652
+
+La primera versión del plan excluyó las historias de producción cortas. La versión corregida acepta su evolución disponible. Para terminar el envío activo con la misma revisión de código, esperar a que finalicen el array 12350652 y la revisión 12350653 antes de actualizar el checkout. Después enviar únicamente firehose a su propio destino.
+
+```bash
+git pull --ff-only origin main
+OUT="$PWD/analysis_results/tesis_firehose_disponible" bash cosma_jobs/analisis/tesis_pendientes.sh --family firehose
+OUT="$PWD/analysis_results/tesis_firehose_disponible" bash cosma_jobs/analisis/tesis_pendientes.sh --family firehose --submit
+```
+
+Los resultados parciales permiten medir la evolución observada y ajustar la fase lineal cuando esté cubierta. Las inferencias sobre saturación y estado tardío deben declarar el intervalo observado.
