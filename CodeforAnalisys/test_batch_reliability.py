@@ -363,6 +363,23 @@ def test_a_control_of_another_series_does_not_silently_correct_a_run():
     assert firehose['baseline_unavailable']['status'] == 'UNVERIFIED'
 
 
+def test_a_control_in_a_smaller_box_pairs_despite_rounding_in_dx_and_dt():
+    """dx and dt come from box length / grid: the 10 d_i, 288^2 controls on COSMA
+    differ from the 20 d_i, 576^2 runs in the eighth digit and must still pair."""
+    import energy_audit
+    run = _audit_stub('mirror_bikappa5_moderate', 5.0, 2.0, kappa=5.0)
+    run['setup']['dx_de'], run['dt_code'] = 0.49104635487432063, 0.32986109703813954
+    control = _audit_stub('mirror_bikappa5_isotropic', 25/3, 1.0, kappa=5.0)
+    control['setup']['dx_de'], control['dt_code'] = 0.4910463871440821, 0.32986111871539836
+    found, match = energy_audit.match_control(run, [run, control])
+    assert found is control and match['same_distribution']
+
+    # A real difference in resolution (dx/2) is still not the same numerics.
+    finer = _audit_stub('mirror_bikappa5_isotropic_fine', 25/3, 1.0, kappa=5.0)
+    finer['setup']['dx_de'], finer['dt_code'] = 0.2455231774, 0.1649305485
+    assert energy_audit.match_control(run, [run, finer]) == (None, {})
+
+
 def _uniform_plus_hole_field(path, ngrid=32, b0=0.08, depth=0.5, hole=slice(0, 8)):
     """|B| = b0 everywhere except a compressive hole in the first rows."""
     bz = np.full((ngrid, ngrid), b0, dtype=float)

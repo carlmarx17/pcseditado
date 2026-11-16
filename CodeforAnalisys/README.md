@@ -1626,6 +1626,46 @@ subtraction assumes the numerical heating is not changed by the instability;
 the raw budget keeps its own status. The controls are the cases
 `psc_mirror_*_isotropic` (`src/SIMULACIONES_ANISOTROPIA.md`).
 
+The run and its control do not heat by the same amount (the controls sit in a
+10 d_i box with isotropic ions; in the kappa 5 moderate pair the electron gain
+of the run is 0.92 of the control's throughout), so the plain subtraction
+over-corrects. Next to it the audit writes a **scaled control**
+(`scale_control`): each reservoir of the control is multiplied by a factor
+fitted by least squares on the quiet interval before the fitted linear phase
+starts and held afterwards. The residuals are the energy the instability moved
+and their sum is what stays unbalanced, with the same thresholds against the
+residual ion release. The calibration is repeated on each half of the quiet
+interval and the worst of the three closures decides `scaled_status`. It needs
+a fitted linear phase and at least four common samples before it. A physical
+change that grows in step with the control from t = 0 is absorbed by the
+factor, and a factor that drifts after the calibration is read as signal; the
+correction concerns the bookkeeping, not the dynamics. Columns `scaled_*` of
+`energy_audit.csv`, `*_scaled_corrected` of `energy_audit_electron_heating.csv`
+and the dotted curves of `energy_audit_baseline.png`.
+
+**Magnetic noise floor and null test** (`noise_floor.py`, also run by the report
+into `<outdir>/noise_floor/`). The control is stable, so its magnetic
+fluctuations are particle noise, and that noise grows as the electrons heat
+(its rms rises at about 0.009 Omega_ci in the moderate mirror controls). With
+the pairing of the energy audit: (1) the control's `<|dB|^2>`, times a factor
+fitted between the quiet-start build-up and the fitted linear phase, is the
+noise of the run; the noise fraction says from when the rms series shows the
+instability and whether the compressive component ever does, and an accepted
+growth fit of an rms series over a window where the noise dominates is flagged
+(`magnetic_noise_floor`: WARN); (2) every accepted exponential fit is compared
+with the largest fitted gain any tracked mode of the control reaches over a
+window of the same duration: PASS at twice that null level or more, FAIL when
+the control reproduces the fit (`growth_null_test`, decided by the reference
+fit; `noise_floor_fits.csv` lists every mode fit). It needs
+`field_fluctuation_table.csv` in both runs and `mode_amplitude_timeseries.csv`
+in the control. The control's modes sit at other k (smaller box) and only a
+dozen are tracked, which is what the factor of two allows for.
+
+```bash
+.venv/bin/python CodeforAnalisys/noise_floor.py analysis_results/v6/mirror_* \
+  --outdir analysis_results/v6/quality_report/noise_floor
+```
+
 ```bash
 .venv/bin/python CodeforAnalisys/energy_audit.py analysis_results/v6/mirror_* \
   --outdir analysis_results/v6/quality_report/energy_audit

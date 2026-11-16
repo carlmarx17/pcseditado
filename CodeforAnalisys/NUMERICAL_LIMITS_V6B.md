@@ -19,19 +19,37 @@ Changing a run parameter is a decision for the case matrix, not made here.
 | Electron thermal energy, end / start | 8.3 to 8.6 |
 | Particle + field energy, relative change | +66 % |
 
-The electrons heat until the Debye length reaches about dx/3, the usual end
-point of finite-grid heating, the same in the three runs. The energy is not
-conserved: the gain of the electrons (0.035 per particle in code units) is six
-times the loss of the ions.
+The three runs end at dx/lambda_De of about 3, but that is where the runs stop,
+not where the heating stops. In the kappa 5 run, the only one with DiagEnergies,
+the logarithmic rate d ln E_e/dt falls from 0.022 to 0.012 Omega_ci while
+dx/lambda_De goes from 8.7 to 4, and then stays at 0.012 from t Omega_ci of
+about 100 to the last sample at 158: the electron energy is still growing
+exponentially when the run ends. The two 96^2 test runs of PRT_POOLING_BIAS.md
+(dx/lambda_De = 52 at t = 0, 200 and 50 ppc) keep heating well below
+dx/lambda_De = 3 (they reach 1.05 and 0.70 at t Omega_ci = 15, still rising),
+faster with fewer particles; they also have omega_pe dt = 1.98, so they show
+the trend and not a rate. A saturation at dx/3, the usual end point of finite-grid heating, is
+therefore not established by these data. The energy is not conserved: the gain
+of the electrons (0.035 per particle in code units) is six times the loss of
+the ions.
 
 Affects: the electron beta (1 to 8), hence the mirror threshold and, weakly,
 the ion-cyclotron rate (both now evaluated with the measured electrons); every
 energy budget.
 
-Removes it: dx <= about 3 lambda_De. With the same grid that means a larger B0
-(omega_pe/Omega_ce of about 4 instead of 12.5), which also shortens the run in
-steps; or a 3 times finer grid; a higher-order particle shape and current
-smoothing lower the rate without removing it.
+Reduces it (nothing here is shown to remove it): the data above hold two
+contributions. One is consistent with a dependence on dx/lambda_De: the rate
+halves while dx/lambda_De goes from 8.7 to 4. Starting at dx of about
+3 lambda_De means, with the same grid, a larger B0 (omega_pe/Omega_ce of about
+4 instead of 12.5), which also shortens the run in steps; or a 3 times finer
+grid. The other remains at dx/lambda_De of 3 to 4 and follows the particle
+noise: the electric energy stays at E_E/E_e of about 1.1e-3 while T_e grows
+(ppc * E_E/E_e between 0.5 and 1.2 for 50, 200 and 1000 ppc), and between
+t Omega_ci = 0.4 and 15 the 50 ppc test run gains 3.3 times the electron energy
+of the 200 ppc one. That part needs more particles per cell. A higher-order
+particle shape and current smoothing lower the rate without removing it. How
+much each change buys is not measured: the resolution runs `res_ppc4000` and
+`res_ngrid1152` (`cosma_jobs/simulacion/`) were never submitted.
 
 ## 2. The ions lose energy from t = 0
 

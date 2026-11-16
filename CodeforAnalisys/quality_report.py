@@ -11,6 +11,7 @@ import numpy as np
 from analysis_contract import atomic_json, ALGORITHMS, CONVENTIONS_VERSION
 from growth_fit import branch_growth_rows, reference_growth_row
 import energy_audit
+import noise_floor
 
 #: Worst first; a run's overall status is the worst of its checks.
 SEVERITY = ('FAIL', 'UNVERIFIED', 'WARN', 'PASS')
@@ -166,6 +167,23 @@ def write_report(roots, outdir, energy_tolerance=None):
                                  dict(check='energy_baseline', status=baseline['status'], reason=baseline['reason'],
                                       source=str(outdir / 'energy_audit'), metrics=energy_audit.strip_private(baseline)))
             run['scientific_status'] = next(s for s in SEVERITY if any(c['status'] == s for c in run['checks']))
+    # The same control gives the magnetic noise floor of the run and the null
+    # level of its growth fits (noise_floor.py); runs without the fluctuation
+    # tables or without a control get no row.
+    floors = {f['run']: f for f in noise_floor.audit_paired(audits)}
+    for run, audit in zip(runs, audits):
+        floor = floors.get(audit['run'])
+        if floor:
+            metrics = energy_audit.strip_private(floor)
+            source = str(outdir / 'noise_floor')
+            run['checks'] += [
+                dict(check='magnetic_noise_floor', status=floor['noise_status'], reason=floor['noise_reason'],
+                     source=source, metrics={'components': metrics['components'], 'rms_fits': metrics['rms_fits']}),
+                dict(check='growth_null_test', status=floor['null_status'], reason=floor['null_reason'],
+                     source=source, metrics=metrics['null'])]
+            run['scientific_status'] = next(s for s in SEVERITY if any(c['status'] == s for c in run['checks']))
+    if floors:
+        noise_floor.write_outputs(list(floors.values()), outdir / 'noise_floor')
     groups = energy_audit.group_runs(audits)
     if any(a.get('window') for a in audits):
         energy_audit.write_outputs(audits, groups, outdir / 'energy_audit')
@@ -188,6 +206,11 @@ def write_report(roots, outdir, energy_tolerance=None):
             content.append('<figure><a href="energy_audit/energy_audit_baseline.png"><img src="energy_audit/energy_audit_baseline.png" '
                            'alt="baseline-corrected energy"></a><figcaption>Electron heating and total energy change '
                            'after subtracting the isotropic control of each run</figcaption></figure>')
+    if (outdir / 'noise_floor' / 'noise_floor.png').exists():
+        content.append('<h2>Magnetic noise floor</h2>'
+                       '<figure><a href="noise_floor/noise_floor.png"><img src="noise_floor/noise_floor.png" '
+                       'alt="magnetic noise floor"></a><figcaption>Fluctuation energy of each run against the noise '
+                       'of its stable control; fits against the null in noise_floor/noise_floor_fits.csv</figcaption></figure>')
     for run in runs:
         content += [f'<h2>{html.escape(run["run"])} — <span class="{run["scientific_status"]}">{run["scientific_status"]}</span></h2><table><tr><th>Check</th><th>Status</th><th>Evidence</th></tr>']
         for c in run['checks']:

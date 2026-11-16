@@ -48,6 +48,14 @@ matches. The baseline-corrected closure PASSES when what remains of the total
 energy change is at most a tenth of the energy the ions release, FAILS at half
 of it, and is UNVERIFIED in between; the raw budget keeps its own status.
 
+**Scaled control.** The run and its control do not heat by the same amount
+(different box, isotropic ions), so next to the plain subtraction every
+reservoir of the control is multiplied by a factor fitted on the quiet interval
+before the fitted linear phase and held afterwards (``scale_control``). The
+residuals are the energy the instability moved; the calibration is repeated on
+each half of the quiet interval and the worst closure decides the status. Both
+corrections are always written side by side.
+
 No mechanism is assigned here. dx/lambda_De >> 1 with first-order particle
 shapes makes grid heating a candidate; only controlled reruns (dx, ppc, shape
 order) can confirm it.
@@ -97,6 +105,25 @@ SETUP_KEYS = ("mass_ratio", "B0", "beta_i_parallel", "A_i", "beta_e_parallel", "
 #: is local, and a smaller control box is compared per unit volume.
 CONTROL_KEYS = ("mass_ratio", "B0", "beta_e_parallel", "A_e", "nicell_from_profile", "dx_de")
 ENERGY_COLUMNS = ("E_E", "E_B", "E_e", "E_i", "E_total")
+#: Relative tolerance for "the same" numerical parameter. dx and dt are derived
+#: from the box length and the grid, so the controls in a 10 d_i box at 288^2
+#: differ from the 20 d_i runs at 576^2 in the eighth digit (dx_de
+#: 0.49104639 against 0.49104635); exact equality paired no control at all.
+PARAMETER_RTOL = 1e-6
+
+
+#: Field and particle reservoirs whose sum is the total energy.
+RESERVOIRS = ENERGY_COLUMNS[:-1]
+#: The scaled control needs this many common samples before the linear phase.
+MIN_CALIBRATION_SAMPLES = 4
+
+
+def _same(a, b) -> bool:
+    """Equal parameters: numbers within PARAMETER_RTOL, anything else exactly."""
+    numeric = (int, float)
+    if isinstance(a, numeric) and isinstance(b, numeric) and not isinstance(a, bool) and not isinstance(b, bool):
+        return bool(np.isclose(a, b, rtol=PARAMETER_RTOL, atol=0.0))
+    return a == b
 
 
 def _read_csv(path: Path) -> list[dict]:
@@ -338,9 +365,11 @@ def match_control(run: dict, audits: list[dict], explicit: str | None = None) ->
         candidates = [a for a in audits if a is not run and a.get("role") == "isotropic_control"]
     setup = run.get("setup") or {}
     usable = [a for a in candidates
-              if all(setup.get(k) is not None and (a.get("setup") or {}).get(k) == setup[k] for k in CONTROL_KEYS)
+              if all(setup.get(k) is not None and _same((a.get("setup") or {}).get(k), setup[k])
+                     for k in CONTROL_KEYS)
               and (explicit is not None or (a.get("kappa") == run.get("kappa")
-                   and a.get("family") == run.get("family") and a.get("dt_code") == run.get("dt_code")))]
+                   and a.get("family") == run.get("family")
+                   and _same(a.get("dt_code"), run.get("dt_code"))))]
     if not usable:
         return None, {}
 
@@ -483,6 +512,162 @@ def subtract_control(run: dict, control: dict, match: dict) -> dict:
     return out
 
 
+def _calibration(t: np.ndarray, ok: np.ndarray, end: float | None):
+    """Samples of the quiet interval 0 < t <= end, and of its two halves."""
+    if end is None or not np.isfinite(end):
+        return None
+    idx = np.flatnonzero(ok & (t > 0) & (t <= end))
+    if idx.size < MIN_CALIBRATION_SAMPLES:
+        return None
+    half = idx.size // 2
+    return idx, idx[:half], idx[half:]
+
+
+def _scale(run_change: np.ndarray, control_change: np.ndarray, idx: np.ndarray) -> float:
+    """Least-squares factor through the origin; 1 when the control does not change."""
+    den = float(np.sum(control_change[idx] ** 2))
+    return float(np.sum(run_change[idx] * control_change[idx]) / den) if den > 0 else 1.0
+
+
+def scale_control(run: dict, control: dict) -> dict:
+    """Control changes times a factor fitted before the instability grows.
+
+    The plain subtraction assumes the run and its control heat by the same
+    amount. They do not: the controls sit in a 10 d_i box with isotropic ions,
+    and in the kappa 5 pair of the moderate mirror series the electron energy
+    gain of the run is 0.920 to 0.923 times that of the control from
+    t Omega_ci = 5 to 81, through the linear phase and saturation, while the
+    plain difference grows to -77 (8 % of the gain). So each reservoir r gets
+    its own factor,
+
+        s_r = sum(dE_r^run dE_r^ctrl) / sum(dE_r^ctrl ^ 2)   over 0 < t <= t_lin,
+
+    fitted on the quiet interval before the fitted linear phase starts
+    (t_lin = linear_phase.start, where the mode is still at noise level) and
+    held fixed afterwards: residual_r(t) = dE_r^run(t) - s_r dE_r^ctrl(t). The
+    residuals are what the instability moved; their sum is the energy left
+    unbalanced, compared with the residual release of the driving species.
+
+    What it cannot do: a physical change that grows in step with the control
+    from t = 0 is absorbed by the factor, and a factor that drifts after the
+    calibration (the ion one may, as the anisotropy relaxes towards the
+    control's isotropic ions) is read as signal. The calibration is repeated
+    on each half of the quiet interval and the worst closure of the three
+    decides the status. It corrects the bookkeeping, not the dynamics: the
+    ions still evolved against the heated electrons.
+    """
+    out = {"control": control["run"],
+           "assumption": "the numerical change of each reservoir is a fixed multiple of the control's, "
+                         "fitted before the linear phase and held afterwards"}
+
+    def unavailable(why: str) -> dict:
+        return {**out, "status": "UNVERIFIED", "reason": f"No scaled control: {why}"}
+
+    lp = run.get("linear_phase") or {}
+    end = lp.get("start")
+    if end is None:
+        return unavailable("no fitted linear phase, so no quiet interval to calibrate on")
+    few = f"fewer than {MIN_CALIBRATION_SAMPLES} common samples before the linear phase"
+
+    ws, wc = (run.get("window") or {}).get("_series"), (control.get("window") or {}).get("_series")
+    if ws is not None and wc is not None:
+        t = ws["omega_ci_t"]
+        ctrl, _ = align_time(wc["omega_ci_t"], wc["E_internal_e"], t)
+        ok = np.isfinite(ctrl)
+        cal = _calibration(t, ok, end)
+        if cal is not None and ok[0]:
+            ee0 = ws["E_internal_e"][0]
+            dr, dc = ws["E_internal_e"] - ee0, ctrl - ctrl[0]
+            factors = [_scale(dr, dc, idx) for idx in cal]
+            corrected = [1.0 + (dr - f * dc) / ee0 for f in factors]
+            last = np.flatnonzero(ok)[-1]
+            ends = [float(c[last]) for c in corrected]
+            out["window"] = {
+                "calibration_omegaci": [float(t[cal[0][0]]), float(t[cal[0][-1]])],
+                "calibration_samples": int(cal[0].size),
+                "scale": factors[0], "scale_range": [min(factors), max(factors)],
+                "t_end_omegaci": float(t[last]),
+                "T_e_factor_run": float(ws["T_e_over_T_e0"][last]),
+                "T_e_factor_scaled_corrected": ends[0],
+                "T_e_factor_scaled_corrected_range": [min(ends), max(ends)],
+                "T_e_factor_scaled_corrected_at_linear_end": _interp(t[ok], corrected[0][ok], lp.get("end")),
+                "_series": {"omega_ci_t": t[ok], "corrected": corrected[0][ok],
+                            **_corrected_electrons(ws, ctrl[0] + factors[0] * dc, ok, run)}}
+
+    gs, gc = (run.get("global") or {}).get("_series"), (control.get("global") or {}).get("_series")
+    if gs is None or gc is None:
+        if "window" not in out:
+            return unavailable(few)
+        w = out["window"]
+        out.update(status="UNVERIFIED", reason=(
+            f"Scaled control {control['run']} (factor {w['scale']:.3f} from t Omega_ci <= "
+            f"{w['calibration_omegaci'][1]:.3g}): electron temperature x{w['T_e_factor_scaled_corrected']:.3f} "
+            f"instead of x{w['T_e_factor_run']:.2f} in the prt window; no DiagEnergies in both runs, "
+            "so no closure"))
+        return out
+
+    t = gs["omega_ci_t"]
+    volume_ratio = float(gs["E_B"][0] / gc["E_B"][0])
+    change = {}
+    for k in RESERVOIRS:
+        ctrl, _ = align_time(gc["omega_ci_t"], gc[k], t)
+        change[k] = (gs[k] - gs[k][0], volume_ratio * (ctrl - ctrl[0]))
+    ok = np.all([np.isfinite(c[1]) for c in change.values()], axis=0)
+    cal = _calibration(t, ok, end)
+    if cal is None:
+        return unavailable(few) if "window" not in out else {
+            **out, "status": "UNVERIFIED", "reason": f"No scaled closure: {few} in DiagEnergies"}
+    last = np.flatnonzero(ok)[-1]
+    driven = run.get("driven_species", "ion")
+    key = "E_i" if driven == "ion" else "E_e"
+    e0 = float(gs["E_total"][0])
+    variants = []
+    for idx in cal:
+        scales = {k: _scale(*change[k], idx) for k in RESERVOIRS}
+        resid = {k: change[k][0] - scales[k] * change[k][1] for k in RESERVOIRS}
+        release = -float(resid[key][last])
+        unbalanced = float(sum(resid[k][last] for k in RESERVOIRS))
+        variants.append({"scales": scales, "resid": resid, "release": release, "unbalanced": unbalanced,
+                         "ratio": abs(unbalanced) / release if release > 1e-6 * abs(e0) else float("inf")})
+    best = variants[0]
+    ratios = [v["ratio"] for v in variants]
+    out["global"] = {
+        "calibration_omegaci": [float(t[cal[0][0]]), float(t[cal[0][-1]])],
+        "calibration_samples": int(cal[0].size),
+        "t_end_omegaci": float(t[last]),
+        "scales": best["scales"],
+        "scale_ranges": {k: [min(v["scales"][k] for v in variants), max(v["scales"][k] for v in variants)]
+                         for k in RESERVOIRS},
+        "residual_changes": {k: float(best["resid"][k][last]) for k in RESERVOIRS},
+        "driver_release_scaled": best["release"],
+        "unbalanced_change": best["unbalanced"],
+        "residual_over_driver_release": best["ratio"] if np.isfinite(best["ratio"]) else None,
+        "residual_over_driver_release_range": ([min(ratios), max(ratios)]
+                                               if np.all(np.isfinite(ratios)) else None),
+        "electron_heating_factor_scaled_corrected": 1.0 + float(best["resid"]["E_e"][last]) / float(gs["E_e"][0]),
+        "raw_total_relative_change": float((gs["E_total"][last] - gs["E_total"][0]) / e0),
+        "corrected_total_relative_change": best["unbalanced"] / e0,
+        "_series": {"omega_ci_t": t[ok], **{k: best["resid"][k][ok] / e0 for k in RESERVOIRS},
+                    "E_total": sum(best["resid"][k][ok] for k in RESERVOIRS) / e0,
+                    "raw_total": (gs["E_total"][ok] - gs["E_total"][0]) / e0}}
+    g = out["global"]
+    fitted = (f"Scaled control {control['run']} (factors from t Omega_ci <= {g['calibration_omegaci'][1]:.3g}: "
+              f"electrons {best['scales']['E_e']:.3f}, ions {best['scales']['E_i']:.3f})")
+    if not np.isfinite(best["ratio"]):
+        out.update(status="UNVERIFIED", reason=(
+            f"{fitted}: no net {driven} energy release left, nothing to close"))
+    elif not np.all(np.isfinite(ratios)):
+        out.update(status="UNVERIFIED", reason=(
+            f"{fitted}: the {driven} release does not survive a calibration on half of the quiet interval"))
+    else:
+        out.update(status=_closure_status(max(ratios)), reason=(
+            f"{fitted}: unbalanced energy {min(ratios):.2g} to {max(ratios):.2g}x the residual {driven} release "
+            f"over the calibration variants (raw {100 * g['raw_total_relative_change']:+.1f}%, corrected "
+            f"{100 * g['corrected_total_relative_change']:+.3f}% of E_total); assumes the factors stay "
+            "fixed after the calibration"))
+    return out
+
+
 def pair_controls(audits: list[dict], explicit: dict[str, str] | None = None) -> None:
     """Attach `baseline` (control subtraction) to every anisotropic run that has a control."""
     explicit = explicit or {}
@@ -495,6 +680,7 @@ def pair_controls(audits: list[dict], explicit: dict[str, str] | None = None) ->
         control, match = match_control(a, audits, explicit.get(a["run"]))
         if control is not None:
             a["baseline"] = subtract_control(a, control, match)
+            a["baseline"]["scaled"] = scale_control(a, control)
         elif match.get("rejected"):
             # A rejected pairing is reported, not silently left out: without it
             # the evidence report simply had no energy_baseline row at all.
@@ -594,7 +780,13 @@ def plot_baseline(audits: list[dict], path: Path) -> bool:
     from matplotlib.lines import Line2D
     import plot_style as ps
     ps.apply()
-    with_global = [a for a in pairs if (a["baseline"].get("global") or {}).get("_series")]
+    def budgets(a):
+        """Plotting series of the plain and of the scaled corrected budget, either may be absent."""
+        b = a["baseline"]
+        return ((b.get("global") or {}).get("_series"),
+                ((b.get("scaled") or {}).get("global") or {}).get("_series"))
+
+    with_global = [a for a in pairs if any(series is not None for series in budgets(a))]
     ncol = 2 if with_global else 1
     fig, axes = plt.subplots(1, ncol, figsize=(5.8 * ncol, 4.6), constrained_layout=True, squeeze=False)
     axes = axes[0]
@@ -604,27 +796,46 @@ def plot_baseline(audits: list[dict], path: Path) -> bool:
         axes[0].plot(s["omega_ci_t"], s["run"], "-", color=color, lw=1.4, alpha=0.55)
         axes[0].plot(s["omega_ci_t"], s["control"], "--", color=color, lw=1.4, alpha=0.55)
         axes[0].plot(s["omega_ci_t"], s["corrected"], "-", color=color, lw=2.4, label=_label(a))
+        sc = ((a["baseline"].get("scaled") or {}).get("window") or {}).get("_series")
+        if sc is not None:
+            axes[0].plot(sc["omega_ci_t"], sc["corrected"], ":", color=color, lw=2.4)
     axes[0].axhline(1.0, color=ps.MUTED_CLR, lw=0.8)
     handles, _ = axes[0].get_legend_handles_labels()
     handles += [Line2D([], [], color=ps.MUTED_CLR, lw=1.4, alpha=0.55, label="run (raw)"),
                 Line2D([], [], color=ps.MUTED_CLR, lw=1.4, ls="--", alpha=0.55, label="isotropic control"),
-                Line2D([], [], color=ps.MUTED_CLR, lw=2.4, label="run minus control")]
-    ps.legend(axes[0], handles=handles, loc="best", fontsize=9)
-    axes[0].set_ylabel(r"Electron central moment $M_2/M_{2,0}$ (prt window)")
+                Line2D([], [], color=ps.MUTED_CLR, lw=2.4, label="run minus control"),
+                Line2D([], [], color=ps.MUTED_CLR, lw=2.4, ls=":", label="run minus scaled control")]
+    # Below the panel: inside it the legend covers the curves near 1.
+    ps.legend(axes[0], handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.2),
+              ncol=2, fontsize=9, frameon=False)
+    # Two lines: with the legend below the panel the one-line label is clipped.
+    axes[0].set_ylabel("Electron central moment\n" r"$M_2/M_{2,0}$ (prt window)")
     axes[0].set_xlabel(r"$t\Omega_{ci}$")
     ps.style_axes(axes[0], "(a) electron heating, baseline removed")
     if with_global:
         ax = axes[1]
         for a in with_global:
-            s = a["baseline"]["global"]["_series"]
+            s, sc = budgets(a)
             color = _color(a.get("kappa"))
-            ax.plot(s["omega_ci_t"], s["raw_total"], "--", color=color, lw=1.4, alpha=0.55)
-            ax.plot(s["omega_ci_t"], s["E_total"], "-", color=color, lw=2.4, label=_label(a))
+            raw = s if s is not None else sc
+            ax.plot(raw["omega_ci_t"], raw["raw_total"], "--", color=color, lw=1.4, alpha=0.55)
+            # The plain subtraction has no series when it leaves no ion release.
+            if s is not None:
+                ax.plot(s["omega_ci_t"], s["E_total"], "-", color=color, lw=2.4, label=_label(a))
+            if sc is not None:
+                ax.plot(sc["omega_ci_t"], sc["E_total"], ":", color=color, lw=2.4,
+                        label=None if s is not None else _label(a))
         ax.axhline(0.0, color=ps.MUTED_CLR, lw=0.8)
         handles, _ = ax.get_legend_handles_labels()
-        handles += [Line2D([], [], color=ps.MUTED_CLR, lw=1.4, ls="--", alpha=0.55, label="raw"),
-                    Line2D([], [], color=ps.MUTED_CLR, lw=2.4, label="baseline-corrected")]
-        ps.legend(ax, handles=handles, loc="upper left", fontsize=9)
+        handles.append(Line2D([], [], color=ps.MUTED_CLR, lw=1.4, ls="--", alpha=0.55, label="raw"))
+        # Only the corrections that are drawn: a key without a curve reads as missing data.
+        drawn = [budgets(a) for a in with_global]
+        if any(plain is not None for plain, _ in drawn):
+            handles.append(Line2D([], [], color=ps.MUTED_CLR, lw=2.4, label="run minus control"))
+        if any(scaled is not None for _, scaled in drawn):
+            handles.append(Line2D([], [], color=ps.MUTED_CLR, lw=2.4, ls=":", label="run minus scaled control"))
+        ps.legend(ax, handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.2),
+                  ncol=2, fontsize=9, frameon=False)
         ax.set_ylabel(r"$\Delta E_{\rm total}/E_{\rm total}(0)$ (DiagEnergies)")
         ax.set_xlabel(r"$t\Omega_{ci}$")
         ps.style_axes(ax, "(b) total energy change")
@@ -663,7 +874,10 @@ def write_outputs(audits: list[dict], groups: list[dict], outdir: Path) -> None:
               "control", "control_same_distribution", "T_e_factor_control",
               "T_e_factor_baseline_corrected", "T_e_factor_baseline_corrected_at_linear_end",
               "baseline_status", "baseline_residual_over_driver_release",
-              "baseline_corrected_total_relative_change", "reason", "baseline_reason"]
+              "baseline_corrected_total_relative_change",
+              "scaled_status", "scale_electrons", "scale_ions", "T_e_factor_scaled_corrected",
+              "scaled_ion_release", "scaled_residual_over_driver_release",
+              "scaled_residual_over_driver_release_max", "reason", "baseline_reason", "scaled_reason"]
     with (outdir / "energy_audit.csv").open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
@@ -671,6 +885,8 @@ def write_outputs(audits: list[dict], groups: list[dict], outdir: Path) -> None:
             g, w, early = a.get("global") or {}, a.get("window") or {}, a.get("early_time") or {}
             b = a.get("baseline") or {}
             bw, bg = b.get("window") or {}, b.get("global") or {}
+            sc = b.get("scaled") or {}
+            sw, sg = sc.get("window") or {}, sc.get("global") or {}
             writer.writerow({
                 "run": a["run"], "role": a.get("role"), "kappa": a.get("kappa"), "status": a["status"],
                 "global_status": g.get("status"), "total_relative_change_end": g.get("total_relative_change_end"),
@@ -694,7 +910,19 @@ def write_outputs(audits: list[dict], groups: list[dict], outdir: Path) -> None:
                 "baseline_status": b.get("status"),
                 "baseline_residual_over_driver_release": bg.get("residual_over_driver_release"),
                 "baseline_corrected_total_relative_change": bg.get("corrected_total_relative_change"),
-                "reason": a.get("reason"), "baseline_reason": b.get("reason")})
+                "scaled_status": sc.get("status"),
+                "scale_electrons": (sg.get("scales") or {}).get("E_e", sw.get("scale")),
+                "scale_ions": (sg.get("scales") or {}).get("E_i"),
+                # The global electron energy when both runs have DiagEnergies,
+                # otherwise the prt-window moment.
+                "T_e_factor_scaled_corrected": sg.get("electron_heating_factor_scaled_corrected",
+                                                      sw.get("T_e_factor_scaled_corrected")),
+                "scaled_ion_release": sg.get("driver_release_scaled"),
+                "scaled_residual_over_driver_release": sg.get("residual_over_driver_release"),
+                "scaled_residual_over_driver_release_max": (sg.get("residual_over_driver_release_range")
+                                                            or [None, None])[1],
+                "reason": a.get("reason"), "baseline_reason": b.get("reason"),
+                "scaled_reason": sc.get("reason")})
     # Runs of different length (production vs short resolution variants) are
     # compared at the last time they all reach, never at their own ends.
     ends = [float(s["omega_ci_t"][-1]) for s in
@@ -725,7 +953,10 @@ def write_outputs(audits: list[dict], groups: list[dict], outdir: Path) -> None:
         writer.writerow(["run", "role", "omega_ci_t", *RAW,
                          "T_e_over_T_e0_baseline_corrected", "T_e_par_baseline_corrected",
                          "T_e_perp_baseline_corrected", "A_e_baseline_corrected",
-                         "beta_e_par_baseline_corrected", "control"])
+                         "beta_e_par_baseline_corrected",
+                         "T_e_over_T_e0_scaled_corrected", "T_e_par_scaled_corrected",
+                         "T_e_perp_scaled_corrected", "A_e_scaled_corrected",
+                         "beta_e_par_scaled_corrected", "control"])
         for a in audits:
             s = (a.get("window") or {}).get("_series")
             if s is None:
@@ -734,6 +965,8 @@ def write_outputs(audits: list[dict], groups: list[dict], outdir: Path) -> None:
             corr = (baseline.get("window") or {}).get("_series") or {}
             # The corrected series covers the times the control also reached.
             at = {float(t): i for i, t in enumerate(corr.get("omega_ci_t", ()))}
+            scaled = ((baseline.get("scaled") or {}).get("window") or {}).get("_series") or {}
+            at_scaled = {float(t): i for i, t in enumerate(scaled.get("omega_ci_t", ()))}
             for i, t in enumerate(s["omega_ci_t"]):
                 j = at.get(float(t))
                 cells = []
@@ -744,6 +977,7 @@ def write_outputs(audits: list[dict], groups: list[dict], outdir: Path) -> None:
                     k = i if key in s else j
                     cells.append(_cell(col, k))
                 cells += [_cell(corr.get(key), j) for key in CORR]
+                cells += [_cell(scaled.get(key), at_scaled.get(float(t))) for key in CORR]
                 writer.writerow([a["run"], a.get("role"), f"{t:.8g}", *cells,
                                  baseline.get("control") or ""])
     plot(audits, outdir / "energy_audit.png")
@@ -792,6 +1026,9 @@ def main() -> int:
         print(f"{audit['run']}: {audit['status']} -- {audit['reason']}")
         if audit.get("baseline"):
             print(f"  baseline: {audit['baseline']['status']} -- {audit['baseline']['reason']}")
+            scaled = audit["baseline"].get("scaled") or {}
+            if scaled:
+                print(f"  scaled:   {scaled['status']} -- {scaled['reason']}")
     for group in groups:
         print(group["interpretation"])
     return 0

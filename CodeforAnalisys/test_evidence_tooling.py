@@ -390,3 +390,94 @@ def test_smaller_control_box_is_compared_per_unit_volume(tmp_path):
     assert b["volume_ratio_run_over_control"] == pytest.approx(4.0)
     assert b["global"]["residual_over_driver_release"] == pytest.approx(20 / 400)
     assert b["status"] == "PASS"
+
+
+# ── Scaled control: the run and its control do not heat by the same amount ───
+
+def reshape_budget(root, electron, ion, magnetic=lambda t: 0.0 * t, volume=80000.0):
+    """Replace the linear ramps of fake_run by prescribed energy changes of t Omega_ci."""
+    phys = root / "09_physical_diagnostics"
+    with (phys / "global_energy_table.csv").open(newline="") as handle:
+        first = next(csv.DictReader(handle))
+    with (phys / "energy_table.csv").open(newline="") as handle:
+        window = next(csv.DictReader(handle))
+    e_b, e_e0, e_i0 = (float(first[k]) for k in ("E_B", "E_e", "E_i"))
+    t = np.linspace(0, 100, 201)
+    rows = [{"time_code": ti * 2500, "omega_ci_t": ti, "E_E": 0.0, "E_B": e_b + b, "E_e": e_e0 + e,
+             "E_i": e_i0 + i, "E_total": e_b + b + e_e0 + e + e_i0 + i}
+            for ti, e, i, b in zip(t, electron(t), ion(t), magnetic(t))]
+    write_csv(phys / "global_energy_table.csv", rows)
+    write_csv(phys / "energy_table.csv", [
+        {"step": int(ti * 2500), "omega_ci_t": ti, "E_kin_bulk": 0.0,
+         "E_internal_i": float(window["E_internal_i"]) + i / volume,
+         "E_internal_e": float(window["E_internal_e"]) + e / volume, "E_B": 0.0, "A_e": 1.0}
+        for ti, e, i in zip(t, electron(t), ion(t))])
+    return root
+
+
+def test_scaled_control_recovers_what_the_instability_moved(tmp_path):
+    """The run heats 0.92 (electrons) and 0.88 (ions) times its control; after the
+    linear phase starts (t = 10) the ions release 100: 60 to the field, 35 to the electrons."""
+    heat = lambda t: 2000.0 * np.expm1(t / 50.0) / np.expm1(2.0)       # numerical, accelerating
+    cool = lambda t: -400.0 * t / 100.0                                # numerical ion loss
+    grown = lambda t: np.clip((t - 10.0) / 90.0, 0.0, 1.0)             # nothing before t = 10
+    run = reshape_budget(fake_run(tmp_path / "run"),
+                         electron=lambda t: 0.92 * heat(t) + 35.0 * grown(t),
+                         ion=lambda t: 0.88 * cool(t) - 100.0 * grown(t),
+                         magnetic=lambda t: 60.0 * grown(t))
+    ctrl = reshape_budget(control(tmp_path, "ctrl"), electron=heat, ion=cool)
+    audits = [energy_audit.audit_run(run), energy_audit.audit_run(ctrl)]
+    energy_audit.pair_controls(audits)
+    b = audits[0]["baseline"]
+    # The plain subtraction over-corrects the electrons by 8 % of 2000 and fails.
+    assert b["status"] == "FAIL"
+    s = b["scaled"]
+    g = s["global"]
+    assert g["calibration_omegaci"] == pytest.approx([0.5, 10.0])
+    assert g["scales"]["E_e"] == pytest.approx(0.92) and g["scales"]["E_i"] == pytest.approx(0.88)
+    assert g["residual_changes"]["E_e"] == pytest.approx(35.0)
+    assert g["residual_changes"]["E_i"] == pytest.approx(-100.0)
+    assert g["residual_changes"]["E_B"] == pytest.approx(60.0)
+    assert g["driver_release_scaled"] == pytest.approx(100.0)
+    assert g["residual_over_driver_release"] == pytest.approx(0.05)
+    assert g["residual_over_driver_release_range"] == pytest.approx([0.05, 0.05])
+    assert s["status"] == "PASS"
+    e_e0 = 1.5 * PHYSICS["B0"] ** 2 / 2 * 80000.0
+    assert s["window"]["scale"] == pytest.approx(0.92)
+    assert s["window"]["T_e_factor_scaled_corrected"] == pytest.approx(1 + 35.0 / e_e0)
+    assert g["electron_heating_factor_scaled_corrected"] == pytest.approx(1 + 35.0 / e_e0)
+
+    energy_audit.write_outputs(audits, [], tmp_path / "out")
+    with (tmp_path / "out" / "energy_audit.csv").open(newline="") as handle:
+        row = next(csv.DictReader(handle))
+    assert row["scaled_status"] == "PASS" and float(row["scale_ions"]) == pytest.approx(0.88)
+    with (tmp_path / "out" / "energy_audit_electron_heating.csv").open(newline="") as handle:
+        last = [r for r in csv.DictReader(handle) if r["run"] == "run"][-1]
+    assert float(last["T_e_over_T_e0_scaled_corrected"]) == pytest.approx(1 + 35.0 / e_e0, rel=1e-6)
+
+
+def test_scaled_control_needs_a_quiet_interval(tmp_path):
+    """Two samples before the linear phase are not a calibration, and without a
+    fitted linear phase there is no quiet interval at all."""
+    audits = [energy_audit.audit_run(fake_run(tmp_path / "run", electron_gain=2300.0, ion_loss=400.0)),
+              energy_audit.audit_run(control(tmp_path, "ctrl"))]
+    energy_audit.pair_controls(audits)
+    scaled = audits[0]["baseline"]["scaled"]
+    assert scaled["status"] == "UNVERIFIED" and "fewer than 4 common samples" in scaled["reason"]
+    assert "global" not in scaled and "window" not in scaled
+
+    audits[0]["linear_phase"] = {}
+    assert "no fitted linear phase" in energy_audit.scale_control(audits[0], audits[1])["reason"]
+
+
+def test_scaled_control_absorbs_a_signal_that_tracks_the_control(tmp_path):
+    """The stated limit: a physical gain proportional to the numerical one from
+    t = 0 goes into the factor, and nothing is left to close."""
+    ramp = lambda amount: (lambda t: amount * t / 100.0)
+    run = reshape_budget(fake_run(tmp_path / "run"), electron=ramp(2380.0), ion=ramp(-400.0))
+    ctrl = reshape_budget(control(tmp_path, "ctrl"), electron=ramp(2000.0), ion=ramp(-200.0))
+    audits = [energy_audit.audit_run(run), energy_audit.audit_run(ctrl)]
+    energy_audit.pair_controls(audits)
+    scaled = audits[0]["baseline"]["scaled"]
+    assert scaled["global"]["scales"]["E_e"] == pytest.approx(1.19)
+    assert scaled["status"] == "UNVERIFIED" and "nothing to close" in scaled["reason"]
