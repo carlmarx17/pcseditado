@@ -416,7 +416,7 @@ checklist: `validation_table.csv`, `validation_summary.txt`,
 `anisotropy_table.csv`, `fit_metrics.csv`, `field_fluctuation_table.csv`,
 `growth_rate_summary.csv`, `anisotropy_spatial_stats.csv`,
 `spatial_correlations.csv`, `energy_table.csv`, plus `T_parallel/T_perp/A`
-maps of the driven species, `deltaB`, `mirror_holes` and `J_dia` maps, 2D
+maps of the driven species, `deltaB`, `B_magnitude` (named `mirror_holes` before 2026-11-18) and `J_dia` maps, 2D
 VDFs, Maxwellian/Kappa fits, growth rate (the dominant Fourier mode, which is
 the reference, and the total, parallel and perpendicular rms on its linear
 phase, with `gamma_err`; every followed mode in `mode_growth_table.csv`),

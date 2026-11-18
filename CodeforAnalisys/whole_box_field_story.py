@@ -70,7 +70,9 @@ def save(fig, path, title):
 def map_animation(run, out):
     """Full-domain |B| and magnitude fluctuations from already-rendered PNGs."""
     folder=run/'09_physical_diagnostics'
-    paths=sorted(folder.glob('mirror_holes_map_step_*.png'),
+    # B_magnitude_map_* since 2026-11-18; mirror_holes_map_* in older outputs.
+    paths=sorted(list(folder.glob('B_magnitude_map_step_*.png'))
+                 or list(folder.glob('mirror_holes_map_step_*.png')),
                  key=lambda p:int(re.search(r'step_(\d+)',p.name)[1]))
     frames=[]; sources=[]
     for path in paths:

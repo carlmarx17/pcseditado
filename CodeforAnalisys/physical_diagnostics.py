@@ -2151,7 +2151,7 @@ def _field_map_worker(args):
     metrics = field_metrics(field_file, B0)
     toci = step_to_omegaci(step)
     # Per-cell counting noise dominates these maps at full resolution: without
-    # the display-only smoothing the mirror structures render as salt-and-
+    # the display-only smoothing the |B| structures render as salt-and-
     # pepper. Only the plotted copy is smoothed; every scalar in the tables
     # comes from the raw array.
     plot_map(PICDataReader.flatten_2d_slice(metrics["delta_B_over_B0"]),
@@ -2160,8 +2160,10 @@ def _field_map_worker(args):
              cmap=ps.CMAP_DIVERGING, symmetric=True, smooth_sigma=2.0,
              prt_window=prt_window)
     plot_map(PICDataReader.flatten_2d_slice(metrics["B_magnitude"]),
-             outdir / f"mirror_holes_map_step_{step}.png",
-             rf"$|B|$ mirror structures — $t\Omega_{{ci}} = {toci:.1f}$", r"$|B|$",
+             outdir / f"B_magnitude_map_step_{step}.png",
+             # Family-neutral: in a firehose or whistler run the |B| pattern
+             # comes from beating transverse modes, not from mirror modes.
+             rf"$|B|$ — $t\Omega_{{ci}} = {toci:.1f}$", r"$|B|$",
              cmap="magma", smooth_sigma=2.0, prt_window=prt_window)
     return step, True
 
